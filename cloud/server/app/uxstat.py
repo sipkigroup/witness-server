@@ -43,6 +43,9 @@ def mark_shown(ctx, acc_id, rid, status):
     if status in ("pending_approval", "held"):
         try:
             ctx.db.x("UPDATE actions SET shown_at=? WHERE rid=? AND account_id=? AND shown_at IS NULL", (now(), rid, acc_id))
+            # r0276b: the question's page was opened by a signed-in person, by any path (the push, the terminal's link, the list): opened
+            ctx.db.x("UPDATE actions SET push_state='opened', push_state_at=? WHERE rid=? AND account_id=? AND push_state IS NOT NULL "
+                     "AND push_state<>'opened'", (now(), rid, acc_id))
         except Exception:  # noqa: BLE001  a count never breaks the page
             pass
 
@@ -113,4 +116,12 @@ def metrics_text(ctx, t=None):
     L += ["# HELP dw_accounts_unread_alarm Accounts with more than 90% of at least 10 approvals under 2 s in the last 7 days.",
           "# TYPE dw_accounts_unread_alarm gauge", "dw_accounts_unread_alarm %d" % alarms,
           "dw_accounts_deciding_7d %d" % len(accs)]
+    # r0276 (SVODKA-1311 p.5): how far the phone push of a question got (HTTP 201 from the push service is only "sent"), last 7 days
+    from app import push
+    lc = push.ladder_counts(ctx.db, since)
+    tot = sum(lc.values())
+    L += ["# HELP dw_push_ladder_7d Questions pushed to a phone in the last 7 days, by the last state reached (failed, sent, received, shown, opened).",
+          "# TYPE dw_push_ladder_7d gauge"] + ['dw_push_ladder_7d{state="%s"} %d' % (k, lc[k]) for k in push.LADDER]
+    L += ["# HELP dw_push_ladder_share_7d The same as a share of the questions pushed (0 when none).", "# TYPE dw_push_ladder_share_7d gauge"] + \
+         ['dw_push_ladder_share_7d{state="%s"} %.4f' % (k, (lc[k] / tot) if tot else 0.0) for k in push.LADDER]
     return "\n".join(L) + "\n"

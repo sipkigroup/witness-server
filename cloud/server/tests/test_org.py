@@ -11,7 +11,8 @@ CHANGING = {"POST", "PUT", "DELETE", "PATCH"}
 # user-level paths: they act on the person's own session or membership, not on the current organisation
 USER_LEVEL = {"/api/orgs/switch", "/api/org/join",
               "/api/team-request",       # 0.2.28: the public Team access form, no account at all (tests/test_0228.py)
-              "/api/trial/claim/begin", "/api/trial/claim/finish"}     # 0.2.38: before any account role exists: the trial claim (tests/test_0238_trial.py)
+              "/api/trial/claim/begin", "/api/trial/claim/finish",     # 0.2.38: before any account role exists: the trial claim (tests/test_0238_trial.py)
+              "/api/push/ack"}           # r0276: the service worker's delivery ack, no session; proved by n, changes only push_state (tests/test_1311_r0276_push_ladder.py)
 
 
 def api_routes(app):

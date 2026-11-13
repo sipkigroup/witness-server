@@ -269,7 +269,7 @@ def _stale_page(req) -> bool:
     p = req.url.path
     if not p.startswith("/api/") or req.headers.get("x-dw-build") or req.headers.get("sec-fetch-site") != "same-origin":
         return False
-    if req.headers.get("sec-fetch-mode") == "navigate":
+    if req.headers.get("sec-fetch-mode") == "navigate" or p == "/api/push/ack":     # r0276: the service worker's ack is no page of old code
         return False
     return req.method == "POST" or (req.method == "GET" and p == "/api/me")
 

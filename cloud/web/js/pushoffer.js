@@ -7,14 +7,17 @@ import { supportState, envOf, enablePush, deviceState, registerSW, deviceLabel, 
 import { h, clear } from './ui.js';
 
 export const BUTTON = 'Get questions on your phone';
-export const IPHONE_LINE = 'iPhone: notifications come only from Witness added to the Home Screen (Share → Add to Home Screen, iOS 16.4+), not from a Safari tab.';
+// r0276 (SVODKA-1311 p.5): the short how-to, only on iPhone / iPad in a browser tab (outside the Home Screen app); in the Home Screen app
+// the button alone (it already works there)
+export const IPHONE_LINE = 'iPhone: tap Share → Add to Home Screen, then open Witness from the Home Screen and turn on notifications there, not from a Safari tab.';
 export const ON_TEXT = 'Done: this device gets a notification when your agent waits for you. Delivery is not guaranteed: this page keeps checking too.';
 
 // -> what to show for this browser: {button: bool, line: string}
 export function offerState(env) {
   const s = supportState(env).state;
   // r0271 (ISPYTANIE-0266 Н6): the iPhone line only on iOS (it was shown on a Mac and on Android too)
-  if (s === 'ok') return { button: true, line: iosInfo(env.ua || '', env.platform || '', env.maxTouchPoints || 0).ios ? IPHONE_LINE : '' };
+  // r0276: on iOS the line is the how-to, and only outside the Home Screen app (standalone: the button, nothing to add)
+  if (s === 'ok') return { button: true, line: iosInfo(env.ua || '', env.platform || '', env.maxTouchPoints || 0).ios && !env.standalone ? IPHONE_LINE : '' };
   if (s === 'ios-install') return { button: false, line: IPHONE_LINE };
   return { button: false, line: (HINTS[s] || HINTS.unsupported).replace('%v', '') };
 }

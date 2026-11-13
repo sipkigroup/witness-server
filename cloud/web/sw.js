@@ -47,8 +47,31 @@ function noteFrom(d, scope) {
   const g = typeof d.g === 'string' && /^[0-9a-f]{1,32}$/.test(d.g) ? d.g : '';
   // one agent = one tag: a newer request replaces its older notification on the device (renotify: it still buzzes)
   const tag = k === 'q' ? 'dw-summary' : k === 't' ? 'dw-test' : k === 'r' || k === 'k' || k === 'p' || k === 'c' ? 'dw-security-' + k : g ? 'dw-' + k + '-' + g : 'dw';
+  const data = { url: safeUrl(urlFor(d), scope) };
+  const b = ackBody(d, 'opened');
+  if (b) { data.id = b.id; data.n = b.n; }
   return { title, options: { body, tag, renotify: true, requireInteraction: k === 'a' || k === 's' || k === 'v' || k === 'r' || k === 'k' || k === 'p' || k === 'c',
-    icon: scope + 'icons/icon-192.png', data: { url: safeUrl(urlFor(d), scope) } } };
+    icon: scope + 'icons/icon-192.png', data } };
+}
+
+// r0276 (SVODKA-1311 p.5): HTTP 201 from the push service is not "delivered". For a question's push (k a) this worker tells the server how
+// far it got: received (the push reached this device), shown (the notification is up), opened (the person tapped it). The proof is `n`,
+// which only the encrypted push carried; nothing about the device is sent. An ack that fails is simply lost (the server then retries the
+// push once and tells the agent's terminal "did not reach your phone: open the link").
+function ackBody(d, s) {
+  if (!d || d.k !== 'a' || typeof d.id !== 'string' || !/^[rR]_[A-Za-z2-7]{1,40}$/.test(d.id)) return null;
+  if (typeof d.n !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(d.n)) return null;
+  return { id: d.id, n: d.n, s };
+}
+
+async function ack(fetchFn, scope, d, s) {
+  const b = ackBody(d, s);
+  if (!b || typeof fetchFn !== 'function') return false;
+  try {
+    const r = await fetchFn(scope + 'api/push/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b),
+      credentials: 'omit', keepalive: true });
+    return !!(r && r.ok);
+  } catch (err) { return false; }
 }
 
 async function openOrFocus(clients, url, scope) {
@@ -68,14 +91,18 @@ if (typeof self !== 'undefined' && self.addEventListener) {
     let d = {};
     try { d = e.data ? e.data.json() : {}; } catch (err) { d = {}; }
     const n = noteFrom(d, scope());
-    // iOS/Chrome: every push MUST show a notification (userVisibleOnly), or the subscription is revoked.
-    e.waitUntil(self.registration.showNotification(n.title, n.options));
+    const f = typeof fetch === 'function' ? fetch : null;
+    // iOS/Chrome: every push MUST show a notification (userVisibleOnly), or the subscription is revoked. The acks never hold it back.
+    e.waitUntil(Promise.all([ack(f, scope(), d, 'received'),
+      self.registration.showNotification(n.title, n.options).then(() => ack(f, scope(), d, 'shown'))]));
   });
   self.addEventListener('notificationclick', (e) => {
     e.notification.close();
-    const url = safeUrl(((e.notification.data || {}).url || '').slice(scope().length), scope());
-    e.waitUntil(openOrFocus(self.clients, url, scope()));
+    const nd = e.notification.data || {};
+    const url = safeUrl((nd.url || '').slice(scope().length), scope());
+    const f = typeof fetch === 'function' ? fetch : null;
+    e.waitUntil(Promise.all([openOrFocus(self.clients, url, scope()), ack(f, scope(), { k: 'a', id: nd.id, n: nd.n }, 'opened')]));
   });
 }
 
-if (typeof module !== 'undefined') module.exports = { safeUrl, noteFrom, openOrFocus, urlFor, PAGE_RE, TEXT };
+if (typeof module !== 'undefined') module.exports = { safeUrl, noteFrom, openOrFocus, urlFor, PAGE_RE, TEXT, ackBody, ack };

@@ -15,11 +15,20 @@
 - Delivery: 429 / 5xx / network error -> up to 3 attempts; 404 / 410 -> the subscription is dead and deleted;
   other 4xx -> failure counted, MAX_FAILS consecutive failures delete it.
 - The VAPID private key comes only from DW_VAPID_PRIVATE_KEY_FILE (secret file) or DW_VAPID_PRIVATE_KEY; none = push is off.
+- r0276 (SVODKA-1311 p.5): HTTP 201 from the push service is not "delivered". A question's push walks a ladder stored on the question
+  (actions.push_state): failed (no push service took it) / sent (taken) -> received (the service worker got it and said so) -> shown
+  (the notification is up) -> opened (the person tapped it, the question's page opens). The service worker proves it holds the push with
+  `n`, an HMAC of the rid under a server secret that only travels inside the encrypted payload (an agent knows its rid, not `n`, so it
+  cannot fake "the owner saw it"). No received within RECV_WAIT_S -> the push is sent ONCE more. The hook's answer for a question that
+  is still not opened says so (judge notify: "did not reach your phone: open the link"). /metrics: the share of questions by the last
+  state. Only states and times are stored: no device, no endpoint, no text.
 """
 import base64
 import collections
 import hashlib
+import hmac
 import json
+import os
 import queue
 import re
 import threading
@@ -43,6 +52,11 @@ MAX_SUBS = 10                   # devices per account
 MAX_FAILS = 5                   # consecutive non-retryable failures before a subscription is dropped
 ATTEMPTS = 3
 TTL_S = 900                     # = approval lifetime: a push older than the request is useless
+RECV_WAIT_S = 20                # r0276: no "received" from the phone within this -> the push is sent once more
+RETRY_LATEST_S = 120            # r0276: ... but not later than this after the first push (after a restart, a long queue): late, it only adds noise
+LADDER = ("failed", "sent", "received", "shown", "opened")     # r0276: a question's push, the last state reached
+RANK = {k: i for i, k in enumerate(LADDER)}
+ACKS = ("received", "shown", "opened")                          # what the service worker may say
 DEFAULT_HOSTS = ("fcm.googleapis.com", "push.services.mozilla.com", "push.apple.com", "notify.windows.com")
 B64U_RE = re.compile(r"^[A-Za-z0-9_-]+={0,2}$")
 
@@ -107,6 +121,21 @@ def build_note(row, agent_name=None, literals=None):
             "topic": g, "payload": {"v": 2, "k": "a", "id": row["rid"], "g": g, "t": [what, harm]}}
 
 
+DELIVERY_TEXT = {      # r0276: what the hook's answer says (after "approve it at <link>"); no device, no address
+    "not": "phone push - did NOT reach your phone, open the link above",
+    "opened-not": "phone push - reached your phone but was not opened, open the link above",
+    "last": "phone push - your phone did not confirm the last push, open the link above",
+    "neutral": "phone push; if it did not come, open the link above",       # r0276b: no device has ever acked (an older sw.js)
+}
+
+
+def ladder_counts(db, since):
+    """/metrics: questions pushed since `since`, by the last state reached. Counts only."""
+    by = {r["push_state"]: r["n"] for r in db.q("SELECT push_state, COUNT(*) AS n FROM actions WHERE push_at>? AND push_state IS NOT NULL "
+                                                 "GROUP BY push_state", (since,))}
+    return {k: by.get(k, 0) for k in LADDER}
+
+
 def topic_of(key):
     """RFC 8030 Topic: <= 32 base64url characters; a newer undelivered message with the same topic replaces the older one."""
     return b64u(bytes.fromhex(key))[:32]
@@ -132,6 +161,8 @@ class Pusher:
         self._worker = None
         self._session = None
         self.stats = collections.Counter()
+        pep = getattr(self.cfg, "key_pepper", None)
+        self._ack_key = hashlib.sha256(b"dw-push-ack\0" + (pep.encode() if isinstance(pep, str) and pep else os.urandom(32))).digest()
 
     @property
     def enabled(self):
@@ -260,6 +291,7 @@ class Pusher:
                 if note is not None:
                     self.process(note)
                 self.tick()
+                self.retry_unreceived()             # r0276: a question's push the phone did not confirm: once more
             except Exception as e:  # noqa
                 log("ERROR", "push worker: " + type(e).__name__)
             finally:
@@ -350,7 +382,12 @@ class Pusher:
             if agent:
                 self._last_agent[(acc, agent)] = t
             self._owed[acc] = 0                     # the page this push opens shows the whole queue
-        self.send_all(acc, dict(note["payload"]), topic_of(note.get("topic") or note["key"]), users)
+        payload = dict(note["payload"])
+        rid = note.get("rid") if payload.get("k") == "a" else None
+        # r0276: each device gets its own n: the phone proves it got THIS push, and which subscription acks is known (ack below)
+        got = self.send_all(acc, payload, topic_of(note.get("topic") or note["key"]), users, ack_rid=rid)
+        if rid:
+            self._ladder_sent(rid, acc, got, first=True)
         return "sent"
 
     def tick(self):
@@ -373,6 +410,97 @@ class Pusher:
             self.send_all(acc, {"v": 2, "k": "q"}, "dw-summary")    # no count: the page shows the queue
         return len(out)
 
+    # ---------- r0276: the delivery ladder of a question's push ----------
+    def ack_token(self, rid, sid):
+        """n of the push of question `rid` to subscription `sid`."""
+        return b64u(hmac.new(self._ack_key, ("ack\0%s\0%s" % (rid, sid)).encode(), hashlib.sha256).digest()[:16])
+
+    def _ladder_sent(self, rid, acc, got, first):
+        ok = "ok" in (got or [])
+        t = int(self.clock())
+        if first:
+            self.db.x("UPDATE actions SET push_state=?, push_at=?, push_state_at=?, push_tries=1 WHERE rid=? AND account_id=? AND push_state IS NULL",
+                      ("sent" if ok else "failed", t, t, rid, acc))
+        elif ok:
+            self.db.x("UPDATE actions SET push_state='sent', push_state_at=? WHERE rid=? AND account_id=? AND push_state='failed'", (t, rid, acc))
+        self.stats["ladder_" + ("sent" if ok else "failed")] += 1
+
+    def ack(self, rid, n, state):
+        """The service worker: `state` of the push of question `rid`, proved with `n`. Only ever moves up the ladder. -> True if it counted."""
+        if state not in ACKS or not isinstance(n, str) or len(n) > 64 or not isinstance(rid, str):
+            return False
+        a = self.db.one("SELECT account_id FROM actions WHERE rid=?", (rid,))
+        if a is None:
+            return False
+        sid = next((x["id"] for x in self.subs_for(a["account_id"]) if hmac.compare_digest(n.encode(), self.ack_token(rid, x["id"]).encode())), None)
+        if sid is None:
+            return False
+        # r0276b: this subscription's service worker acks (a current sw.js): only for such a phone may the hook say "did NOT reach"
+        self.db.x("UPDATE push_subs SET acked=1 WHERE id=? AND acked IS NULL", (sid,))
+        lower = [k for k in LADDER if RANK[k] < RANK[state]]
+        k = self.db.n("UPDATE actions SET push_state=?, push_state_at=? WHERE rid=? AND push_state IN (%s)" % ",".join("?" * len(lower)),
+                      (state, int(self.clock()), rid, *lower))
+        if k:
+            self.stats["ack_" + state] += 1
+        return bool(k)
+
+    def retry_unreceived(self, t=None):
+        """No "received" within RECV_WAIT_S of the first push of a question that still waits -> the same push once more (same Topic: a copy
+        still queued at the push service is replaced, not doubled). The per-minute limit holds; a question it skips is tried on a later tick."""
+        t = int(self.clock() if t is None else t)
+        rows = self.db.q("SELECT * FROM actions WHERE push_tries=1 AND push_state IN ('sent','failed') AND push_at<=? AND push_at>? "
+                         "AND status IN ('pending_approval','held') AND (expires IS NULL OR expires>?) ORDER BY push_at LIMIT 50",
+                         (t - RECV_WAIT_S, t - RETRY_LATEST_S, t))
+        n = 0
+        for r in rows:
+            acc = r["account_id"]
+            if self.muted_until(acc, r["agent_id"], t):
+                continue
+            with self._lock:
+                if not self._room(acc, t):
+                    continue
+                if not self.db.n("UPDATE actions SET push_tries=2 WHERE rid=? AND push_tries=1", (r["rid"],)):
+                    continue                        # another tick took it
+                self._mark(acc, t)
+            note = build_note(dict(r))
+            got = self.send_all(acc, dict(note["payload"]), topic_of(note["topic"]), ack_rid=r["rid"])
+            self._ladder_sent(r["rid"], acc, got, first=False)
+            self.stats["ladder_retry"] += 1
+            n += 1
+        return n
+
+    def delivery(self, acc, rids, t=None):
+        """For the hook's answer (judge notify): -> {"state", "text"} when the phone push of a waiting question did not get through,
+        else None. A question of this call that was pushed RECV_WAIT_S ago or more and is not opened yet; or, for a new question, the
+        account's last question that was pushed twice and never reached a phone (that phone is not getting pushes now)."""
+        t = int(self.clock() if t is None else t)
+        st = None
+        rids = [x for x in (rids or []) if isinstance(x, str)][:20]
+        if rids:
+            for r in self.db.q("SELECT push_state, push_at FROM actions WHERE account_id=? AND rid IN (%s) AND push_state IS NOT NULL"
+                               % ",".join("?" * len(rids)), (acc, *rids)):
+                if r["push_state"] != "opened" and r["push_at"] is not None and t - r["push_at"] >= RECV_WAIT_S:
+                    if st is None or RANK[r["push_state"]] < RANK[st]:
+                        st = r["push_state"]
+        if st is None and rids and not self.db.one("SELECT 1 AS k FROM actions WHERE account_id=? AND rid IN (%s) AND push_state IS NOT NULL"
+                                                   % ",".join("?" * len(rids)), (acc, *rids)):
+            # the newest question whose push says something about the phone: it got there (received or more), or it was sent twice
+            r = self.db.one("SELECT push_state FROM actions WHERE account_id=? AND push_at<=? AND push_at>? AND "
+                            "(push_tries=2 OR push_state IN ('received','shown','opened')) ORDER BY push_at DESC LIMIT 1",
+                            (acc, t - 2 * RECV_WAIT_S, t - 86400))
+            if r is not None and r["push_state"] in ("failed", "sent"):
+                return self._said(acc, "last-" + r["push_state"], "last")
+        if st is None:
+            return None
+        return self._said(acc, st, "opened-not" if st in ("received", "shown") else "not")
+
+    def _said(self, acc, state, key):
+        """r0276b: a negative sentence only when one of the account's devices has acked a push before (its sw.js acks); a phone with an
+        older service worker never acks, and "did NOT reach" would then be false: a neutral sentence instead."""
+        if not any(s["acked"] for s in self.subs_for(acc)):
+            return {"state": state, "text": DELIVERY_TEXT["neutral"]}
+        return {"state": state, "text": DELIVERY_TEXT[key]}
+
     # ---------- delivery ----------
     def subs_for(self, acc, users=None):
         """Devices to wake for organisation `acc`: users=None -> every device subscribed in this organisation plus the devices of its
@@ -393,10 +521,14 @@ class Pusher:
                 out.append(s)
         return out
 
-    def send_all(self, acc, payload, topic, users=None):
+    def send_all(self, acc, payload, topic, users=None, ack_rid=None):
         data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        out = []
         for s in self.subs_for(acc, users):
-            self.deliver(s, data, topic)
+            if ack_rid:
+                data = json.dumps(dict(payload, n=self.ack_token(ack_rid, s["id"])), ensure_ascii=False, separators=(",", ":"))
+            out.append(self.deliver(s, data, topic))
+        return out
 
     def deliver(self, s, data, topic):
         info = {"endpoint": s["endpoint"], "keys": {"p256dh": s["p256dh"], "auth": s["auth"]}}
@@ -501,6 +633,18 @@ def make_router(ctx):
             raise Err(409, "PUSH_NO_DEVICE", "no device is subscribed")
         await run_in_threadpool(p.send_all, acc["id"], {"v": 2, "k": "t"}, "dw-test")
         return {"devices": len(p.list(acc["id"]))}
+
+    @r.post("/api/push/ack")
+    async def ack(req: Request):
+        """r0276: the service worker says how far a question's push got (received / shown / opened). No session (the phone may be signed
+        out): the proof is `n`, which only the encrypted push carried. The answer is the same whether it counted or not."""
+        b = await body(req)
+        rid = canon_rid(b.get("id"))
+        if not ctx.push.enabled or not isinstance(rid, str) or len(rid) > 60:
+            return {"ok": True}
+        if ctx.limiter.hit("pushack:" + rid, 12, 60) and ctx.limiter.hit("pushack", 600, 60):
+            await run_in_threadpool(ctx.push.ack, rid, b.get("n"), b.get("s"))
+        return {"ok": True}
 
     @r.post("/api/push/suspicious")
     async def suspicious(req: Request):

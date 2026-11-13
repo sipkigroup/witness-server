@@ -223,7 +223,7 @@ def test_defer_sends_only_opaque_ids(papp, pc, po):
     assert p.drain()
     assert len(p.sender.calls) == 2 and {c["endpoint"] for c in p.sender.calls} == {"https://push.test/a", "https://push.test/b"}
     d = p.sender.calls[0]["data"]
-    assert set(d) == {"v", "k", "id", "g", "t"} and d["v"] == 2         # 05.11: "t" = [what, harm], a general sentence of the reason code and d["k"] == "a" and d["id"] == r["rid"]
+    assert set(d) == {"v", "k", "id", "g", "t", "n"} and d["v"] == 2 and d["n"] == p.ack_token(r["rid"], push.sub_id(p.sender.calls[0]["endpoint"]))     # r0276: n = the ack proof (HMAC of rid + device)         # 05.11: "t" = [what, harm], a general sentence of the reason code and d["k"] == "a" and d["id"] == r["rid"]
     assert d["g"] == push.group_of(po.account["id"], ag["id"]) and len(d["g"]) == 16
     blob = json.dumps(d)
     for leak in ("hunter2", "launch", "release-bot", "blog", ag["id"]):          # (05.11: the general sentence of the reason may say "publish")
@@ -507,7 +507,8 @@ def test_real_webpush_roundtrip_to_fake_endpoint(papp, pc, po):
         assert hd["content-encoding"] == "aes128gcm" and hd["ttl"] == str(push.TTL_S) and hd["urgency"] == "high" and len(hd["topic"]) <= 32
         verify_vapid(hd["authorization"], p.public_key, svc.base)
         d = dev.decrypt(g["body"])
-        assert {k: v for k, v in d.items() if k != "t"} == {"v": 2, "k": "a", "id": r["rid"], "g": push.group_of(po.account["id"], ag["id"])} and len(d["t"]) == 2
+        assert {k: v for k, v in d.items() if k not in ("t", "n")} == {"v": 2, "k": "a", "id": r["rid"], "g": push.group_of(po.account["id"], ag["id"])} and len(d["t"]) == 2
+        assert d["n"] == p.ack_token(r["rid"], push.sub_id(dev.endpoint))           # r0276
         assert b"release notes" not in g["body"] and "mailer" not in json.dumps(d)
         # the service says 410 -> subscription removed
         svc.codes = [410]

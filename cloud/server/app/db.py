@@ -219,10 +219,14 @@ class DB:
                                     ("allowances", "branch", "TEXT"), ("allowances", "end_reason", "TEXT"),   # 0.2.96: "from now on" ends on a branch change
                                     ("actions", "shown_at", "INTEGER"),  # 0.2.96: the first time a person's page loaded this question ("approved unread")
                                     ("actions", "reconcile", "TEXT"),    # rel 28.10: "ledger:<outcome>" brought in line on start / "manual:<why>" left for a person
-                                    ("actions", "fx_keys", "TEXT")):     # r0275: keys of the call's effect (provenance.effect_keys): a refused effect by another tool
+                                    ("actions", "fx_keys", "TEXT"),      # r0275: keys of the call's effect (provenance.effect_keys): a refused effect by another tool
+                                    ("actions", "push_state", "TEXT"), ("actions", "push_at", "INTEGER"),     # r0276: the push ladder of a question
+                                    ("actions", "push_state_at", "INTEGER"), ("actions", "push_tries", "INTEGER"),
+                                    ("push_subs", "acked", "INTEGER")):     # r0276b: this subscription's service worker has acked a push (no personal data)
                 cols = {r["name"] for r in self.c.execute("PRAGMA table_info(%s)" % table)}
                 if col not in cols:
                     self.c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, typ))
+            self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_push ON actions(push_at) WHERE push_tries=1")      # r0276: the retry scan
             # 0.2.38: the TTL sweep of trial accounts and the claim look-up on indexes
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_accounts_trial ON accounts(trial_until) WHERE trial_until IS NOT NULL")
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_accounts_claim ON accounts(trial_claim) WHERE trial_claim IS NOT NULL")

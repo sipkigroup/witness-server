@@ -584,4 +584,29 @@ def _judge_parts(ctx, agent, body, parts, only, capable, created, sid, out):
            "statement_b64": statement(ctx, body, only, parts, out)}
     if any(p["result"].get("status") in ("pending_approval", "held") for p in out):
         res["notify"] = notify_view(ctx, agent)          # 0.2.89: outside the signed statement (a count for the person, decides nothing)
+        _delivery(ctx, agent, res["notify"], [p["result"].get("rid") for p in out if p["result"].get("status") in ("pending_approval", "held")])
     return res
+
+
+def _delivery(ctx, agent, nv, rids):
+    """r0276 (SVODKA-1311 p.5): the phone push of this question did not get through (push.Pusher.delivery). Said in the words the hook
+    already prints: a client of 0.2.57+ writes "Notification: sent via <channels>", so the push count becomes one channel entry that says
+    what happened ("phone push - did NOT reach your phone, open the link above"); `delivery` is the same for a client that reads it.
+    Nothing here changes a decision or the signed statement. Never raises."""
+    try:
+        p = getattr(ctx, "push", None)
+        if p is None or not getattr(p, "enabled", False) or not nv.get("push") or nv.get("muted"):
+            return
+        d = p.delivery(agent["account_id"], rids)
+        if d is None:
+            return
+        n = nv["push"]
+        nv["delivery"] = d
+        nv["push"] = 0
+        head, sep, tail = d["text"].partition(" - ")
+        if not sep:
+            head, _, tail = d["text"].partition("; ")          # r0276b: the neutral sentence: "phone push (1 device); if it did not come, ..."
+            sep = "; "
+        nv["channels"] = list(nv.get("channels") or []) + ["%s (%d device%s)%s%s" % (head, n, "" if n == 1 else "s", sep, tail)]
+    except Exception:      # noqa: BLE001
+        pass

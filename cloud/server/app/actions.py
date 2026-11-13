@@ -34,6 +34,7 @@ from app import wire
 from app import allowances as al
 from app import constitution
 from app import amend
+from app import provenance
 from app import execguard
 from app import levels
 from app import delegation
@@ -1942,6 +1943,13 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         tn = taint_of(tool, act, args)
         if tn is not None:
             row["taint"] = tn
+        # r0275 (STAC): a call that reads a file the agent made from a credential (app/provenance.py): judged as that credential below
+        hit_ = provenance.copy_read(ctx, acc, tool, args, t0)
+        if hit_ is not None and hit_[2] and row.get("taint") is None:
+            row["taint"] = TAINT_SEEN_IF_ALLOWED      # the agent sees the credential's text: "secret seen" once it runs (0.2.24)
+        fx_ = provenance.effect_keys(tool, act, args) + (["sec:" + hit_[1]] if hit_ is not None and hit_[2] else [])
+        if fx_:
+            row["fx_keys"] = json.dumps(fx_, ensure_ascii=False)       # r0275: what the call does, kept to recognise it under another tool
         if tm.unmapped_args(toolmap, tool, args):
             return refuse("TOOL_ARGS_UNMAPPED")         # R-02: an argument that may carry a recipient but is not mapped
         if act.get("class") == "delete" and "recipient" in act:
@@ -2050,6 +2058,12 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             ej_ = json.loads(ex_json) if ex_json else {}
             if isinstance(ej_, dict):
                 ej_["gt"] = True       # RT-0270: this line changes git's objects / index / refs / remotes (git_tainted reads it)
+                ex_json = json.dumps(ej_, ensure_ascii=False)
+        sec_ = provenance.carry(tool, args, hit_)
+        if sec_:
+            ej_ = json.loads(ex_json) if ex_json else {}
+            if isinstance(ej_, dict):
+                ej_["sec"] = dict(list(sec_.items())[:64])    # r0275: these paths now hold a credential's text (provenance.copies)
                 ex_json = json.dumps(ej_, ensure_ascii=False)
         xf_ = _dirfiles(tool, act, args)
         if xf_ is not None:
@@ -2261,6 +2275,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             #                                                                              on what the line RUNS (strict_policy.article)         # v1 (06.11): an immutable article (Н1-Н8): refused at once, no question, nobody notified;
             if nz_ is not None:                          # the agent is told why and what to do instead (reasons.py), the journal keeps the row.
                 gate, rp = ("deny", nz_[0]), None        # Never an allow; an earlier "approve later runs" does not cover it either.
+            if nz_ is None and hit_ is not None and hit_[2] and provenance.n1(hit_[1]):
+                gate, rp = ("deny", constitution.SECRET), None     # r0275: a copy of a private key / token store is that file (Н1)
         sbx_code = dv == "allow" and act.get("sandboxed") is True and act.get("class") == "command" and al.code_option(L, m["id"]) \
             if m is not None and L is not None else False     # 0.2.82: this line runs in the strict sandbox under the code option
         if not sbx_code and m is not None and L is not None and dv == "allow" and act.get("class") == "command" and tool == "Bash" \
@@ -2271,6 +2287,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if gate is None and dv == "allow" and not sbx_code and sv_ is None and hold_after_secret(ctx, agent["id"], tool, act, args, t0):
             # (r0261: not under the strict fact -- a secret seen stays on the computer; what would carry it out is С1 on its own line)
             gate = ("hold", "ESCALATE_SECRET_SEEN")          # 0.2.24 (critique T3): may only tighten, like the advisor's hold (the owner releases it)
+        if gate is None and dv == "allow" and hit_ is not None and hit_[2] and not in_sbx and not sbx_code and sv_ is None:
+            gate = ("hold", provenance.HOLD)                 # r0275: a read of a copy of a credential the mandate would let through
         # r25 (s8 P2, P3): the files are found whenever the owner is asked about this line anyway -- a question of the core (dv "defer":
         # an unlisted `bash f8b.sh`) or a secret hold -- and shown on THAT page (text of the write, Dangerous true, the reason). No new
         # question: the defer stays the core's signed question, the secret hold stays a hold. Only an allowed line becomes a WRITTEN_RUN hold.
@@ -2359,6 +2377,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if gate is None and dv == "allow" and dwhy == "OK_UNSPECIFIED" and act.get("class") == "disclosure" and egress.non_loopback(act.get("recipient")):
             gate = ("hold", egress.CODE_UNSPECIFIED)         # 0.2.90 (G2): a mandate with no `message` class names no destination: a non-loopback
                                                              # exit is held for the owner, never OK_UNSPECIFIED under "allowed by default"
+        if (gate is not None and gate[0] == "hold") or (gate is None and dv == "defer" and rp is None):
+            _mark_refused_before(ctx, agent, row, act, args, t0, hit_)     # r0275: the owner refused the same effect through another call
         if gate is not None and gate[0] == "deny":
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
@@ -2409,6 +2429,29 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if v == "defer" and getattr(ctx, "notify", None) is not None and not quiet:
             ctx.notify.approval(row)                             # 0.2.25: queued; a channel is never awaited here
         return to_result(ctx, refresh(ctx, row["rid"]))
+
+
+def _mark_refused_before(ctx, agent, row, act, args, t0, hit=None):
+    """r0275: a question whose effect overlaps a call the owner refused in this session says so (exec_json "rb", qwords); a question
+    about a read of a copy of a credential names the credential (exec_json "sc")."""
+    if hit is not None and hit[2]:
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["sc"] = {"copy": hit[0][:1024], "src": hit[1][:1024]}
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    try:
+        keys = json.loads(row["fx_keys"]) if row.get("fx_keys") else []
+        if act.get("class") == "command":
+            keys = keys + provenance.run_keys(ctx, agent["id"], args, t0)
+        rb = provenance.refused_before(ctx, agent["id"], keys, t0, row.get("rid"))
+        if rb is None:
+            return
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["rb"] = rb
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except Exception:      # noqa: BLE001  no mark: the question is asked as before
+        log("ERROR", "refused-before mark not made", rid=row.get("rid"))
 
 
 def _ttl(ctx, account_id, verdict):

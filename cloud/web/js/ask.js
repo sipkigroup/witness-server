@@ -95,6 +95,7 @@ export const REASON_WORDS = {
   ESCALATE_WRITTEN_RUN: 'it runs a file this agent wrote',
   ESCALATE_SECRET_SEEN: 'this agent read a secret a few minutes ago',
   ESCALATE_NET_UNSEEN: 'a network program whose destination is not in the line',
+  ESCALATE_SECRET_COPY: 'it reads a copy this agent made of a secret',
   ESCALATE_TRIAL_CLAIM: 'the first touch of a trial account',
   ESCALATE_EGRESS_UNSPECIFIED: 'it reaches a host outside this machine and your mandate names no destinations',
   ESCALATE_USER_CONTENT_HOST: 'it sends data to a site where anyone can publish or read it',

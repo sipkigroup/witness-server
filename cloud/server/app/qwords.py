@@ -27,6 +27,7 @@ REASON_WORDS = {
                               "Code you have not seen would run."),
     "ESCALATE_HTTP": ("Your agent wants to send a web request to {t}", "Information from your computer could be sent to this site."),
     "ESCALATE_WRITTEN_RUN": ("Your agent wants to run a file it wrote itself: {t}", "It runs code you have not read."),
+    "ESCALATE_SECRET_COPY": ("Your agent wants to read {t}, a copy it made of a secret", "Your keys or passwords would reach the agent."),
     "ESCALATE_SECRET_SEEN": ("Your agent wants to act on {t} a few minutes after it read a secret", "Your keys or passwords could be sent out."),
     "ESCALATE_NET_UNSEEN": ("Your agent wants to run a network program ({t}) whose destination is not in the line",
                             "It could send data to a place you cannot see."),
@@ -58,6 +59,7 @@ RISK_BY_CODE = {
     "ESCALATE_EGRESS_UNSPECIFIED": "high",
     "ESCALATE_EXEC_CHANGED": "high",
     "ESCALATE_WRITTEN_RUN": "high",
+    "ESCALATE_SECRET_COPY": "high",
     "ESCALATE_SECRET_SEEN": "critical",         # secrets out
     "ESCALATE_DATA": "critical",
     "ESCALATE_MONEY": "critical",
@@ -85,6 +87,7 @@ LONG_HARM = {
     "ESCALATE_EXEC_CHANGED": "Code you have not seen would run on your computer.",
     "ESCALATE_HTTP": "A request can send data out of this project, or fetch something that changes your computer.",
     "ESCALATE_WRITTEN_RUN": "The agent could run code you never read.",
+    "ESCALATE_SECRET_COPY": "Earlier the agent copied a credential file here (you allowed the copy). Reading the copy reads the credential.",
     "ESCALATE_SECRET_SEEN": "It could carry your keys or passwords out of this project folder.",
     "ESCALATE_EGRESS_UNSPECIFIED": "Data could be sent to a host your mandate does not name.",
     "ESCALATE_NOT_LISTED": "Its effect is not covered by your mandate.",
@@ -330,6 +333,24 @@ def _strict_words(t):
     return None, None
 
 
+def _exec_member(x, k):
+    try:
+        ej = json.loads(x["exec_json"]) if "exec_json" in x.keys() and x["exec_json"] else None
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+    return ej.get(k) if isinstance(ej, dict) else None
+
+
+def _refused_before(x):
+    """r0275: exec_json "rb" of a question row (provenance.refused_before), or None"""
+    try:
+        ej = json.loads(x["exec_json"]) if "exec_json" in x.keys() and x["exec_json"] else None
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+    rb = ej.get("rb") if isinstance(ej, dict) else None
+    return rb if isinstance(rb, dict) and isinstance(rb.get("at"), int) else None
+
+
 def words(x):
     """-> {"what", "harm", "details"} (non-empty strings) for an actions row x (sqlite Row or dict). Never raises."""
     try:
@@ -466,6 +487,19 @@ def words(x):
             # 05.11 (RT hole 3): a line of several commands. The title is short; EVERY command is named on the first screen (the line under the
             # buttons' title) and listed in full under Details ("Commands of the line"), so the first one alone never hides `make deploy`.
             what = "Your agent wants to run %d commands" % len(heads)
+        sc_ = _exec_member(x, "sc")
+        if isinstance(sc_, dict) and isinstance(sc_.get("src"), str):
+            # r0275: the file is a copy the agent made of a credential: the credential is named under Details (provenance)
+            long_harm = (long_harm + " " if long_harm else "") + "It is a copy of %s that the agent made earlier." % _clean(sc_["src"], 200)
+        rb_ = _refused_before(x)
+        if rb_ is not None:
+            # r0275 (Cursor 09.2025, Authorization Drift): the owner refused the same effect through another call in this session: the
+            # one short line says so; the harm of the call itself goes under Details. Built by the server from its own rows (provenance).
+            from app import provenance as _pv
+            long_harm = "%s %s%s" % (_pv.detail(rb_), harm, (" " + long_harm) if long_harm and long_harm != harm else "")
+            harm = _pv.words(rb_, x["created_at"] if "created_at" in x.keys() else None) or harm
+            if risk_max([risk, "high"]) != risk:
+                risk = "high"
         d = []
         if long_harm and long_harm != harm:
             d.append("Why it matters: %s" % long_harm)
@@ -519,6 +553,7 @@ PUSH_WHAT = {
     "ESCALATE_EXEC_CHANGED": "your agent wants to run a file that changed",
     "ESCALATE_HTTP": "your agent wants to use the internet",
     "ESCALATE_WRITTEN_RUN": "your agent wants to run a file it wrote",
+    "ESCALATE_SECRET_COPY": "your agent wants to read a copy of a secret",
     "ESCALATE_SECRET_SEEN": "your agent wants to act after it read a secret",
     "ESCALATE_NET_UNSEEN": "your agent wants to use the internet",
     "ESCALATE_TRIAL_CLAIM": "your agent wants to start a trial",

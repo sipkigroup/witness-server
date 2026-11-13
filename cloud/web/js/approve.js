@@ -554,6 +554,8 @@ async function single(me) {
     ? 'Held (ESCALATE_WRITTEN_RUN): this command runs code, and this agent wrote earlier a file that this code can run or load (an import, a source, a call)' + (r.written_run && r.written_run.files && r.written_run.files.length ? ' (' + r.written_run.files.join(', ') + ')' : '') + '. The witness could not read what the agent put into it (a shell write, a copy, a download), or what it read talks to the network or builds the code it runs. Look at the file before you release it.'
     : r.reason === 'ESCALATE_NET_UNSEEN'
     ? 'Held: this command runs a network program, but the destination is not in the line (it comes from a file or a variable). The witness cannot tell where the data goes, so you decide.'
+    : r.reason === 'ESCALATE_SECRET_COPY'
+    ? 'Held: this file is a copy this agent made earlier of a secret (a credential file). The mandate allows reading the file, but reading the copy reads the secret, so you decide.'
     : advisoryText(r) || (held ? 'Held by the data advisor (' + (r.reason || 'ADVISORY_HOLD') + '): the mandate allows this action, but the advisor flagged its text. A hint, not a decision.' : '');
   // r25 (s8 P2, P3): a question of the mandate or a secret hold that ALSO runs a file the agent wrote: both reasons are said
   const wrunFiles = r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : [];
@@ -722,7 +724,7 @@ async function single(me) {
 
   if (held) {
     // N5 29.10: a hold means the mandate ALLOWS the call (the witness or the advisor holds it), not "does not clearly allow"
-    $('#boxlead').textContent = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN'].includes(r.reason)
+    $('#boxlead').textContent = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN', 'ESCALATE_SECRET_COPY'].includes(r.reason)
       ? 'Your mandate allows this call, but the witness holds it for you to decide.' : 'Your mandate allows this call, but the data advisor flagged it.';
     $('#decide').hidden = true; $('#release').hidden = false;
     gateStart();

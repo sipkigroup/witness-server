@@ -74,12 +74,13 @@ function renderQueue() {
   document.title = (vis.length ? '(' + vis.length + ') ' : '') + 'Approvals - Deus Witness';
 }
 
-const WITNESS_HOLDS = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN'];
+const WITNESS_HOLDS = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN', 'ESCALATE_SECRET_COPY'];
 const HELD_WHY = {   // N5 29.10: the witness' holds in the list say what they are (the full page says more)
   ESCALATE_WRITTEN_RUN: 'Held: this command runs a file this agent wrote. Open it to read the file before you release it.',
   ESCALATE_SECRET_SEEN: 'Held: this agent read a secret in the last minutes, and this call can carry data out or run code it wrote.',
   ESCALATE_USER_CONTENT_HOST: 'Held: this request carries data to a site where anyone can publish or read it.',
   ESCALATE_NET_UNSEEN: 'Held: this command runs a network program whose destination is not in the line.',
+  ESCALATE_SECRET_COPY: 'Held: this reads a copy this agent made of a secret.',
 };
 function heldRow(x) {
   const out = h('div', { class: 'batchitem' });

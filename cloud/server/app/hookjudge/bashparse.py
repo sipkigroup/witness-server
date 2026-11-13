@@ -4619,6 +4619,8 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
     ops = _operands(args)
     paths = [o for o in ops if not re.search(r"[$`]", o)]
     uploads = [m.group(1) for a in args for m in [re.search(r"(?:^|=)@([^@\s]+)$", a)] if m]     # curl -d @file, -F f=@file
+    if name == "dd":
+        uploads += [a[3:] for a in args if a.startswith("if=") and len(a) > 3]    # r0275: `dd if=~/.ssh/id_rsa of=x` reads that file
     values = [a.split("=", 1)[1] for a in args if a.startswith("-") and "=" in a]
     code_args = _eval_code_args(name, args) if _eval_form(name, args) else set()
     for o in ops + uploads + values:                      # reading, copying or uploading a credential file

@@ -417,6 +417,17 @@ def words(x):
                 long_harm = "This could send your keys or passwords out of this project folder, to %s." % t
         if kind == "host" and ent is not None and reason in ("ESCALATE_HTTP", "ESCALATE_COMMAND_DANGER") and t:
             what = SCREEN["send_request"].format(t=t)
+        # r0280 (R-06, rule "signed = shown"): a read of a credential file (Read / Grep / NotebookRead of .env, a key: the tool map gives it
+        # class "publish" and the recipient "secrets:<path>") is said as the read it is, in the words of the closed vocabulary (DANGER_WORDS
+        # "secrets", already in mr-vocab-2: the vocabulary does not change). Before, the server said "send or publish something to
+        # secrets:/p/.env" (a mark of the classifier on the first screen) and the page wrote its own title over it (not signed).
+        rc_ = str((action or {}).get("recipient") or "")
+        secret_read = ent is not None and kind != "command" and (rc_.startswith("secrets:") or str(x["tool"] or "").endswith(".secret"))
+        if secret_read:
+            what, harm, long_harm = DANGER_WORDS["secrets"][0], DANGER_WORDS["secrets"][1], DANGER_WORDS["secrets"][2]
+            persist = False
+            kind = "path"
+            t = _clean(rc_[len("secrets:"):] if rc_.startswith("secrets:") else rc_, 300)
         so = _sbx_open(x)
         if so and ent is not None:
             # 10.11 (r0260): the strict sandbox is open to a host where code can write in the person's name, and code in it can read the
@@ -503,6 +514,8 @@ def words(x):
             risk = "high"                           # 10.11 (r0260): code could publish in the person's name
         if ac_risk is not None and not so:
             risk = ac_risk                          # 12.11: the agent's harness in words (above): a read of git settings is low
+        if secret_read and risk_max([risk, DANGER_WORDS["secrets"][3]]) != risk:
+            risk = DANGER_WORDS["secrets"][3]          # r0280: a secret read is at least what the vocabulary says of "secrets" (high)
         if persist:
             risk = "critical"                       # ~/.zshrc, LaunchAgents, the agent's own settings, keys: the agent could stay for good
         elif kind == "host" and risk_max([risk, "high"]) != risk:
@@ -549,13 +562,14 @@ def words(x):
                     d.append("All commands of the line:\n%s" % "\n".join("- " + _clean(h, 300) for h in heads))
             else:
                 d.append("Full text:\n%s" % visible(tp, True))     # 12.11 (r0263): the ONE full copy (the page hides its own card then)
+        reads_ = "Read" in str(x["tool"] or "") or secret_read
         if kind == "path":
-            d.append("What changes: this file." if "Read" not in str(x["tool"] or "") else "What changes: nothing is written; the agent reads this file.")
+            d.append("What changes: this file." if not reads_ else "What changes: nothing is written; the agent reads this file.")
         elif kind == "host":
             d.append("What changes: data is sent to that host. This cannot be taken back.")
         else:
             d.append("What changes: whatever the command does to your files and system.")
-        if kind == "path" and "Read" not in str(x["tool"] or ""):
+        if kind == "path" and not reads_:
             d.append("Undo: a file outside the project gets a shadow copy first; restore it with: deus-witness-hook --undo PATH")
         elif kind == "host":
             d.append("Undo: not possible once sent.")

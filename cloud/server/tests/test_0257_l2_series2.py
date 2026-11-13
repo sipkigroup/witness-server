@@ -7,6 +7,7 @@
 End to end: the client hook from the sources (deus_witness 0.2.39, thin.judge) -> the server (TestClient)."""
 import copy
 import json
+import math
 import os
 import sys
 import time
@@ -158,7 +159,7 @@ class Hook:
         monkeypatch.setattr(_sf, "ANCESTRY_OVERRIDE", ["/bin/sh -c deus-witness-hook", "claude", "-zsh"])
         if plat is not None:
             _as_platform(monkeypatch, plat)
-        _birth_clock(monkeypatch, tmp_path)
+        self.coarse = _birth_clock(monkeypatch, tmp_path)
         self.restart()
 
     def restart(self):
@@ -166,7 +167,7 @@ class Hook:
         self.sid = "s0257-%s" % os.urandom(4).hex()
         self.transcript = os.path.join(self.env["HOME"], ".claude", "projects", "p", self.sid + ".jsonl")
         os.makedirs(os.path.dirname(self.transcript), exist_ok=True)
-        time.sleep(0.01)
+        _session_born_later(self.coarse)
         with open(self.transcript, "w") as fh:
             fh.write("{}\n")
 
@@ -196,8 +197,9 @@ def _birth_clock(monkeypatch, tmp_path):
     machine gets the transcript's mtime instead (the test writes the transcript once, so mtime = birth); a missing transcript stays None."""
     probe = tmp_path / "birth-probe"
     probe.write_text("x")
-    if _sf._session_start(str(probe)) is not None:
-        return
+    b = _sf._session_start(str(probe))
+    if b is not None:
+        return float(b).is_integer()                              # r0282: whole seconds (statx %W, client 0.2.71 on Linux)
 
     def start(transcript):
         if not isinstance(transcript, str) or not os.path.isabs(transcript):
@@ -207,6 +209,18 @@ def _birth_clock(monkeypatch, tmp_path):
         except OSError:
             return None
     monkeypatch.setattr(_sf, "_session_start", start)
+    return False
+
+
+def _session_born_later(coarse):
+    """r0282 (Linux CI 13.11, client 0.2.71): a new session's transcript is born AFTER the settings files were written. With a birth clock in
+    whole seconds (Linux: statx %W, rounded down = the safe side) "after" is only seen from the next second on: a settings file written in
+    the same second as the session started counts as changed after it (not strict). A real Claude Code start is never in the same second as
+    the settings it reads -- so the test waits for the next second instead of 10 ms. The rule itself is unchanged (test_r0282_*)."""
+    if coarse:
+        time.sleep(math.floor(time.time()) + 1.05 - time.time())
+    else:
+        time.sleep(0.01)
 
 
 def _last(client):

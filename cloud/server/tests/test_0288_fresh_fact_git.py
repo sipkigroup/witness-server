@@ -17,7 +17,7 @@ from tests import r0261
 from app.hookjudge import sandbox as hsb
 from app.hookjudge.mapping import map_event
 from tests.test_0282_irreversibility_gate import Dev as Dev82, asked, fact as fact82
-from tests.test_0257_l2_series2 import Hook, _last
+from tests.test_0257_l2_series2 import Hook, _last, _session_born_later
 from tests.test_v3_sandbox import ASK, OK_SB, STRICT_SETTINGS, PROJECT_STRICT, fact
 
 from deus_witness.hook import sandbox_fact as _sf  # noqa: E402  (test_0257 put mcp/ on sys.path)
@@ -167,7 +167,7 @@ class Sess(Hook):
         self.sid = "sess-%d" % self.n
         t = os.path.join(self.home, ".claude", "projects", "p", "%s.jsonl" % self.sid)
         os.makedirs(os.path.dirname(t), exist_ok=True)
-        time.sleep(0.01)
+        _session_born_later(self.coarse)                          # r0282: a later second when the client's birth clock is whole seconds
         with open(t, "w") as fh:
             fh.write("{}\n")
         self.transcript = t
@@ -350,3 +350,39 @@ def test_server_session_store_unit(client, owner):
     assert fr.note(ctx, ag, "s4", {"facts": {"settings": {"settings_digest": fact()["settings_digest"], "since_start": []}}}, [])
     assert fr.note(ctx, ag, "s4", b, [])                           # the first Bash fact after a non-Bash view with the same digest
     assert not fr.note(ctx, ag, "s4", {"facts": {"sandbox": fact(deny_read=["/x", os.path.expanduser("~")])}}, [])   # fact key changed
+
+
+# ---------------------------------------------------------------- r0282: the session start in whole seconds (Linux, client 0.2.71) ---
+def test_r0282_whole_second_session_start_is_the_safe_side(tmp_path, monkeypatch):
+    """Linux reads the transcript's birth through statx in whole seconds, rounded down. A settings file modified in that same second counts as
+    modified after the session started (not strict); one modified in an earlier second counts as before it."""
+    from pathlib import Path
+    home, proj = tmp_path / "home", tmp_path / "proj"
+    (home / ".claude").mkdir(parents=True)
+    (proj / ".claude").mkdir(parents=True)
+    managed = tmp_path / "managed"
+    managed.mkdir()
+    from deus_witness.hook import failsafe as _fs
+    monkeypatch.setattr(_fs, "MANAGED_DIR_OVERRIDE", str(managed))
+    user = home / ".claude" / "settings.json"
+    user.write_text(json.dumps(STRICT_SETTINGS))
+    tr = home / ".claude" / "projects" / "p" / "s.jsonl"
+    tr.parent.mkdir(parents=True)
+    tr.write_text("{}\n")
+    S = 1_800_000_000
+    monkeypatch.setattr(_sf, "_session_start", lambda t: S)
+    for mt, changed in ((S + 0.5, True), (S + 0.0, False), (S - 0.5, False)):
+        os.utime(user, (mt, mt))
+        since = _sf.settings_view(str(proj), {}, Path(home), str(tr), cli={})[1]["since_start"]
+        assert ("user" in since) is changed, (mt, since)
+
+
+@pytest.mark.skipif(not os.uname().sysname == "Linux", reason="statx birth time: Linux only")
+def test_r0282_linux_birth_is_whole_seconds_not_after_now(tmp_path):
+    p = tmp_path / "t.jsonl"
+    p.write_text("{}\n")
+    b = _sf._linux_birth(str(p))
+    if b is None:                                                 # a file system without birth times: fail closed (session start unknown)
+        assert _sf._session_start(str(p)) is None
+        return
+    assert isinstance(b, int) and b <= time.time() and b >= os.stat(p).st_mtime - 2, b

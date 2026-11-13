@@ -16,7 +16,7 @@ import { signBatch } from './sign.js';
 import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash } from './signview.js';
-import { askOf, dangerText, protectedTarget, reasonWords, genericDanger } from './ask.js';
+import { askOf, dangerText, protectedTarget, reasonWords, dangerCovered } from './ask.js';
 import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
 import { gateNeeded, actKey, refusedRecently, REFUSED_MS } from './gate.js';
@@ -450,7 +450,9 @@ async function single(me) {
   const dtx = dangerText(ds, r), rk = riskOf(r);
   // r0278 (L3 13.11 with the owner, find 3: "dangerous" four times on one screen): a generic line (a command that can delete / send, a request to
   // the internet) is not drawn next to the server's harm line at ANY level: the harm line and the level are on the first screen already
-  const dGeneric = genericDanger(dtx) && typeof r.harm === 'string' && !!r.harm && !!rk;
+  // r0280 (R-06): and a secret read whose signed words already name the keys / passwords (the line was "danger" no. 2 and held Allow
+  // behind a Details that opened by itself)
+  const dGeneric = dangerCovered(dtx, r) && !!rk;
   $('#dangerline').textContent = dGeneric ? '' : dtx; $('#dangerline').hidden = dGeneric || !dtx;      // 0.2.76: the mark in words, at the top
   if (typeof r.net_code === 'string' && r.net_code) {                  // s7 (O1): the code itself, as the witness got it (masked, <= 4 KB)
     const nc = inspectFields([], [['Code', clip4k(r.net_code)]]);          // 28.10: code keeps its lines
@@ -599,8 +601,8 @@ async function single(me) {
   const sl = held ? '' : secretLead(r);                                // N20 0.2.74: the page opens on what is asked: a secret read
   if (sl) {
     $('#boxlead').textContent = sl;
-    // 05.11: a secret read is said in the title (the page's own reading of the call); the server's sentence stays in Details, so everything signed is on the page
-    $('#title').textContent = ask.verb; $('#qw_det').textContent = 'Witness says: ' + qwView(r).what + '\n' + qwView(r).details;
+    // r0280 (R-06, rule "signed = shown"): the title stays the server's signed `what` (qwords names a secret read: "keys or passwords");
+    // the page no longer writes its own title over it (05.11 "Your agent wants to read a secret" was the page's words, not signed ones)
   }
   if (r.written_run && Array.isArray(r.written_run.writes)) {          // 28.10: what the agent wrote into the file this command runs (masked, <= 4 KB)
     let at = $('#advmark');                                            // r25 (s8 P5): in the server's order (the file the line runs first)

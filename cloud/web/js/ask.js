@@ -71,7 +71,7 @@ export function dangerText(ds, r) {
   if (t) return isGitHook(t.real) ? 'Dangerous: git runs this hook by itself (on commit, checkout, push): what is written here runs later without asking you.'
     : 'Dangerous: git\'s configuration can name programs git runs by itself, and where your code is sent. Approve only if you asked for exactly this change.';
   if (!/^true/.test(s)) return '';
-  if (s === 'true' && r && secretOf(r) !== null) return 'Dangerous: this reads a secret.';
+  if (s === 'true' && r && secretOf(r) !== null) return SECRET_DANGER;
   const m = /^true \((.*)\)$/.exec(s);
   if (m) return 'Dangerous: ' + m[1].replace(/shown above/g, 'shown below').replace(/see below/g, 'shown below') + '.';
   // 06.11 (owner's check: "curl -sI" was called a command that can delete files): a network call says what it does
@@ -83,6 +83,15 @@ export const NET_DANGER = 'Dangerous: this sends a request to the internet. Data
 // r0278 (L3 13.11 with the owner, find 3: "dangerous" four times on one screen): the two generic lines say no more than the server's own
 // harm line of this call (signed, on the first screen); a specific one (a secret, the agent's settings, a git hook, the server's reason) does
 export function genericDanger(t) { return t === GENERIC_DANGER || t === NET_DANGER; }
+export const SECRET_DANGER = 'Dangerous: this reads a secret.';
+// r0280 (R-06, uxpravila «секрет»: "danger" five times, Details opened by itself): the line of a secret read says no more than the server's
+// signed words when they already name the keys / passwords (qwords DANGER_WORDS "secrets"); a generic line says no more than any harm line.
+// Covered = not drawn on the page (and not a reason to hold Allow): the first screen says it once, in the server's words.
+export function dangerCovered(t, r) {
+  if (!r || typeof r.harm !== 'string' || !r.harm || !r.risk) return false;
+  if (genericDanger(t)) return true;
+  return t === SECRET_DANGER && /\b(keys?|passwords?|secrets?|credentials?)\b/i.test(String(r.what || '') + ' ' + r.harm);
+}
 
 // 04.11 (L3, red team p.4): why the witness asks, in words for the owner (the page never shows a reason code such as ESCALATE_COMMAND)
 export const REASON_WORDS = {

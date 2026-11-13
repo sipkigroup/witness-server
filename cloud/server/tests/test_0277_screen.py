@@ -68,6 +68,10 @@ def test_words_of_another_vocabulary_than_the_pinned_one(app, tmp_path, monkeypa
     for k, (w, h) in list(changed.items()):
         changed[k] = (w.replace("Your agent wants to", "Your helper would like to"), h)
     monkeypatch.setattr(qwords, "REASON_WORDS", changed)
+    # r0280: a read of a credential file is said in DANGER_WORDS["secrets"] (before: REASON_WORDS ESCALATE_PUBLISH, "send or publish something to
+    # secrets:<path>"): the changed dictionary changes those words too
+    dchanged = {k: (e[0].replace("Your agent wants to", "Your helper would like to"),) + tuple(e[1:]) for k, e in qwords.DANGER_WORDS.items()}
+    monkeypatch.setattr(qwords, "DANGER_WORDS", dchanged)
     assert vocab.digest() != pinned
     [(t, v, reason, rid)] = ag.tool("Read", {"file_path": envf})
     r, page = _approve(pers, rid)

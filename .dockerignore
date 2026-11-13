@@ -4,3 +4,6 @@
 **/.pytest_cache
 **/.hypothesis
 .env
+.venv
+data
+secrets

@@ -1,0 +1,77 @@
+# CI of the open witness server: the tests of README section 6 and the Docker path of README section 1, on a clean Linux runner.
+# No secrets, no registry pushes, nothing leaves the runner except the dependency downloads (pinned by hash) and the base image
+# (pinned by digest in the Dockerfile). Actions are pinned by commit SHA (the tag in the comment is for people only).
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (part ${{ matrix.part }} of 4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: dependencies (hash-locked, no resolver)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock
+          .venv/bin/pip install --require-hashes --no-deps -r cloud/server/requirements-test.lock
+          .venv/bin/pip check
+      - name: pytest (README section 6, a quarter of the test files)
+        working-directory: cloud/server
+        run: |
+          files=$(ls tests/test_*.py tests_flow/test_*.py tests_pack/test_*.py tests_prop/test_*.py | sort | awk -v k=${{ matrix.part }} 'NR%4==k')
+          ../../.venv/bin/python -m pytest -q -p no:cacheprovider $files
+
+  docker:
+    name: docker compose (build, start, /healthz, /checkpoint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build
+        run: docker compose build
+      - name: start
+        run: docker compose up -d
+      - name: healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/healthz; then echo; exit 0; fi
+            sleep 2
+          done
+          echo "witness not healthy after 120 s" >&2
+          exit 1
+      - name: checkpoint
+        run: |
+          curl -fsS http://127.0.0.1:8787/checkpoint | tee checkpoint.txt
+          test -s checkpoint.txt
+      - name: own signing key (GET /v1/witness)
+        run: curl -fsS http://127.0.0.1:8787/v1/witness
+      - name: logs
+        if: always()
+        run: docker compose ps -a; docker compose logs --no-color
+      - name: stop
+        if: always()
+        run: docker compose down -v

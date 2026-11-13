@@ -100,7 +100,9 @@ def test_fixtures_shapes_equal(app):
     got = act(c, hdr, "send_email", {"to": "bob@partner.example", "subject": "s"}).json()
     assert got["proof"] is None                                   # R-16 (0.1.1): proof on demand
     got = c.get("/v1/actions/" + got["rid"], headers=hdr).json()
-    assert set(got) == set(fx("action-allow")) and set(got["proof"]) == set(fx("action-allow")["proof"])
+    # r0269: `anchor` (unsigned time status of the receipt, on allow only) is an addition of the server to the 0.1 fixtures; it is in openapi.yaml
+    assert got["anchor"]["status"] in ("queued", "stamped")
+    assert set(got) - {"anchor"} == set(fx("action-allow")) and set(got["proof"]) == set(fx("action-allow")["proof"])
     got = act(c, hdr, "send_email", {"to": "x@evil.example", "subject": "s"}).json()
     assert set(got) == set(fx("action-deny-recipient"))
     got = act(c, hdr, "publish", {"channel": "b", "text": "t"}).json()

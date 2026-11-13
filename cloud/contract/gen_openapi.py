@@ -68,7 +68,9 @@ C = {
  "Action": obj({"agent": S, "class": S, "recipient": S, "data": arr(S), "amount": I, "currency": S, "reversible": B, "dangerous": B}, ["agent", "class"]),
  "FeedItem": obj({"rid": S, "t": I, "agent_id": S, "tool": S, "class": S, "recipient": nullable(S), "amount": nullable(I), "currency": nullable(S), "verdict": {"enum": ["allow", "deny", "defer", "pass"]}, "reason": S, "status": {"enum": ["pass", "allowed", "denied", "pending_approval", "approved", "refused", "consumed", "executed", "not_executed", "expired", "covered"]}, "args_preview": S}, ["rid", "t", "verdict", "reason", "status"]),
  "ActionResult": obj({"rid": S, "verdict": {"enum": ["allow", "deny", "defer", "pass"]}, "reason": S, "status": S, "action": nullable(R("Action")), "expires": I,
-    "aar_b64": nullable(S), "proof": nullable(obj({"entry_b64": S, "path_b64": arr(S), "checkpoint_b64": S, "approval": nullable(obj())})), "approval_url": nullable(S), "promise_b64": nullable(S)}, ["rid", "verdict", "reason", "status", "expires"]),
+    "aar_b64": nullable(S), "proof": nullable(obj({"entry_b64": S, "path_b64": arr(S), "checkpoint_b64": S, "approval": nullable(obj())})), "approval_url": nullable(S), "promise_b64": nullable(S),
+    # r0269 server addition (allow with a receipt only): unsigned time status of the receipt; the proof is the files, not this member
+    "anchor": obj({"status": {"enum": ["queued", "stamped"]}, "batch": S, "log_index": I, "stamp": obj({"size": I, "tsa": arr(S), "ots": nullable(S)})}, ["status"])}, ["rid", "verdict", "reason", "status", "expires"]),
  "Witness": obj({"iss": S, "alg": {"const": "EdDSA"}, "kid_hex": S, "pub_hex": S, "web_js_sha256": {"type": "object", "additionalProperties": S}}, ["iss", "alg", "kid_hex", "pub_hex"]),
 }
 spec = {"openapi": "3.1.0", "info": {"title": "Deus Witness Cloud", "version": "0.1.3", "description": "Machine form of cloud/ARHITEKTURA.md sections 5.1-5.3. Bytes are base64url without padding (*_b64). Times are Unix seconds. Errors: {error, detail}."},

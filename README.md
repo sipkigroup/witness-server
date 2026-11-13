@@ -174,11 +174,13 @@ unzip deus-witness-evidence-*.zip -d pack && python3 pack/verify/verify_pack.py 
 ```sh
 python3.12 -m venv .venv && . .venv/bin/activate
 pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock
-pip install -r cloud/server/requirements-test.txt
+pip install --require-hashes --no-deps -r cloud/server/requirements-test.lock
 cd cloud/server && python -m pytest -q tests tests_flow tests_pack tests_prop
 ```
 
-Some tests run the published client (`deus-witness`, pinned in `requirements-test.txt`) against this server.
+Some tests run the published client (`deus-witness`, pinned in `requirements-test.lock`) against this server.
+The same runs in CI (`.github/workflows/ci.yml`, in four parallel parts), together with `docker compose build`, `up -d` and
+`curl /healthz` and `/checkpoint` on a clean Linux runner.
 
 ## 7. Limits of this version
 

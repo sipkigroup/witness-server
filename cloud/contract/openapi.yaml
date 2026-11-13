@@ -1158,6 +1158,28 @@ components:
           anyOf:
           - *id001
           - type: 'null'
+        anchor:
+          type: object
+          properties:
+            status:
+              enum:
+              - queued
+              - stamped
+            batch: *id001
+            log_index: *id005
+            stamp:
+              type: object
+              properties:
+                size: *id005
+                tsa:
+                  type: array
+                  items: *id001
+                ots:
+                  anyOf:
+                  - *id001
+                  - type: 'null'
+          required:
+          - status
       required:
       - rid
       - verdict

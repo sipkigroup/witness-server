@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://witness.sipkigroup.com/sitemap.xml

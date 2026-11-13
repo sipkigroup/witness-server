@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/app.css"><link rel="manifest" href="/manifest.webmanifest"><title>Free during the beta - Deus Witness</title>
+<meta name="description" content="Free during the beta, for individuals and teams. No card. Self-hosting and enterprise terms: later."></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="/index.html">&larr; Home</a></p>
+<section class="card" id="plans">
+ <h1>Free during the beta</h1>
+ <p>Free during the beta, for individuals and teams. No card. Self-hosting and enterprise terms: later. Checking receipts and evidence packs is always free.</p>
+ <p class="hint">Preview software: not a finished product, no uptime promise. Beta limits: 25 agents and 5000 actions per day per account and 2000 per agent; a quick start account before its passkey, 2000 a day (allowed reads such as Read, Grep and Glob do not count; they have their own high ceiling).</p>
+ <form id="teamreq">
+  <h3 class="small">Self-hosting or enterprise questions</h3>
+  <label for="tr_email">Work e-mail</label><input id="tr_email" type="email" maxlength="254" required autocomplete="email">
+  <label for="tr_text">Your team and what your agents do</label><textarea id="tr_text" maxlength="2000" required></textarea>
+  <div hidden><label for="tr_site">Leave this empty</label><input id="tr_site" tabindex="-1" autocomplete="off"></div>
+  <p class="row"><button class="btn" type="submit">Send request</button></p>
+  <p class="hint">We keep only what you type here, for up to 180 days, to answer you. No account needed. Or write to <a href="mailto:support@sipkigroup.com?subject=Self-hosting%20or%20enterprise">support@sipkigroup.com</a>.</p>
+  <p id="tr_msg" class="notice" hidden></p>
+ </form>
+</section>
+</main>
+<footer>Deus Witness preview. Draft specification, not yet submitted to the IETF, not a standard.</footer>
+<script type="module" src="/js/boot.js"></script>
+<script type="module" src="/js/index.js"></script>
+</body></html>

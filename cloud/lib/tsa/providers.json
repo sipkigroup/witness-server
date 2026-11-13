@@ -1,0 +1,11 @@
+{
+ "_note": "A provider is queried only if take=true AND terms=allowed AND its root (ca, relative to this folder) is on disk; names in EXCLUDED (server/app/jobs.py) are never queried. See USLOVIYA.md. None of these stamps is qualified (eIDAS): never call them qualified or legally binding.",
+ "providers": [
+  {"name": "freetsa", "url": "https://freetsa.org/tsr", "ca": "ca/freetsa.pem", "take": true, "terms": "allowed",
+   "label": "FreeTSA (RFC 3161, not qualified, no SLA, own root)",
+   "terms_ref": "freetsa.org: commercial use allowed, 1 request/s per IP, no SLA - research GPT-2728 (18.10.2026), to be quoted first-hand in USLOVIYA.md; root ca/freetsa.pem not yet in the repository (the build session has no route to freetsa.org)"},
+  {"name": "digicert", "url": "http://timestamp.digicert.com", "ca": "ca/digicert.pem", "take": false, "terms": "unconfirmed",
+   "label": "DigiCert (RFC 3161, not qualified)",
+   "terms_ref": "off until DigiCert confirms in writing that stamping non-code-signing hashes for a commercial service is allowed (and at what rate)"}
+ ]
+}

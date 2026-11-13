@@ -1,0 +1,361 @@
+openapi: 3.1.0
+info:
+  title: Deus Witness Cloud 0.2.13-0.2.15 (new paths only)
+  version: 0.2.15
+  description: 'Confirmation levels (phone / laptop), delegation in the signed team
+    policy (rules.delegation, see openapi-0.2.yaml PolicyRules), the wait of a phone
+    declared with a recovery code. Errors: {error, detail}.'
+servers:
+- url: https://witness.sipkigroup.com
+paths:
+  /api/confirm-rules:
+    get:
+      summary: '0.2.13: where approvals may be signed: phone_for (risky | all) and
+        the laptop-level reasons'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmRules'
+        default: &id001
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security: &id002
+      - cookieSession: []
+    put:
+      summary: '0.2.13: owner, step-up. Tightening to `all` with any step-up; loosening
+        back only with a step-up by a phone-class key (403 DEVICE_LEVEL)'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmRules'
+        default: *id001
+      security: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                phone_for:
+                  enum:
+                  - risky
+                  - all
+              required:
+              - phone_for
+  /api/auth/keys/{kid}/device:
+    post:
+      summary: '0.2.13/0.2.14: mark a passkey phone or laptop; step-up. Demoting or
+        removing a phone-class key needs a phone-class signature; promoting needs
+        ANOTHER phone-class key, except the first marking of an account that never
+        had a phone (0.2.15: closed while a recovery code was used lately or a declared
+        phone waits). 403 DEVICE_LEVEL'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kid_hex: &id003
+                    type: string
+                  device:
+                    enum:
+                    - phone
+                    - laptop
+                required:
+                - kid_hex
+                - device
+        default: *id001
+      security: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device:
+                  enum:
+                  - phone
+                  - laptop
+              required:
+              - device
+      parameters:
+      - name: kid
+        in: path
+        required: true
+        schema: *id003
+  /api/auth/keys/{kid}/cancel-phone:
+    post:
+      summary: '0.2.15: "this was not me". A key declared the new phone with a recovery
+        code (it waits, phone_not_before) loses the claim for good: it stays a laptop
+        key, its sessions end, every unused recovery code stops. Step-up with a phone-class
+        key of the person; with no phone, any OTHER active key that does not wait
+        itself. 403 DEVICE_LEVEL, 409 NOT_PENDING. Recorded as a key_device row {cancelled:
+        true}'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kid_hex: *id003
+                  device:
+                    const: laptop
+                  cancelled:
+                    const: true
+                  recovery_codes_stopped: &id004
+                    type: integer
+                  next: *id003
+                required:
+                - kid_hex
+                - cancelled
+                - recovery_codes_stopped
+        default: *id001
+      security: *id002
+      parameters:
+      - name: kid
+        in: path
+        required: true
+        schema: *id003
+  /api/org/phone-lift:
+    post:
+      summary: '0.2.15: open the request with which k >= 2 OTHER members (rule `recovery`
+        of the team policy) end the wait of a member''s recovery-declared phone; typ
+        application/dw-phone-lift+cbor over CDE {v: dw-phone-lift-0.1, principal,
+        kid, not_before, nonce}. The person never signs it (409 RECOVERY_SELF). 409
+        NO_RECOVERY_RULE, NOT_PENDING, WQ_POLICY_UNKNOWN'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  req_id: *id003
+                  needs:
+                    type: array
+                    items: &id006
+                      type: object
+                      properties:
+                        role: *id003
+                        k: *id004
+                      required:
+                      - role
+                      - k
+                  kid_hex:
+                    type: string
+                    pattern: ^[0-9a-f]{64}$
+                  not_before: *id004
+                  sign_url: *id003
+                required:
+                - req_id
+                - needs
+                - kid_hex
+                - not_before
+        default: *id001
+      security: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_id: *id003
+              required:
+              - user_id
+  /api/agents/{aid}/delegation:
+    get:
+      summary: '0.2.13: the agent''s delegation (current and the last 50 rows); policy_ver
+        = the signed policy version that set it (null: server-side)'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationView'
+        default: *id001
+      security: *id002
+      parameters:
+      - name: aid
+        in: path
+        required: true
+        schema: *id003
+    put:
+      summary: 'Owner, step-up. 0.2.15: drafts policy version N+1 with rules.delegation
+        set for this agent (plus every server-side delegation, moved in) and opens
+        its signature request (rule `policy`). An agent the policy in force does not
+        name yet is also applied at once (period before the transfer); a named one
+        changes only when the version is signed (waits_for_signatures). 422 NOT_MEMBER,
+        SELF_APPROVAL, BAD_DELEGATION, POLICY_MALFORMED; 409 NOT_A_TEAM'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/DelegationView'
+                - type: object
+                  properties:
+                    can_confirm_now:
+                      type: array
+                      items: *id003
+                    policy_request:
+                      $ref: '#/components/schemas/PolicyRequest'
+                    in_signed_policy: &id005
+                      type: boolean
+                    waits_for_signatures: *id005
+                  required:
+                  - policy_request
+                  - in_signed_policy
+                  - waits_for_signatures
+        default: *id001
+      security: *id002
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                operator_user_id: *id003
+                approvers:
+                  anyOf:
+                  - type: array
+                    items: *id003
+                  - type: 'null'
+                days: *id004
+              required:
+              - operator_user_id
+      parameters:
+      - name: aid
+        in: path
+        required: true
+        schema: *id003
+    delete:
+      summary: 'Owner, step-up. Named in the signed policy: drafts the version without
+        it (policy_request); else ends the server-side row at once'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/DelegationView'
+                - type: object
+                  properties:
+                    policy_request:
+                      $ref: '#/components/schemas/PolicyRequest'
+                    in_signed_policy: *id005
+                    waits_for_signatures: *id005
+        default: *id001
+      security: *id002
+      parameters:
+      - name: aid
+        in: path
+        required: true
+        schema: *id003
+components:
+  securitySchemes:
+    cookieSession:
+      type: apiKey
+      in: cookie
+      name: dw_session
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: *id003
+        detail: *id003
+      required:
+      - error
+    ConfirmRules:
+      type: object
+      properties:
+        phone_for:
+          enum:
+          - risky
+          - all
+        levels:
+          type: object
+      required:
+      - phone_for
+    Delegation:
+      type: object
+      properties:
+        id: *id004
+        agent_id: *id003
+        operator_user_id: *id003
+        approvers:
+          anyOf:
+          - type: array
+            items: *id003
+          - type: 'null'
+        until:
+          anyOf:
+          - *id004
+          - type: 'null'
+        set_by: *id003
+        set_at: *id004
+        ended_at:
+          anyOf:
+          - *id004
+          - type: 'null'
+        ended_by:
+          anyOf:
+          - *id003
+          - type: 'null'
+        policy_ver:
+          anyOf:
+          - *id004
+          - type: 'null'
+      required:
+      - agent_id
+      - operator_user_id
+      - set_at
+    DelegationView:
+      type: object
+      properties:
+        current:
+          anyOf:
+          - $ref: '#/components/schemas/Delegation'
+          - type: 'null'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/Delegation'
+      required:
+      - current
+      - history
+    PolicyRequest:
+      type: object
+      properties:
+        req_id: *id003
+        policy_ver: *id004
+        needs:
+          type: array
+          items: *id006
+        sign_url: *id003
+        note: *id003
+      required:
+      - req_id
+      - policy_ver
+      - needs

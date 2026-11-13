@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Signature needed - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow">
+<p><a href="team.html">&larr; Team</a></p>
+<h1 id="head">Waiting for signatures</h1>
+<div id="msg" class="notice" hidden></div>
+<section id="box" class="card" hidden>
+ <p id="intro"></p>
+ <p class="progress" id="prog"></p>
+ <dl class="kv" id="needs"></dl>
+ <h3 id="whathead">What you sign</h3>
+ <div id="what"></div>
+ <div id="diff"></div>
+ <details><summary>Show exact bytes</summary>
+  <h3>Payload (CDE, hex) - encoded by this page from the fields above</h3><pre id="hexp"></pre>
+  <h3>Challenge (SHA-256, hex)</h3><pre id="hexc"></pre>
+  <p class="hint">The page encoded the fields itself and compared the result with the bytes the server holds; it signs only if both are identical. challenge = SHA-256("deus-aar-wa-0.1" 0x00 typ 0x00 payload): an ordinary passkey signature, the server collects the signatures of the team.</p>
+ </details>
+ <div class="row"><button id="signbtn" class="btn big" type="button">Sign with passkey</button></div>
+ <p class="hint">Honest limit: your passkey device cannot show you this document; you trust this page. Other signers see the same fields on their own devices.</p>
+</section>
+<section id="done" class="card" hidden><h2 id="donehead"></h2><p id="donetext"></p><p><a class="btn" id="donelink" href="team.html">Back to team</a></p></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/sign_request.js"></script>
+</body></html>

@@ -1,0 +1,34 @@
+{
+ "account": "929bbd10cc726f94298e706a89be35b0",
+ "principal": "dw:929bbd10cc726f94298e706a89be35b0",
+ "witness": {
+  "kid_hex": "537d318941c658f00f184a6e4c92857a6f1bc1d78341f108afe6ab51afffad9e",
+  "pub_hex": "55154f42065ea5a1bea05463826be2684eb92df92c100027aabaae57ca554207",
+  "alg": "EdDSA",
+  "iss": "https://witness.test"
+ },
+ "created_t": 1792431897,
+ "files": {
+  "README.txt": "61458407e62031d3e2394751dbc61b095ab675dad1b7ff2bb04e0e4e05c0fb00",
+  "checkpoints/8.cose": "ee0b909722d7047fcc4ec5ec183ca6cd3a4ba76287c725697411a28dae7084d1",
+  "ledger/ledger.cose": "172214a0af880bb03302a854ce65779074739c0fcea884053749baeee5d36cae",
+  "receipts/r_2Q3JOGHAMOR3HD5PBWFEMBDU7I.aar.cose": "19886bd1eebcd6a79a953c93075befa5f7f7c2cadb4044cf0df57043006f42e8",
+  "receipts/r_FWHI2LLFHI6AVOLNRB55HFGA6A.aar.cose": "0345b5d46638e12b0de6715ef510e54dcb3eb6654e70af61190ca28bef01dc33",
+  "receipts/r_LDT3RZQX3WNR5XDLPFOYLLPBDM.aar.cose": "4ee9539c87a1cebc53316db31233aaee2d95eb088cb29bf3552ebd32077d9672",
+  "registry.json": "21065d7548686616301f5c51c66c546187e6e0ee404a087b9961295be43cae08",
+  "verify/merklecache.py": "0e8f663e03b13928dccb41ec75ff65500546fbdc7f4875768b709b4501ad23e9",
+  "verify/registry_wa.py": "0f94c15bf8109021a5ba0053f867eedfdaee538ad1a75d2c2ce1c750e5f4fe0a",
+  "verify/svidetel_v4/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "verify/svidetel_v4/aar.py": "aa66c5f4f8f6fc446a87e57479c2aabe117a0520496ae05e403544bc868dde77",
+  "verify/svidetel_v4/checkpoint.py": "de0ad726fb7c04fae2d9b16a7a1499af8f41f186dabb186c3c09335c546950bc",
+  "verify/svidetel_v4/cose.py": "6351e4325979fe829fab2698c3e358b390edc02967b7b0111c398d20ed4ab238",
+  "verify/svidetel_v4/decide.py": "097139c9754fe0c9c4bc8da1b170975ada7e85ebd9c47ee4a818922e9ac74bf4",
+  "verify/svidetel_v4/registry.py": "8598613a77bcad325ce74bd9adb6db5ea0b081ff2f1b1013277b9dbde5080cc1",
+  "verify/svidetel_v4/schema.py": "deea6207fceabf0ca6fe6fd9d8df1aa80b15f87a7d0ab4b3b1f7b757601115ae",
+  "verify/svidetel_v4/state.py": "ac720210d35b28367ebb6d3d4f0f681e06c0d964ae66b72d46b7945f42f2f2d7",
+  "verify/svidetel_v4/verify.py": "be4fce512e457b75f29465e56e86cce688b89bbd12f5e560e9b09ad21202d8ce",
+  "verify/verify_pack.py": "30110b700d77336ebf4245eed1a1a465eb863c59a2023803572fdf1fd6b56c09",
+  "verify/wa_profile.py": "2b8632cf418727e62c6334097d4319cdc699dd2c5a40be340ce94f64f73d87b7",
+  "web_js_sha256.json": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+ }
+}

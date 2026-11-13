@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Devices - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<h1>Devices</h1>
+<div id="msg" class="notice" hidden></div>
+<div class="card">
+ <h2>Your passkeys</h2>
+ <p class="hint">Each passkey lives on one device (a phone, a laptop, a hardware key). Any active one signs you in and signs for your own account.
+ Keep at least two, on different devices: then losing one is an inconvenience, not a lock-out.</p>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Name</th><th>Key</th><th>Device</th><th>Status</th><th>Last used</th><th></th></tr></thead><tbody id="keys"></tbody></table></div>
+</div>
+<div class="card">
+ <h2>Add a passkey</h2>
+ <p>Create a passkey on another device or a hardware key, then confirm it with a passkey you already use. The confirmation is a signature
+ over exactly that new key; it is recorded in the key registry and shows in your evidence pack. Your other devices get a notification.</p>
+ <label for="label">Name for the new passkey</label><input id="label" maxlength="40" placeholder="e.g. YubiKey, work laptop">
+ <label for="device">This passkey is on</label><select id="device"><option value="phone">my phone (a separate device: confirms everything)</option><option value="laptop">this computer (confirms only ordinary project commands)</option></select>
+ <p class="hint">Money, deleting, sending outside, secrets and dangerous commands are confirmed on the phone; a passkey of the computer the agent runs on confirms only ordinary commands of the project. A passkey that syncs between your devices can be used on both: mark it by where you use it.</p>
+ <p class="hint">On this computer the browser may offer "use a phone or tablet" (QR code) or a security key: choose the device that should hold the new passkey.</p>
+ <p><button id="add" class="btn" type="button">Add passkey</button></p>
+ <div id="addstep" class="notice warn" hidden></div>
+ <p><button id="confirm" class="btn" type="button" hidden>Confirm with a passkey you already use</button></p>
+</div>
+<div class="card" id="rulecard">
+ <h2>Where approvals are confirmed</h2>
+ <label class="check"><input type="checkbox" id="phoneall"> Every approval on the phone (also ordinary project commands)</label>
+ <p class="hint">Off: a passkey of this computer may confirm ordinary commands of the project; everything else needs the phone. Turning this off again needs a confirmation with your phone's passkey.</p>
+</div>
+<div class="card" id="revcard" hidden>
+ <h2>Mandates signed by a removed passkey</h2>
+ <p>They stay valid: each signature was good when it was recorded, and the evidence pack still verifies. If you do not trust them any more
+ (for example the phone was stolen while unlocked), revoke them here with a current passkey: one signature per 20 mandates.</p>
+ <div id="revlist"></div>
+</div>
+<div class="card">
+ <h2>Recovery codes</h2>
+ <p id="codestate">-</p>
+ <p><a class="btn ghost" href="recovery-codes.html">Recovery codes</a></p>
+</div>
+<div class="card" id="delcard">
+ <h2>Delete account</h2>
+ <p>Erases your agents, API keys, mandates, requests and approvals, the closed-data words, recovery codes, your name and every session; your passkeys stop working for good. You confirm with your passkey.</p>
+ <ul class="hint" id="delkept"></ul>
+ <label for="delname">Type the account name <strong id="delwho"></strong> to confirm</label><input id="delname" autocomplete="off" maxlength="80">
+ <p><button id="delgo" class="btn danger" type="button" disabled>Delete account for good</button></p>
+ <div id="delmsg" class="notice" hidden></div>
+</div>
+<div class="card">
+ <h2>Honest limits</h2>
+ <ul class="hint">
+  <li>Removing a passkey stops it at once on this service: it cannot sign in, approve or sign anything. It does not erase it from the lost device.</li>
+  <li>Removing does not undo what it signed before. That is on purpose: a third party can still check old mandates.</li>
+  <li>In a team, the policy names one key per person. A new passkey signs for the team only after the other members replace your key (Team page).</li>
+  <li>Agent API keys are separate from passkeys: if you think someone used your session, also recreate the agents' keys.</li>
+ </ul>
+</div>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/devices.js"></script>
+</body></html>

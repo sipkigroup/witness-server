@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Create account - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow">
+<h1>Create account</h1>
+<p>No password. Your device creates a passkey (fingerprint, face, PIN, or a phone via QR code).</p>
+<form id="f" class="card">
+ <label for="name">Display name <span class="hint">(your team sees it; in a team it becomes your label in the signed policy, so do not use an e-mail address)</span></label>
+ <input id="name" name="name" autocomplete="nickname" maxlength="60" required>
+ <p><button id="go" class="btn big" type="submit">Create passkey</button></p>
+ <p class="hint">What we store and how deletion works: <a href="/privacy.html">privacy summary</a>.</p>
+ <div id="msg" class="notice" hidden></div>
+ <p class="hint">Already registered? <a href="login.html">Sign in</a>. If you lose all copies of your passkey you will need a new account (synced passkeys on iCloud or Google make this unlikely).</p>
+</form>
+<section id="card" class="card" hidden>
+ <h2>Your key card</h2>
+ <p>This identifies your signing key. Please save it (screenshot or note). Later it appears in your evidence pack, so you can check that the key was not swapped.</p>
+ <div id="short" class="keycard"></div>
+ <dl class="kv"><dt>Key ID (kid)</dt><dd class="mono" id="kid"></dd></dl>
+ <p class="hint">Honest limit: we register the key on our own site, so this card cannot detect a swap made at the moment of registration.</p>
+ <p><a class="btn big" id="cont" href="app.html">Continue to dashboard</a></p>
+</section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/signup.js"></script>
+</body></html>

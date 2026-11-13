@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Tool catalog - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="app.html">&larr; Dashboard</a></p>
+<h1>Tool catalog of <span id="agentname"></span></h1>
+<div id="msg" class="notice" hidden></div>
+<section class="card" id="cov"></section>
+<section class="card">
+ <h2>Draft tool map</h2>
+ <p class="hint">The proxy sent the list of MCP tools and their argument schemas. Arguments with a known meaning (to, cc, channel, path, subject, body, amount...) are mapped automatically. Every argument marked UNKNOWN needs your decision: until then that tool's calls with it are refused (TOOL_ARGS_UNMAPPED).</p>
+ <p id="drift" class="notice warn" hidden></p>
+ <div id="tools"></div>
+ <p class="notice warn">After applying you need a new mandate: the signed mandate is tied to the tool map, so every call of this agent is refused (TOOLMAP_CHANGED) until the signers sign a new one.</p>
+ <div id="applymsg" class="notice" hidden></div>
+ <div class="row"><button id="apply" class="btn big" type="button" disabled>Apply tool map</button><a id="newm" class="btn ghost" href="mandate.html" hidden>Sign a new mandate</a></div>
+ <p class="hint" id="left"></p>
+ <details><summary>Show the tool map that will be saved</summary><pre id="tmjson"></pre></details>
+</section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/catalog.js"></script>
+</body></html>

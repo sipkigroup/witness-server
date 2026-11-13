@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Claude Code headless mode (claude -p): permissions, approvals and CI</title><meta name="description" content="What claude -p does with a call that needs approval, how to set allowedTools and permission modes, what --bare skips, and a GitHub Actions setup."><link rel="canonical" href="https://witness.sipkigroup.com/dl/docs/claude-code-headless-mode-permissions.html"></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Claude Code headless mode (claude -p): permissions, approvals and CI</h1>
+<p>In headless mode (<code>claude -p</code>) nobody can answer a permission prompt. Since v2.1.302 a <code>-p</code> run with no permission mode set starts in Manual mode, and "Calls needing approval are denied unless you approve them with an allow rule, hook, <code>canUseTool</code> callback, or <code>--permission-prompt-tool</code>" (Permission modes page). So a headless run needs its permissions decided before it starts: a list in <code>--allowedTools</code>, a mode in <code>--permission-mode</code>, and, when nobody is around, <code>--permission-prompts none</code>. Refused calls are listed in <code>permission_denials</code> in the JSON output. Checked against Claude Code 2.1.312 and the official <a href="https://code.claude.com/docs/en/headless">Headless</a>, <a href="https://code.claude.com/docs/en/permission-modes">Permission modes</a>, <a href="https://code.claude.com/docs/en/permissions">Permissions</a>, <a href="https://code.claude.com/docs/en/cli-reference">CLI reference</a> and <a href="https://code.claude.com/docs/en/github-actions">GitHub Actions</a> pages.</p>
+<h2>What happens to each call in -p</h2>
+<table><tr><th>The call</th><th>In a plain <code>claude -p</code> run</th></tr><tr><td>needs no approval (reads in the working directory, built-in read-only commands)</td><td>runs</td></tr><tr><td>matches <code>--allowedTools</code> or <code>permissions.allow</code></td><td>runs</td></tr><tr><td>matches a deny rule</td><td>refused</td></tr><tr><td>would prompt (Bash, Edit, WebFetch, MCP not on any list)</td><td>refused, unless a hook, <code>--permission-prompt-tool</code> or an SDK callback approves it</td></tr><tr><td>an MCP tool marked <code>requiresUserInteraction</code></td><td>refused in <code>dontAsk</code>; an <code>allow</code> from <code>--permission-prompt-tool</code> is turned into a deny</td></tr><tr><td>a connector tool your organization set to <code>ask</code></td><td>refused in <code>dontAsk</code>, even when an allow rule matches</td></tr></table>
+<p>The run itself continues: Claude gets the refusal as a tool result and works around it, or stops. Check <code>permission_denials</code> in <code>--output-format json</code> and fail the job when a call you needed was refused.</p>
+<h2>Choose a baseline</h2>
+<p><strong>List what may run.</strong> <code>--allowedTools</code> uses permission rule syntax: "The trailing <code> *</code> enables prefix matching, so <code>Bash(git diff *)</code> allows any command starting with <code>git diff</code>. The space before <code>*</code> is important" (Headless page).</p>
+<pre><code>claude -p &quot;Run the tests and fix the failing one&quot; \
+  --allowedTools &quot;Read,Edit,Bash(npm test),Bash(git diff *)&quot; \
+  --permission-mode dontAsk --permission-prompts none --output-format json</code></pre>
+<p><strong>Pick a mode on purpose.</strong> The Headless page lists three for <code>-p</code>:</p>
+<ul>
+<li><code>dontAsk</code>: "Claude Code denies every call that would otherwise prompt, which is useful for locked-down CI runs". Listed calls still run. The same sentence adds that an installed mod "can still approve some of those calls".</li>
+<li><code>acceptEdits</code>: file writes and common filesystem commands (<code>mkdir</code>, <code>touch</code>, <code>mv</code>, <code>cp</code>) run; other shell commands still need a list entry.</li>
+<li><code>auto</code>: a classifier reviews most actions instead of you. It needs a supported model, and your organization can turn it off.</li>
+</ul>
+<p><code>--dangerously-skip-permissions</code> is the fourth option and belongs in a container or VM only; what it does and does not skip: <a href="claude-code-dangerously-skip-permissions.html">--dangerously-skip-permissions explained</a>.</p>
+<p><strong>Say that nobody is there.</strong> <code>--permission-prompts none</code> (v2.1.259+) matters most when the run has a permission host such as an SDK <code>canUseTool</code> callback or <code>--permission-prompt-tool</code>; "Without the flag, your run waits for that host to answer each permission request." With it, Claude Code removes tools that need a person, such as <code>AskUserQuestion</code>, and cancels MCP elicitation requests that no hook answers.</p>
+<h2>Two surprises from the project folder</h2>
+<p><strong>Project allow rules are ignored.</strong> <code>permissions.allow</code> in a repository's <code>.claude/settings.json</code> applies only after the workspace trust dialog, and "Claude Code shows the trust dialog in interactive sessions only". In <code>-p</code> those rules are "Not used" and Claude Code prints a <code>this workspace has not been trusted</code> warning to stderr. If your CI relies on a committed allow list, pass it with <code>--allowedTools</code> or <code>--settings</code> instead. Deny and ask rules apply without trust.</p>
+<p><strong>Project hooks and MCP servers do run.</strong> "Without <code>--bare</code>, a <code>-p</code> session runs the hooks in a project's <code>.claude/settings.json</code> and connects the servers in its <code>.mcp.json</code>, even in a folder you've never trusted." Before running <code>claude -p</code> on a repository you did not write, use <code>--setting-sources user</code>, <code>--bare</code>, or <code>--settings '{"disableAllHooks": true}'</code> (Permissions page).</p>
+<h2>What --bare skips</h2>
+<p><code>--bare</code> skips "auto-discovery of hooks, skills, custom commands, subagents, installed plugins, MCP servers, auto memory, and CLAUDE.md". It does not read your OAuth login: set <code>ANTHROPIC_API_KEY</code>. Load what you need explicitly: <code>--settings</code> for settings, <code>--mcp-config</code> for servers, <code>--plugin-dir</code> for a plugin. The Headless page also says <code>--bare</code> "will become the default for <code>-p</code> in a future release".</p>
+<p>That last line matters if a policy hook is part of your safety: a hook that is not loaded says nothing, and the run just goes on. After a run that should have been checked by a hook, confirm from the hook's own log that it ran; do not assume it.</p>
+<h2>GitHub Actions</h2>
+<p>The official action passes CLI flags through <code>claude_args</code> ("accepts any Claude Code CLI argument") and settings through the <code>settings</code> input. For a plain-text prompt, "Claude has no shell or GitHub API access until you grant the tools the prompt needs". A locked-down scheduled job:</p>
+<pre><code>on:
+  schedule:
+    - cron: &quot;0 9 * * *&quot;
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      id-token: write
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: &quot;Summarize yesterday&#x27;s commits and open issues&quot;
+          claude_args: |
+            --permission-mode dontAsk
+            --allowedTools &quot;mcp__github__list_commits,mcp__github__list_issues&quot;
+            --max-turns 10</code></pre>
+<p>Keep the job's GitHub <code>permissions</code> as narrow as the task: the token, not the prompt, decides what a push or comment can do. For the OS boundary under <code>claude -p</code> (sandbox, egress), see <a href="run-claude-code-unattended-cron-github-actions.html">Safe way to run Claude Code unattended</a>.</p>
+<h2>When a call should wait for a person</h2>
+<p><code>dontAsk</code> turns "needs approval" into "refused". For most CI work that is right. For a few actions (deploy, push to main, send, delete outside the checkout) you may want the run to wait for a specific person instead. Claude Code gives three places to plug that in; the waiting itself you build:</p>
+<ul>
+<li>A <code>PreToolUse</code> hook can hold the call until someone answers, within its <code>timeout</code>, and return <code>allow</code> or <code>deny</code>. A hook that crashes or times out lets the call through unless you make it fail closed: <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook examples</a>.</li>
+<li><code>--permission-prompt-tool mcp__&lt;server&gt;__&lt;tool&gt;</code> sends every would-be prompt to an MCP tool you run.</li>
+<li>A hook's <code>defer</code> "ends the turn so the tool can be resumed later"; it is meant for a program that runs <code>claude -p</code> as a subprocess and has its own UI.</li>
+</ul>
+<p>Deus Witness is one implementation of the first option. Its hook sends each call to the witness, which compares it with a mandate you signed with a passkey; a call outside the mandate waits for your passkey approval (phone or laptop) for up to <code>DEUS_WITNESS_HOOK_WAIT</code> seconds (0 by default, so it is refused at once), and is refused if you do not answer. <code>deus-witness run -- claude -p "..."</code> refuses to start with <code>--bare</code>, and after the run reports when the hook did not run at all. It decides tool calls only; keep the sandbox under it. Setup: <a href="require-approval-before-claude-code-runs-command-unattended.html">Require approval before Claude Code runs a command unattended</a>. If a deny rule seems not to apply in your CI, see <a href="claude-code-permissions-deny-not-working.html">permissions.deny not working?</a>.</p>
+</main></body></html>

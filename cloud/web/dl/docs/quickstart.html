@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Quickstart - Deus Witness docs</title></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Quickstart: put a witness in front of your agent (about 10 minutes)</h1>
+<p>Deus Witness checks every tool call of your AI agent against a mandate that you signed with a passkey, and gives you a signed receipt for it. This guide takes you from nothing to a verified evidence pack.</p>
+<h2>Fastest path for Claude Code: <code>deus-witness try</code> (about 2 minutes)</h2>
+<p>No sign-up form. Needs Claude Code 2.1.295+ and uv (<code>curl -LsSf https://astral.sh/uv/install.sh | sh</code>); macOS, Linux, WSL. In Claude Code run these three commands:</p>
+<pre><code>/plugin marketplace add sipkigroup/witness
+/plugin install deus-witness@sipkigroup
+/deus-witness:try</code></pre>
+<p>Then ask Claude anything; the first call that needs you waits on the page. "3 userConfig options not yet set" is expected.</p>
+<p>Or, without the plugin, in a terminal: <code>uvx --from deus-witness deus-witness try</code>.</p>
+<p>It makes a trial account and opens a browser page. The first call of yours that needs a decision waits on that page. You are asked for a passkey twice (one creates the passkey, one signs the rules), then for the waiting call itself. A trial account is erased after 7 days unless you press <strong>Keep this account</strong>. The manual path below (about 10 minutes) is for MCP servers.</p>
+<p><strong>Only want to look first?</strong> Open <code>/demo/</code> on the same server: five scripted attacks, what the witness decided, an evidence pack you can check in the browser. No account, about a minute. Come back here to connect your own agent.</p>
+<p>You need: a browser with passkey support (Chrome, Safari, Edge; a phone via QR also works), Python 3.10+ (with <code>pip</code> or <code>pipx</code>), and Claude Desktop or Claude Code (any MCP client works). The hosted instance at https://witness.sipkigroup.com is the only one today; the server is not published yet.</p>
+<h2>1. Sign up (1 min)</h2>
+<p>Open <code>/signup.html</code>, type a display name, press <strong>Create passkey</strong>, confirm with fingerprint, face or PIN.</p>
+<p>Expected: a <strong>key card</strong> (a few groups of hex) and a key ID. Save a screenshot; it reappears in your evidence pack.</p>
+<h2>2. Create an agent (1 min)</h2>
+<p>Dashboard, card <strong>Agents</strong>: type <code>my-agent</code> into <em>New agent name</em>, leave <em>Preset</em> on <code>demo (mail, purchase, delete, publish)</code>, press <strong>Create agent</strong>.</p>
+<p>Expected: a line <code>API key (shown once, copy it now): dwk_...</code> under the form. Copy it into a note now. (Lost it? Delete the agent and create a new one.)</p>
+<h2>3. Sign a mandate (2 min)</h2>
+<p>In the agent row choose <strong>Create mandate</strong>. On the page: tick <em>Allow purchases</em>, <em>Budget per 24 hours</em> <code>200</code>, <em>Max per single purchase</em> <code>100</code> (dollars); tick <em>Allow messages</em>, <em>Allowed recipient domains</em> <code>acme.example</code>; under <em>Closed data</em> <code>phone</code> is a ready checkbox (leave it ticked) and <code>home_address</code> goes into <em>Your own classes</em> as the word <code>home_address</code>; leave Deleting and Publishing as <em>Not specified</em>. Press <strong>Review and sign</strong>, read the summary (it must show <code>up to 100.00 USD each, 200.00 USD per 24 h</code>, <code>domains: acme.example</code>), press <strong>Sign with passkey</strong>.</p>
+<p>Expected: "Mandate active". Anything you did not list is not allowed.</p>
+<p>Shortcut: right after <strong>Create agent</strong> (preset <code>demo</code>) press <strong>Next: sign the example mandate</strong>. The Mandate page opens with exactly these values filled in; review them, press <strong>Review and sign</strong>, then <strong>Sign with passkey</strong>. Copy the API key first: it is shown only once.</p>
+<h2>4. Install the client (1 min)</h2>
+<pre><code>pip install deus-witness</code></pre>
+<p>(<code>pipx install deus-witness</code> works too and keeps it out of your other Python projects. If <code>pip</code> complains about an "externally managed environment", use a venv: <code>python3 -m venv ~/dw &amp;&amp; ~/dw/bin/pip install deus-witness</code>, then write the full path <code>~/dw/bin/deus-witness-mcp</code> and <code>~/dw/bin/deus-witness-demo-tools</code> wherever the commands below say <code>deus-witness-mcp</code> / <code>deus-witness-demo-tools</code>.) Expected: <code>deus-witness-mcp</code> and <code>deus-witness-demo-tools</code> on your PATH. Check: <code>deus-witness-mcp --help</code>.</p>
+<p>Fallback if PyPI is not reachable: the same package is served as a wheel by your witness server under <code>/dl/</code> (file <code>deus_witness-&lt;version&gt;-py3-none-any.whl</code>; <code>pip install &lt;that URL&gt;</code>).</p>
+<h2>5. Connect your client (1 min)</h2>
+<p>The proxy wraps any MCP server. The dashboard shows this same example (with your key filled in) right after you create an agent. For a try-out use the bundled demo tools (nothing real happens, each call is appended to <code>effects.jsonl</code> in <code>$DEUS_DEMO_OUT</code>).</p>
+<p>Claude Code:</p>
+<pre><code>claude mcp add witnessed --env DEUS_WITNESS_KEY=dwk_YOUR_KEY --env DEUS_WITNESS_URL=https://witness.sipkigroup.com --env DEUS_DEMO_OUT=$HOME/dw-demo -- deus-witness-mcp -- deus-witness-demo-tools</code></pre>
+<p>Check with <code>claude mcp list</code> (or <code>/mcp</code> inside Claude Code): <code>witnessed</code> must be listed. Claude Desktop (<code>claude_desktop_config.json</code>, restart the app; the file is at <code>~/Library/Application Support/Claude/</code> on macOS, <code>%APPDATA%\Claude\</code> on Windows):</p>
+<pre><code>{&quot;mcpServers&quot;: {&quot;witnessed&quot;: {&quot;command&quot;: &quot;deus-witness-mcp&quot;,
+  &quot;args&quot;: [&quot;--&quot;, &quot;deus-witness-demo-tools&quot;],
+  &quot;env&quot;: {&quot;DEUS_WITNESS_KEY&quot;: &quot;dwk_YOUR_KEY&quot;, &quot;DEUS_WITNESS_URL&quot;: &quot;https://witness.sipkigroup.com&quot;, &quot;DEUS_DEMO_OUT&quot;: &quot;/Users/you/dw-demo&quot;}}}}</code></pre>
+<p>No <code>pip install</code> and no PATH problems (a client that does not see your shell PATH): let <code>uvx</code> run the same proxy,</p>
+<pre><code>claude mcp add witnessed --env DEUS_WITNESS_KEY=dwk_YOUR_KEY --env DEUS_WITNESS_URL=https://witness.sipkigroup.com --env DEUS_DEMO_OUT=$HOME/dw-demo -- uvx deus-witness -- deus-witness-demo-tools</code></pre>
+<p>(in a JSON config: <code>"command": "uvx", "args": ["deus-witness", "--", "deus-witness-demo-tools"]</code>). Cursor reads the same JSON from <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project). Cursor's own shell and file-edit tools do not go through MCP; <code>deus-witness doctor</code> lists them as a bypass.</p>
+<p>For a real MCP server put its command after <code>--</code>, for example <code>npx -y @modelcontextprotocol/server-filesystem /tmp/sandbox</code> (use the <code>filesystem</code> preset when you create that agent).</p>
+<h2>6. Try it (2 min)</h2>
+<p>Ask your agent, one by one. A call that needs your approval makes the proxy wait about 50 s (two long polls of 25 s) before it answers, so the agent looks frozen: this is normal. Allowed and denied calls answer at once.</p>
+<ol>
+<li>"Send an email to colleague@acme.example saying the report is ready." Expected: it works (<code>allow</code>).</li>
+<li>"Send an email to stranger@other.example with my home address." Expected: the tool answers <code>Blocked by Deus Witness: RECIPIENT (receipt r_...)</code> and nothing is sent. This is the RECIPIENT rule, not the data rule. To see the data rule, add your real home address as a literal under Closed data (dashboard, data patterns, class <code>home_address</code>) and ask for a mail to colleague@acme.example that contains it: expected <code>DATA_FORBIDDEN</code>. A paraphrase of the address is not caught.</li>
+<li>"Publish 'Hello' to the channel blog." Expected after the wait (the result is marked as an error, but nothing was run): <code>Action NOT executed: waiting for the owner's approval.</code>, then <code>Receipt (rid): r_...</code>, then <code>The owner can approve it at: https://.../approve.html?rid=r_...</code>, then <code>After the owner has approved, retry the exact same call (same tool, same arguments). Do not change the arguments.</code></li>
+</ol>
+<h2>7. Approve (1 min)</h2>
+<p>Open the link (or the dashboard; the link must open on a device that can reach the server: <code>localhost</code> links work only on the machine that runs it; "Waiting for your approval"), read the action and the preview of the text below it (secrets are masked; the preview is shown by the page and is not itself signed; the signature covers a hash of everything the agent sent), press <strong>Approve</strong>, confirm with your passkey. The page may say "phone": your first passkey already counts as your phone key, so just press Approve. You need a separate phone only if you marked your key "this computer" on Devices, or you want a second device for the sake of safety. Ask the agent to publish again with the same text. Expected: it runs, <code>effects.jsonl</code> has exactly one <code>publish</code> line. Different text or a different channel needs a new approval.</p>
+<h2>8. Download and verify the evidence pack (1 min)</h2>
+<p>Dashboard, card <strong>Evidence pack</strong>, button <strong>Download evidence pack</strong> (a zip). Then:</p>
+<pre><code>unzip deus-witness-evidence-*.zip -d pack &amp;&amp; cd pack
+pip install cbor2 cryptography
+python verify/verify_pack.py . --offline</code></pre>
+<p>This runs the checker copy that sits inside the pack: fine for a first look, but a doctored pack can carry a doctored checker. For a check you can rely on, use the checker from the package instead: <code>pip install deus-witness</code>, then <code>deus-witness-verify-pack &lt;pack.zip&gt; --offline --witness-kid=&lt;the key id you fetched from /v1/witness&gt;</code> (see <code>verify.html</code>). Details: <code>verify.html</code>, section 1. Expected last line: <code>RESULT: VALID</code>. A line <code>anchors: NONE</code> on a fresh account is expected: the public time-stamps are added about an hour later, until then the witness alone vouches for the time. Edit any byte of <code>ledger/ledger.cose</code> and run again: <code>RESULT: INVALID</code>. Details: <code>verify.html</code>.</p>
+<h2 id="hook">9. Claude Code hook: the built-in Bash, Edit and Write (5 min)</h2>
+<p>The proxy covers MCP tools only. Claude Code also has built-in tools (shell, file edits, web fetch) that never touch MCP. The hook <code>deus-witness-hook</code> closes that road: Claude Code runs it before each of those calls, the witness judges the call, and it runs only if your mandate allows it. Needs Claude Code 2.1.295 or newer for the fail-closed setting below.</p>
+<p><strong>Came here after <code>deus-witness try</code>?</strong> The key is already saved in the key file and the trial rules are drafted: skip steps 1 and 2, do step 3 (no key in <code>env</code> needed) and the check in step 4. On this path a call that needs you waits up to 15 s (<code>DEUS_WITNESS_HOOK_WAIT</code>), then is refused with the approval link; touch the passkey on that page, then retry the same command (the plugin waits for you instead).</p>
+<ol>
+<li>In the dashboard, card <strong>Agents</strong>, create an agent with the preset <code>claude-code</code> and copy its key (<code>dwk_...</code>).</li>
+<li>Print the recommended mandate for your project and import it: <code>uvx --from deus-witness deus-witness-hook --print-form /path/to/your/project</code> (after <code>pip install deus-witness</code> the short form <code>deus-witness-hook --print-form ...</code> works; <code>uvx deus-witness-hook</code> alone does not, the command lives in the package <code>deus-witness</code>). On the Mandate page of the agent open <strong>Import from JSON</strong>, paste it, press <strong>Check</strong>, then <strong>Apply to the form</strong> and <strong>Review and sign</strong>. Nothing is signed by the import. The default form lets writes (Write, Edit, shell redirections) work inside the project and the temp directory only (<code>delete.allow_irreversible</code> is true there because the witness judges a write as an irreversible delete of its path); add <code>--no-irreversible</code> to print a read-only form that refuses every write. The form allows WebFetch only to documentation hosts (no <code>github.com</code>, <code>raw.githubusercontent.com</code>, gists or pastebins: anyone can publish there, so a request to them can carry your data out); add a host you need on the Mandate page, knowingly.</li>
+<li>Put this into <code>&lt;project&gt;/.claude/settings.json</code> (or <code>~/.claude/settings.json</code>):</li>
+</ol>
+<pre><code>{&quot;hooks&quot;: {
+  &quot;SessionStart&quot;: [{&quot;hooks&quot;: [{&quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;uvx --from deus-witness deus-witness-hook --session-start&quot;, &quot;timeout&quot;: 15}]}],
+  &quot;PreToolUse&quot;: [{&quot;matcher&quot;: &quot;Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|NotebookRead|Read|Grep|Glob|LS|WebFetch|WebSearch|ReadMcpResourceTool|ListMcpResourcesTool|mcp__.*&quot;,
+    &quot;hooks&quot;: [{&quot;type&quot;: &quot;command&quot;, &quot;command&quot;: &quot;uvx --from deus-witness deus-witness-hook || exit 2&quot;, &quot;timeout&quot;: 30, &quot;onFailure&quot;: &quot;block&quot;}]}]},
+ &quot;env&quot;: {&quot;DEUS_WITNESS_URL&quot;: &quot;https://witness.sipkigroup.com&quot;, &quot;DEUS_WITNESS_HOOK_TIMEOUT&quot;: &quot;20&quot;, &quot;DEUS_WITNESS_HOOK_WAIT&quot;: &quot;15&quot;}}</code></pre>
+<p>The key does not go into this file: <code>export DEUS_WITNESS_KEY=dwk_...</code> in the shell that starts <code>claude</code>, or put it under <code>env</code> in <code>&lt;project&gt;/.claude/settings.local.json</code>. With the package installed by <code>pip</code>/<code>pipx</code> write <code>deus-witness-hook</code> instead of <code>uvx --from deus-witness deus-witness-hook</code>.</p>
+<ol>
+<li>Check: <code>uvx --from deus-witness deus-witness-hook --doctor "$PWD"</code> must print <code>OK: fail-closed (onFailure block, || exit 2, timeouts in order)</code>; in Claude Code <code>/hooks</code> lists the hook. Then ask Claude Code to run <code>curl https://evil.example/x</code>: expected <code>Blocked by Deus Witness: RECIPIENT</code> (if you have already added the step 5 rules below, Claude Code refuses <code>curl</code> itself, before the witness is asked; that is the second layer working). A command that needs you (for example <code>rm -rf build</code>) is held: the hook answers <code>deny</code> with the approval link, because the owner approves in Witness (on the phone), not the person at the terminal. Retry the same command after you approved it.</li>
+</ol>
+<ol>
+<li>Add a second layer: Claude Code's own <code>permissions.deny</code> (recommended). Merge this into the same <code>settings.json</code> (next to <code>hooks</code>):</li>
+</ol>
+<pre><code>{&quot;permissions&quot;: {&quot;deny&quot;: [
+  &quot;Bash(curl *)&quot;, &quot;Bash(wget *)&quot;, &quot;Bash(nc *)&quot;, &quot;Bash(ncat *)&quot;, &quot;Bash(telnet *)&quot;, &quot;Bash(ssh *)&quot;, &quot;Bash(scp *)&quot;, &quot;Bash(sftp *)&quot;, &quot;Bash(rsync *)&quot;,
+  &quot;Bash(/usr/bin/curl *)&quot;, &quot;Bash(/usr/local/bin/curl *)&quot;, &quot;Bash(/opt/homebrew/bin/curl *)&quot;, &quot;Bash(curl -K*)&quot;, &quot;Bash(curl --config*)&quot;,
+  &quot;Bash(/usr/bin/wget *)&quot;, &quot;Bash(/usr/local/bin/wget *)&quot;, &quot;Bash(/opt/homebrew/bin/wget *)&quot;,
+  &quot;WebFetch(domain:gist.github.com)&quot;, &quot;WebFetch(domain:gist.githubusercontent.com)&quot;, &quot;WebFetch(domain:raw.githubusercontent.com)&quot;,
+  &quot;WebFetch(domain:pastebin.com)&quot;, &quot;WebFetch(domain:transfer.sh)&quot;, &quot;WebFetch(domain:webhook.site)&quot;,
+  &quot;Read(.env)&quot;, &quot;Read(.env.*)&quot;, &quot;Read(~/.ssh/**)&quot;, &quot;Read(~/.aws/**)&quot;, &quot;Read(~/.gnupg/**)&quot;,
+  &quot;Edit(.claude/**)&quot;, &quot;Edit(~/.claude/**)&quot;, &quot;Edit(.mcp.json)&quot;, &quot;Edit(~/.claude.json)&quot;
+]}}</code></pre>
+<p>Why: Claude Code evaluates deny rules first and "PreToolUse hook decisions don't bypass permission rules" (<a href="https://code.claude.com/docs/en/permissions">code.claude.com/docs/en/permissions</a>, section "Extend permissions with hooks"), so these rules hold even if the hook is missing, broken, switched off, or the witness answers <code>pass</code> for a call. They close the direct ways out of the machine (network tools, hosts where anyone can publish, SSH keys, <code>.env</code> files) and stop the agent from editing the settings that switch the hook off (<code>.claude/**</code>, <code>.mcp.json</code>, <code>~/.claude.json</code>). Limits you should know: a Bash rule "matches the command text Claude writes ... and isn't a security boundary around the program" (<code>env curl</code>, <code>curl -sK</code> or <code>sh -c 'curl ...'</code> are not matched; the common absolute paths are listed above; same page, "What a Bash rule doesn't match"), so this is a second layer behind the witness, not a replacement; for enforcement that does not depend on the command text use Claude Code's sandbox (network allowlist). <code>Bash(curl *)</code> also stops harmless <code>curl</code> calls: the agent reads allowed documentation with WebFetch instead (your mandate lists the domains). <code>Edit(.claude/**)</code> means you change your own settings by hand, not through the agent. Claude Code warns at startup about rules it does not understand (for example an unknown tool name).</p>
+<p>The three layers of the setting belong together: the hook answers <code>deny</code> itself on every error it can catch; <code>|| exit 2</code> blocks when the command is missing or broken; <code>"onFailure": "block"</code> blocks on a timeout or a crash (Claude Code below 2.1.295 silently drops that key, the SessionStart hook then warns you at every start). Keep <code>DEUS_WITNESS_HOOK_TIMEOUT</code> at least 5 s below <code>timeout</code>. <code>DEUS_WITNESS_HOOK_WAIT</code> lets a call wait up to 15 s for your tap on a trial account that is not claimed yet, instead of being refused at once. What the witness sees of these calls and what leaves your machine: <code>coverage.html</code>.</p>
+<h2>Without an MCP client: a script instead (3 min)</h2>
+<p>No Claude Desktop, no Claude Code? Steps 1 to 4 are the same (account, agent and key, mandate, <code>pip install deus-witness</code>); then the SDK does what the proxy does: it asks the witness, checks the signed receipt, and waits for you. Put this in <code>try_witness.py</code>:</p>
+<pre><code>import os
+from deus_witness import Witness
+
+w = Witness(os.environ[&quot;DEUS_WITNESS_URL&quot;], os.environ[&quot;DEUS_WITNESS_KEY&quot;])
+r = w.act(&quot;send_email&quot;, {&quot;to&quot;: &quot;colleague@acme.example&quot;, &quot;subject&quot;: &quot;Report&quot;, &quot;body&quot;: &quot;It is ready.&quot;})
+print(&quot;1:&quot;, r.verdict, r.reason)                 # allow OK (the receipt was checked)
+r = w.act(&quot;send_email&quot;, {&quot;to&quot;: &quot;stranger@other.example&quot;, &quot;subject&quot;: &quot;Hi&quot;, &quot;body&quot;: &quot;x&quot;})
+print(&quot;2:&quot;, r.verdict, r.reason)                 # deny RECIPIENT, nothing is sent
+call = (&quot;publish&quot;, {&quot;channel&quot;: &quot;blog&quot;, &quot;text&quot;: &quot;Hello&quot;})
+r = w.act(*call)
+print(&quot;3:&quot;, r.status, &quot;approve here:&quot;, r.approval_url)   # pending_approval: open the link, press Approve
+r = w.wait(r.rid, timeout=300, sent=call)       # waits until you decide
+print(&quot;4:&quot;, r.verdict, r.reason)                 # allow OK_APPROVED (Refuse gives deny REFUSED)</code></pre>
+<p>Run it with your key:</p>
+<pre><code>DEUS_WITNESS_URL=https://witness.sipkigroup.com DEUS_WITNESS_KEY=dwk_YOUR_KEY python3 try_witness.py</code></pre>
+<p>The script prints <code>3:</code> and the link, then waits. Open the link, press <strong>Approve</strong>; it prints <code>4: allow OK_APPROVED</code>. Your own code does the real action (send the mail, publish) only after <code>allow</code>. With a local server use its address (for example <code>http://localhost:8810</code>), and open the link on the same machine.</p>
+<p>Just <code>curl</code>? The same request without the receipt check (the script verifies the receipt; curl does not):</p>
+<pre><code>curl -s https://witness.sipkigroup.com/v1/actions -H &quot;Authorization: Bearer dwk_YOUR_KEY&quot; -H &quot;content-type: application/json&quot; \
+  -d &#x27;{&quot;tool&quot;:&quot;publish&quot;,&quot;args&quot;:{&quot;channel&quot;:&quot;blog&quot;,&quot;text&quot;:&quot;Hello&quot;}}&#x27;</code></pre>
+<p>The answer has <code>"status":"pending_approval"</code>, <code>rid</code> and <code>approval_url</code>. After you approve, ask again with the same body (same text): <code>"verdict":"allow"</code>, <code>"reason":"OK_APPROVED"</code>. <code>GET /v1/actions/&lt;rid&gt;?wait=25</code> (same header) waits up to 25 s for your decision.</p>
+<h2>Troubleshooting</h2>
+<ul>
+<li><code>deus-witness-mcp: command not found</code> in the client: the client does not see your shell PATH; use the full path of the command (<code>which deus-witness-mcp</code>).</li>
+<li>Passkey prompt does nothing: open the site by its exact host name (not by IP); passkeys are bound to the name.</li>
+<li><code>deus-witness-mcp: set DEUS_WITNESS_KEY ...</code> (the proxy does not start) or <code>WITNESS_NOT_CONFIGURED</code> (the hook): no agent key in the environment of the client. Create an agent (step 2) and put its key into <code>DEUS_WITNESS_KEY</code>.</li>
+<li><code>Blocked ... BAD_KEY</code>: the witness answered and refused the key (wrong, or the agent was deleted). The call did not run. Create a new agent on the Agents page and use its key.</li>
+<li><code>Blocked ... WITNESS_UNAVAILABLE</code>: the witness could not be reached (network, server down, rate limit); the code after it says which. The call did not run.</li>
+<li><code>Blocked ... NO_MANDATE</code>: sign a mandate for that agent first.</li>
+<li>Tool says <code>unreachable</code> and is blocked: by design the proxy fails closed when the witness cannot be reached.</li>
+<li>Pending approvals expire after 15 minutes.</li>
+</ul>
+<h2>What this does not do</h2>
+<p>Read the honest limits in <code>concepts.html</code> before relying on it. Short version: it covers only calls that pass through the proxy, the passkey cannot show you the mandate (you trust the page), and data matching is literal.</p>
+</main></body></html>

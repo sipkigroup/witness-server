@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Settings - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<h1>Settings</h1>
+<div class="card" id="xtcard">
+ <h2>Export tokens</h2>
+ <p>A CI job (for example the GitHub Action) downloads the evidence pack without your passkey: you issue it a short export token here,
+ bound to one agent. You confirm with your passkey.</p>
+ <ul class="hint" id="xtscope"></ul>
+ <div id="xtmsg" class="notice" hidden></div>
+ <div id="xtform">
+  <label for="xtagent">Agent</label><select id="xtagent"></select>
+  <p class="hint" id="xtnoagent" hidden>No agent yet: create one on the <a href="app.html">Dashboard</a> first.</p>
+  <label for="xtttl">Valid for (hours, 1 to 168)</label><input id="xtttl" type="number" inputmode="numeric" step="1" min="1" max="168" value="24">
+  <label for="xtlabel">Label (optional)</label><input id="xtlabel" maxlength="80" placeholder="e.g. GitHub Actions, repo acme/app">
+  <p><button id="xtnew" class="btn" type="button">Issue export token</button></p>
+ </div>
+ <div id="xtshown" class="notice warn" hidden></div>
+ <h3>Live tokens</h3>
+ <p class="hint" id="xtnone">No live export tokens.</p>
+ <div class="tablewrap" id="xttable" hidden><table class="stack"><thead><tr><th>Agent</th><th>Label</th><th>Issued</th><th>Expires</th><th>Used</th><th></th></tr></thead><tbody id="xtlist"></tbody></table></div>
+</div>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/settings.js"></script>
+</body></html>

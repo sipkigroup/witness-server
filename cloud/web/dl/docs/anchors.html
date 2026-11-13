@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Anchors - Deus Witness docs</title></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Anchors: Bitcoin as an internal guarantee, RFC 3161 timestamps</h1>
+<p>The ledger of each organisation is append-only and signed by the witness; checkpoints are collected into an hourly <strong>batch</strong> and the</p>
+<p>Merkle root of the batch is anchored outside. An anchor proves one thing: **this root (and so every checkpoint under it) existed no</p>
+<p>later than time T.** It does not prove that the actions were good, that the witness was honest about what it was asked, or anything</p>
+<p>about calls that never reached the witness (see the coverage page).</p>
+<h2>1. Bitcoin through OpenTimestamps (since 0.1)</h2>
+<ul>
+<li>What: the batch root is submitted to OpenTimestamps calendars; after the calendar's transaction is mined (hours), the <code>.ots</code> proof</li>
+</ul>
+<p>  can be upgraded and checked against a Bitcoin block header.</p>
+<ul>
+<li>What it proves: the root existed before that block. <strong>No trusted third party</strong>: anyone with a Bitcoin node (or block headers) can</li>
+</ul>
+<p>  check it; nobody, including us, can backdate it.</p>
+<ul>
+<li>Limits: <code>pending</code> for hours after the batch; precision is block time (minutes to hours); checking needs the <code>opentimestamps</code> tool and</li>
+</ul>
+<p>  block headers; it says nothing about time <em>after</em> the root was made.</p>
+<ul>
+<li>In the interface (profile <code>smb</code>) it is shown under "Details -&gt; internal guarantee": it is a free layer that protects the evidence</li>
+</ul>
+<p>  against our own later edits, not a headline feature for a small business.</p>
+<h2>2. RFC 3161 timestamps (0.2, second anchor)</h2>
+<ul>
+<li>What: the same batch root is sent as a timestamp request to each Time-Stamping Authority that is enabled (see section 3); the signed</li>
+</ul>
+<p>  responses (<code>.tsr</code>) and the TSA certificate chains go into the evidence pack (<code>anchors/&lt;batch&gt;.tsr.&lt;tsa&gt;</code>, roots in <code>anchors/tsa-ca/</code>).</p>
+<ul>
+<li>What it proves: the TSA signed that it saw the root at <code>genTime</code>. <code>verify_pack.py</code> checks it offline: the TSA signature, that</li>
+</ul>
+<p>  <code>messageImprint</code> equals the root, and <code>genTime</code> (<code>tsa &lt;batch&gt;: OK (&lt;tsa&gt;, ...)</code>).</p>
+<ul>
+<li><strong>A TSA is a trusted third party</strong> (unlike Bitcoin): you trust its key, its clock and its certificate chain; the root of trust in the</li>
+</ul>
+<p>  pack comes from the pack's author (the verifier prints its fingerprint; <code>--tsa-ca</code> lets you pin your own).</p>
+<ul>
+<li><strong>These are NOT qualified time stamps (eIDAS)</strong> and not "legally binding" anywhere: call them "RFC 3161 time stamp from FreeTSA".</li>
+</ul>
+<p>  Qualified stamps are separate paid services, not part of the free tier.</p>
+<ul>
+<li>Profile <code>enterprise</code> shows both anchors.</li>
+</ul>
+<h3>2.1 Switching it on: <code>DW_TSA_URL</code> (0.2.9)</h3>
+<p>Off by default: with neither <code>DW_TSA_URL</code> nor <code>DW_TSA=on</code> set, no timestamp request ever leaves the server.</p>
+<ul>
+<li><code>DW_TSA_URL=https://tsa.example/tsr</code> - the RFC 3161 endpoint of ONE TSA you chose (your company's TSA, or a public one whose terms</li>
+</ul>
+<p>  allow it: setting the URL is your statement that they do; see section 3 for the services excluded in code).</p>
+<ul>
+<li><code>DW_TSA_CA=/path/root.pem</code> - <strong>required</strong>: the TSA's root certificate (PEM or DER). Without it no reply can be verified, so the server</li>
+</ul>
+<p>  refuses to start rather than collect tokens nobody can check. Compare its fingerprint with the TSA's published one over a second channel.</p>
+<ul>
+<li><code>DW_TSA_NAME=corp-tsa</code> - optional short name (<code>a-z 0-9 -</code>, default: from the URL host); the token is <code>anchors/&lt;batch&gt;.tsr.&lt;name&gt;</code>.</li>
+<li>Checked at start-up: an <code>http(s)</code> URL with a host, no <code>user:password</code> in it, not Sectigo / Apple / GlobalSign / Entrust, a readable root;</li>
+</ul>
+<p>  otherwise the process does not start (<code>startup refused: DW_TSA_URL: ...</code>).</p>
+<ul>
+<li>Every batch (every 30 min, the same job as Bitcoin) asks this TSA once for a token over the batch root; the token is kept only if it</li>
+</ul>
+<p>  verifies against <code>DW_TSA_CA</code> (signature, imprint = root, chain, timeStamping EKU), next to the batch's <code>.json</code>/<code>.ots</code> in the anchors</p>
+<p>  folder, and goes into the evidence pack with the root (<code>anchors/tsa-ca/&lt;name&gt;.pem</code>). <code>verify_pack.py</code> checks it offline;</p>
+<p>  <code>--tsa-ca=&lt;dir&gt;</code> pins your own copy of the root instead of trusting the one in the pack.</p>
+<ul>
+<li>With <code>DW_ANCHOR=off</code> and <code>DW_TSA_URL</code> set, batches are still made and stamped by the TSA only (a closed perimeter with an internal TSA):</li>
+</ul>
+<p>  no Bitcoin, and no inclusion promises (those need <code>DW_ANCHOR=on</code>, 0.2.5).</p>
+<ul>
+<li>A TSA that is down or answers wrongly never fails the batch: the log says <code>tsa=0 ok failed=&lt;name&gt;</code>, the next batch asks again.</li>
+<li><code>DW_TSA=on</code> + <code>lib/tsa/providers.json</code> (section 3) still works; both can be on, a name is never asked twice.</li>
+<li>The browser check of the pack (<code>packcheck.js</code>) does not verify RFC 3161 tokens; <code>verify_pack.py</code> does.</li>
+</ul>
+<h2>3. Status in 0.2.1 - read this before relying on the second anchor</h2>
+<ul>
+<li>Which TSA may be asked (decision of 19.10.2026; the provider terms have not been read first-hand yet): a provider in <code>cloud/lib/tsa/providers.json</code> is queried only if <code>take: true</code> AND <code>terms: "allowed"</code> AND its root</li>
+</ul>
+<p>  certificate is on disk. <strong>FreeTSA</strong> is <code>take: true</code> (commercial use allowed per research, 1 request/s, no SLA, own root, not</p>
+<p>  qualified); <strong>DigiCert</strong> is off (<code>terms: "unconfirmed"</code>) until it confirms in writing. <strong>Sectigo, Apple, GlobalSign, Entrust</strong> are</p>
+<p>  excluded in the server (by name and by host): their free endpoints are for code signing only.</p>
+<ul>
+<li><strong>In fact no live TSA is asked yet</strong>: the FreeTSA root <code>ca/freetsa.pem</code> is not in the repository (the build sessions had no route to</li>
+</ul>
+<p>  freetsa.org), so the anchor job writes <code>tsa=0</code> and a WARN line. A person with a browser has to add the root (fingerprint checked over</p>
+<p>  two channels), check the provider's terms and make one live stamp.</p>
+<ul>
+<li>Even then there is ONE free TSA, not two: there is no promise of two free independent TSAs. A</li>
+</ul>
+<p>  second independent TSA = DigiCert after a written answer, or a paid TSA under contract.</p>
+<ul>
+<li>The whole path was exercised against <strong>two local test TSAs</strong> only. A run of the server's own pack tests</li>
+</ul>
+<p>  (19.10.2026) printed <code>tsa 20261019T020441Z-b2995c14: OK (tsa-a, tsa-b)</code> and, for the Bitcoin anchor with <code>DW_ANCHOR=off</code>,</p>
+<p>  <code>anchor 20261019T020441Z-b2995c14: pending (inclusion in batch root proven; not stamped)</code>.</p>
+<h2>4. Which anchor answers which question</h2>
+<table><tr><th>question</th><th>ledger + witness signature</th><th>Bitcoin (OTS)</th><th>RFC 3161 (each enabled TSA)</th></tr><tr><td>was entry N changed or removed later?</td><td>yes (hash chain, checkpoints)</td><td>yes, against our own later edits too</td><td>yes, for the batch time</td></tr><tr><td>did the root exist by time T?</td><td>no (the witness's own clock)</td><td>yes, block time, trustless</td><td>yes, <code>genTime</code>, trusting the TSA</td></tr><tr><td>how soon is it checkable?</td><td>at once</td><td>hours (<code>pending</code> first)</td><td>at once</td></tr><tr><td>who must be trusted?</td><td>the witness</td><td>nobody (Bitcoin consensus)</td><td>each TSA</td></tr><tr><td>what the action was, whether it was good</td><td>receipt + mandate + approvals</td><td>no</td><td>no</td></tr><tr><td>calls that bypassed the witness</td><td>no</td><td>no</td><td>no</td></tr></table>
+</main></body></html>

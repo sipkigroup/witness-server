@@ -1,0 +1,118 @@
+# Deus Witness: your own witness.
+#
+#   docker compose up -d --build                       # local witness on http://localhost:8787 (this machine only)
+#   docker compose --profile https up -d --build       # + Caddy with automatic HTTPS for DW_DOMAIN (set it in .env first)
+#
+# First start creates YOUR signing key and pepper in the volume "secrets" (service "keys": runs at every start, never overwrites).
+# Everything the witness stores is in the volume "data". `docker compose down -v` deletes both, for good.
+name: ${DW_PROJECT:-deus-witness}
+
+x-witness-image: &image
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: deus-witness-open:${DW_VERSION:-0.2.95}
+
+services:
+  keys:
+    <<: *image
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    volumes:
+      - secrets:/secrets
+      - data:/data
+    command:
+      - python
+      - -c
+      - |
+        import os, secrets
+        for name, nl in (("witness_ed25519", "\n"), ("key_pepper", "")):
+            p = "/secrets/" + name
+            if os.path.exists(p):
+                print("kept   ", p); continue
+            fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o400)
+            os.write(fd, (secrets.token_hex(32) + nl).encode()); os.close(fd)
+            print("created", p)
+        for name in ("witness_ed25519", "key_pepper"):
+            os.chown("/secrets/" + name, 10001, 10001); os.chmod("/secrets/" + name, 0o400)
+        os.chown("/secrets", 10001, 10001); os.chmod("/secrets", 0o700)
+        if os.stat("/data").st_uid != 10001:            # a bind-mounted host folder: hand it to the witness user once
+            for dp, dn, fn in os.walk("/data"):
+                for x in [dp] + [os.path.join(dp, y) for y in dn + fn]:
+                    os.lchown(x, 10001, 10001)
+
+  witness:
+    <<: *image
+    user: "10001:10001"
+    depends_on:
+      keys:
+        condition: service_completed_successfully
+    ports:
+      # bound to loopback only: from outside, the witness is reached through the proxy (profile https)
+      - "127.0.0.1:${DW_PORT:-8787}:8787"
+    environment:
+      DW_DATA_DIR: /data
+      DW_WITNESS_KEY_FILE: /secrets/witness_ed25519
+      DW_KEY_PEPPER_FILE: /secrets/key_pepper
+      DW_RP_ID: ${DW_DOMAIN:-localhost}                        # passkeys are bound to this name: choose it before the first sign-up
+      DW_ORIGIN: ${DW_PUBLIC_URL:-http://localhost:8787}      # exactly what the browser shows, scheme and port included
+      DW_ISS: ${DW_PUBLIC_URL:-http://localhost:8787}
+      DW_SECURE_COOKIE: ${DW_SECURE_COOKIE:-0}                 # 1 behind HTTPS
+      DW_TRIAL: ${DW_TRIAL:-on}                                # "trial" accounts: a passkey, no e-mail; see README "Accounts"
+      DW_ANCHOR: ${DW_ANCHOR:-off}                             # on = public OpenTimestamps calendars (outbound HTTPS)
+      DW_TSA_URL: ${DW_TSA_URL:-}
+      DW_TSA_CA: ${DW_TSA_CA:-}
+      DW_TSA_NAME: ${DW_TSA_NAME:-}
+      DW_RATE_PER_MIN: ${DW_RATE_PER_MIN:-60}
+      DW_QUOTA_PER_DAY: ${DW_QUOTA_PER_DAY:-5000}
+      DW_MAX_AGENTS: ${DW_MAX_AGENTS:-3}
+      DW_REG_PER_HOUR: ${DW_REG_PER_HOUR:-10}
+      DW_TRUSTED_PROXY: ${DW_NET:-172.29.80}.2                 # X-Real-IP is believed only from the proxy container's fixed address
+    volumes:
+      - data:/data
+      - secrets:/secrets:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8787/healthz', timeout=3).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+    restart: unless-stopped
+    networks:
+      dw:
+        ipv4_address: ${DW_NET:-172.29.80}.3                 # fixed, so it can never take the proxy's .2
+
+  proxy:
+    profiles: ["https"]
+    image: caddy:2.8-alpine
+    depends_on:
+      witness:
+        condition: service_healthy
+    ports:
+      - "${DW_HTTP_PORT:-80}:80"
+      - "${DW_HTTPS_PORT:-443}:443"
+    environment:
+      DW_DOMAIN: ${DW_DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    restart: unless-stopped
+    networks:
+      dw:
+        ipv4_address: ${DW_NET:-172.29.80}.2
+
+networks:
+  dw:
+    ipam:
+      config:
+        - subnet: ${DW_NET:-172.29.80}.0/24
+          ip_range: ${DW_NET:-172.29.80}.128/25                # dynamic addresses stay away from .2 and .3
+
+volumes:
+  data: {}
+  secrets: {}
+  caddy: {}

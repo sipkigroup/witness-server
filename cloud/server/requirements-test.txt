@@ -1,0 +1,6 @@
+# Test-only dependencies of the server tests (the runtime ones: ../deploy/requirements.lock).
+pytest>=8
+hypothesis>=6.100
+jsonschema>=4
+pyyaml>=6
+deus-witness==0.2.63      # the published client: some tests run it against this server

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Digest - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="app.html">&larr; Dashboard</a></p>
+<h1>Digest</h1>
+<div id="msg" class="notice" hidden></div>
+<section class="card">
+ <div class="row"><label for="period" class="inline">Period</label><select id="period" class="inline"><option value="86400">last 24 hours</option><option value="604800" selected>last 7 days</option><option value="1209600">last 14 days</option></select></div>
+ <div class="stats" id="stats"></div>
+ <p class="hint">W = witnessed actions (allowed, denied, held for approval; without pass-through calls and gateway refusals). H = human decisions on items. F = passkey prompts for approvals (a batch counts once, a 2-of-3 approval counts twice). A100 = 100 H / W, F100 = 100 F / W: how often a person is asked, per 100 actions.</p>
+</section>
+<section class="card"><h2>Waiting now, by role</h2><dl class="kv" id="pending"></dl><p><a href="approve.html">Open approvals</a></p></section>
+<section class="card"><h2>Suggestions</h2><p class="hint">Approved at least 3 times in 14 days and never refused. Nothing is applied by itself: a suggestion opens a new mandate form, which the signers sign as usual.</p><div id="sugg"></div></section>
+<section class="card"><h2>Refused by the gateway: too many requests</h2><p id="rate"></p></section>
+<section class="card"><h2>Tool catalogs changed</h2><div id="drift"></div></section>
+<section class="card"><h2>Breakdown</h2><div class="grid2"><div><h3>By verdict</h3><dl class="kv" id="byv"></dl></div><div><h3>By agent</h3><dl class="kv" id="bya"></dl></div></div><h3>By reason</h3><dl class="kv" id="byr"></dl></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/digest.js"></script>
+</body></html>

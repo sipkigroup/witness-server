@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/app.css"><link rel="manifest" href="/manifest.webmanifest"><title>Privacy summary - Deus Witness</title>
+<meta name="description" content="What data Deus Witness stores, what it does not, and how deletion works with an append-only journal."></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="/index.html">&larr; Home</a></p>
+<section class="card" id="privacy">
+ <h1>Privacy summary</h1>
+ <p class="notice"><strong>Summary, not legal terms. Full terms pending legal review. See also the <a href="/terms.html">short terms</a>.</strong></p>
+ <p><strong>Operator.</strong> Sipki LLC, New York, USA. Contact: support@sipkigroup.com.</p>
+
+ <h3>What we store</h3>
+ <ul>
+  <li><strong>Account:</strong> random id (<code>dw:…</code>) and the display name you type. No e-mail, phone, password or payment data.</li>
+  <li><strong>Passkeys:</strong> public key, credential id, signature counter, device label. Private keys and biometrics stay on your device.</li>
+  <li><strong>Sessions:</strong> a SHA-256 hash of the cookie; expire after 7 days.</li>
+  <li><strong>Agents:</strong> name; API key as a peppered hash plus short prefix.</li>
+  <li><strong>Rules you sign:</strong> mandates, policies, allowances. "Closed data" values are stored as typed.</li>
+  <li><strong>Agent actions:</strong> tool, class, <strong>target in clear</strong> (e-mail address, file path, host), amount, decision, time, argument hash. Masked previews (&le;300 characters, &le;4 KB text) shrink to ~80 characters once decided and to the hash after 30 days.</li>
+  <li><strong>What you signed:</strong> when you approve a request, the exact object the approval page showed you is kept with your signature: the action, both masked previews, the masked text of the written and changed files it showed, and the command names of the line. It is kept <strong>30 days from signing</strong>, so the evidence pack can prove what you saw (it is in the pack), then deleted; a pack made later says that approval's view can no longer be checked. Delete account erases it.</li>
+  <li><strong>Claude Code hook:</strong> sends each tool input as given (full command line, paths, written file text); it is masked on the server before anything is written to disk. Kept until you delete the account, besides the action itself: paths and hashes of executed project files and the hosts they name, your project folders, every path a write touched, the command names of each command line, the project and outside paths a command uses, and the Claude Code session id of each decision. When the agent changes a file a later command executes and the witness could not read the change, the hook sends that file's text, masked, up to 4 KB, for the approval page only; it is cut with the other previews once you decide (the copy you signed is kept 30 days, see above). When a write looks risky (it talks to the network, builds the code it runs, or its content is not visible: a copy, a download), its masked text (&le;4 KB) is kept so that the page of a later run of that file can show it; it is deleted once you decide that run, or 24 hours after the write (checked every hour, whether or not the agent runs again). With each call it also sends the working directory, the project directory, your home path, the Claude Code session id, its answers to the witness&#39;s file questions (does a path exist, where it resolves), and for Bash: where the Python tools named in the command resolve on your PATH, and a summary of your Claude Code sandbox settings (platform, allowed and denied paths, allowed domains, excluded commands, local sockets and macOS service names, permission mode, and the names, not the contents, of <code>.env</code> files in the project folder). When the witness asks about the build and test files a command may run, it sends their paths, SHA-256 hashes and sizes, and the values of git settings that start programs (such as <code>credential.helper</code>, <code>core.sshCommand</code>, aliases); before they leave your machine the hook masks the secrets inside each value (credentials in a URL, well-known token prefixes, the word after <code>password=</code>, <code>token=</code>, <code>Authorization:</code>, <code>Bearer</code>), and keeps the program path and flags; a secret written in another form could stay, so keep secrets out of these settings. Your prompts, Claude&#39;s replies and tool outputs are not sent.</li>
+  <li><strong>MCP proxy:</strong> the full arguments of each call (stored masked, as above); once per run the name, description and input schema of every tool of your MCP servers, and a coverage report that names MCP servers not behind the proxy. Kept until you delete the account.</li>
+  <li><strong>Optional:</strong> push subscriptions; Telegram/Slack/e-mail channels (secret encrypted, AES-256-GCM); Team form (e-mail and text, deleted after 180 days).</li>
+  <li><strong>Quick start accounts</strong> (<code>deus-witness try</code>): the same as an account above, plus the expiry time, a SHA-256 hash of the one-time claim link (deleted at your first passkey touch) and the drafted mandate form of your project (project and temp paths, command and domain lists). No passkey, no name and no journal exist before your first touch.</li>
+  <li><strong>Counters:</strong> daily totals; which onboarding steps an account passed and when (the day, to count "came back on another day"); whether an account is ours (internal).</li>
+ </ul>
+ <h3>Unclaimed quick start accounts are erased after 7 days</h3>
+ <p>A quick start account nobody has claimed with a passkey, and everything in it, is erased 7 days after <code>deus-witness try</code> made it (every row is deleted; there is no journal yet) and its agent key stops working. Once you make the passkey the account is yours and is never erased by time: a single person uses Deus Witness free, for good; only <strong>Delete account</strong> below removes it. Backups follow the 15-day rule below. Honest limit: until your first touch, whoever has the claim link can make the account theirs; the link goes only to your browser (in the part after <code>#</code>, which browsers do not send to any server), and it is not in the command's output or a file: with a browser it is opened there (the browser keeps it in its history until you claim the account), without one it is shown on your terminal only (written to /dev/tty).</p>
+
+ <h3>What we do not store</h3>
+ <p>IP addresses in the database (the rate limit keeps them in memory only and drops each at most 2 hours after its last request; they do appear in the reverse-proxy access logs, see Retention); request bodies in logs; third-party analytics or ad cookies. Unmasked text is never written to disk: to check risk, the server holds the unmasked text of the last 64 calls in memory only; newer calls push it out and a restart clears it.</p>
+
+ <h3>Append-only journal and deletion</h3>
+ <p>Each decision judged against your mandate enters a hash-chained per-account journal (a few refusals stay in the operator's database only, see the concepts page); checkpoint hashes are anchored in Bitcoin via OpenTimestamps. <strong>Delete account</strong> erases the data above (MCP tool lists and coverage reports included) and replaces your journal with a <strong>skeleton</strong>: a signed final checkpoint plus the list of entry hashes, so other accounts' proofs and packs you already downloaded stay verifiable. Action targets, amounts and arguments are gone from the server. What remains: entry hashes, checkpoints, the key registry and the opaque account id. Team policies (<code>org_policies</code>) are not deleted with the account either: each is bound to an entry of the registry log, which is shared and append-only. Packs you exported before deletion are yours and cannot be recalled.</p>
+
+ <h3>Hosting and backups</h3>
+ <p>Hostinger VPS, Boston, USA. Daily backups, each generation encrypted with its own key; a generation and its key are destroyed after at most 15 days. Copies on the operator's computer (same encryption) and in Microsoft Azure storage (encrypted, deleted after 15 days). So deleted data is unrecoverable from backups after at most 15 days.</p>
+
+ <h3>Third parties (only if enabled by you or the operator)</h3>
+ <ul>
+  <li>Browser push services (Google, Mozilla, Apple, Microsoft): opaque ids only.</li>
+  <li>Telegram, Slack, operator's e-mail relay: "an agent is waiting" plus a link.</li>
+  <li>Microsoft Azure (backup storage, USA): encrypted archives only.</li>
+  <li>OpenTimestamps calendars, mempool.space, blockstream.info: hashes only.</li>
+ </ul>
+
+ <h3>Retention</h3>
+ <p>While the account exists; an unclaimed quick start account at most 7 days. Sign-in challenges: 5 minutes. Push subscriptions: until gone or 5 failures. Application logs: ~50 MB rolling. Reverse-proxy access logs (these include the IP address of a request): up to 30 days, not in the database. Backups: at most 15 days. Anchored hashes: permanent.</p>
+
+ <h3>Requests</h3>
+ <p>Delete your account in the dashboard. "Download evidence pack" exports your journal and receipts, and the objects you signed in the last 30 days (not every table). Anything else: support@sipkigroup.com.</p>
+ <p class="hint">Updated 2026-11-04.</p>
+</section>
+</main>
+<footer>Deus Witness preview. Draft specification, not yet submitted to the IETF, not a standard. <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>
+</body></html>

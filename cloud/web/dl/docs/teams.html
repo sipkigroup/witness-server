@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Teams - Deus Witness docs</title></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Teams: roles, the organisation policy, quorum</h1>
+<p>A Witness account is an <strong>organisation</strong> (principal <code>dw:&lt;account_id&gt;</code>, one ledger). People join it with their own passkeys; who may</p>
+<p>sign what is written in a <strong>signed policy</strong>, and the witness checks every signature against the policy that was in force at the time.</p>
+<p>An account without a policy works exactly as in 0.1 ("solo": the owner's pinned key signs everything).</p>
+<h2>1. Roles</h2>
+<table><tr><th>role</th><th>may</th></tr><tr><td><code>owner</code></td><td>the policy, members, invitations, agents, tool maps, organisation settings</td></tr><tr><td><code>budget</code></td><td>sign mandates and approvals of <strong>money</strong> classes (purchase, sale, refund)</td></tr><tr><td><code>access</code></td><td>sign mandates and approvals of the other classes (message, file, disclosure, delete, publish, meeting)</td></tr><tr><td><code>observer</code></td><td>read only: the feed, the digest, the evidence pack. Signs nothing and is <strong>not</strong> in the policy</td></tr></table>
+<p>One person may hold several roles. A quorum is counted over <strong>different keys</strong> (<code>kid</code>), so one person with two roles closes both</p>
+<p>requirements only where each needs k = 1. Every changing request passes one rights check on the server (<code>require(user, account, action)</code>);</p>
+<p>an observer gets <code>403</code> on every changing path <em>(tested)</em>.</p>
+<h2>2. The policy</h2>
+<p>A signed CBOR document (<code>typ application/dw-org-policy+cbor</code>, version <code>dw-org-policy-0.1</code>): members (&lt;= 16; key id, public key, roles,</p>
+<p>a label of &lt;= 32 characters without <code>@</code> - no e-mail addresses), and rules:</p>
+<ul>
+<li><code>mandate</code>: tiers such as <code>{"if": "money_over", "amount": 50000, "role": "budget", "k": 2}</code> - mandates whose money limits exceed $500 need 2 budget signers; <code>money</code> (any money class) and <code>access</code> (any other class) tiers exist too;</li>
+<li><code>approval</code>: the same tiers for approving a deferred action (by its class and amount);</li>
+<li><code>policy</code>: who signs the next version; <code>revocation</code>: default <code>{"role": "any", "k": 1}</code>; <code>ceiling</code>;</li>
+<li><code>recovery</code> (optional, 0.2.2): <code>{"role": "any", "k": 2}</code> - k &gt;= 2 OTHER members replace one member's lost key (a version that changes</li>
+</ul>
+<p>  only that key); see the recovery page.</p>
+<p>Version 1 (genesis) is created by the owner on the first team action: one member (the owner's pinned key), all roles, all k = 1.</p>
+<p>Every change (add / remove a member, roles, rules) is a new version <code>ver + 1</code> with <code>prev</code> = SHA-256 of the previous one, signed by the</p>
+<p><code>policy</code> rule of the <strong>previous</strong> version, and appended to the registry hash chain (which goes into the hourly anchor).</p>
+<h2>3. Quorum</h2>
+<p>Each signer's browser signs the ordinary single-signature challenge (<code>deus-aar-wa-0.1</code>) - no new code on the phone. The server</p>
+<p>collects the signatures in a sign request (<code>sign.html?req=&lt;id&gt;</code>, shown to members with the needed role) and, when k are present,</p>
+<p>builds a quorum envelope <code>wq</code> (<code>deus-aar-wq-0.1</code>: typ, payload, policy hash, signatures sorted by kid) and registers the mandate or the</p>
+<p>approval once. Until then the mandate stays "collecting 1/2" and the agent is refused (<code>NO_MANDATE</code>). A mandate draft lives 24 h.</p>
+<p><strong>Stopping is easy, permitting is hard</strong>: revocation needs ONE signature of any signer; widening rights needs the quorum of the role.</p>
+<p><em>Tested in the browser</em> (three Chromium profiles with three CDP virtual authenticators, real 0.2.0 server,</p>
+<p>19.10.2026): invitations -&gt; policy v2 "mandates with purchases over 500 USD: 2 of 3 budget signers" -&gt; a $2000 mandate: after one</p>
+<p>signature "collecting 1/2" and the agent gets <code>NO_MANDATE</code>; after the second, the ledger's MANDATE entry carries a <code>wq</code> with exactly the</p>
+<p>two signers' key ids and the agent's $300 purchase is allowed -&gt; a <strong>non-owner</strong> budget signer revokes with one signature (the ledger's</p>
+<p>revocation carries only that signer's key id) -&gt; the agent is refused.</p>
+<h2>4. What a third party sees</h2>
+<p>The evidence pack carries <code>org/policy-v&lt;N&gt;.cbor</code> with the envelope of each version, the registry chain, and for every</p>
+<p>MANDATE / APPROVAL / REVOCATION which key ids signed and under which version. <code>verify_pack.py</code> checks the chain, the signatures and,</p>
+<p>in a second pass over the ledger, that each quorum met the policy <strong>in force at the entry's time</strong>. A run of</p>
+<p>the server's pack test (19.10.2026: a 3-member organisation built by the real server, a 2-of-3 mandate, a quorum</p>
+<p>approval, a one-signature refusal, a batch of 3 publications, an advisory hold + release, coverage from the proxy, a revocation, the</p>
+<p>anchor job with two <strong>test</strong> TSAs) printed:</p>
+<pre><code>org policy: chain ok (v1..v2)
+ledger: valid (24 entries)
+receipts: 6/6 included
+quorum: 8/8 entries meet policy-at-time
+batch approvals: 1 envelopes, 3 items
+coverage ag_6517aa036bc9: C1 (operator-declared, not verified)
+advisory: 1/1 releases signed (the L3 advice itself is not evidence)
+anchor 20261019T020441Z-b2995c14: pending (inclusion in batch root proven; not stamped)
+tsa 20261019T020441Z-b2995c14: OK (tsa-a, tsa-b)
+RESULT: VALID</code></pre>
+<p>It does <strong>not</strong> see: names and e-mail addresses (only labels and key ids), observers, who pressed "refuse" before a quorum was reached.</p>
+<h2>5. Limits</h2>
+<ol>
+<li><strong>Policy time is the witness's time.</strong> "Was version v in force when this entry was written" is decided by the entry time, which the</li>
+</ol>
+<p>   witness signs (-04 §12.6). A dishonest or wrong-clock witness could accept a signature of a member removed a minute earlier. Same</p>
+<p>   trust as key pinning in 0.1. In the pack the time of each policy version is signed only by the manifest.</p>
+<ol>
+<li>The quorum check inside the core's registry is stateless; policy-at-time is a <strong>second pass</strong> outside the core (server at intake,</li>
+</ol>
+<p>   <code>verify_pack</code> on the ledger). An error there would accept a removed member's signature; the contract vectors include "removed in v3,</p>
+<p>   signed by v2 after v3 -&gt; <code>WQ_POLICY_STALE</code>".</p>
+<ol>
+<li>Team packs are verified by the <strong>Python</strong> verifier only; the Swift verifier says <code>INVALID WA_MALFORMED</code> on them until 0.3.</li>
+<li>One key per member <strong>in the policy</strong>. 0.2.2: a person may hold several passkeys, and a lost member key is replaced by the other</li>
+</ol>
+<p>   members under the optional rule <code>recovery</code> (k &gt;= 2, the lost key never counts) - see the Recovery page. Without that rule a</p>
+<p>   lost passkey of the only owner still means the policy cannot change. No SSO/SCIM yet.</p>
+<ol>
+<li>A batch (<code>wb</code>) and a quorum are not combined: items whose approval needs k &gt;= 2 are approved one by one, by quorum.</li>
+<li>The deferred-action TTL for organisations with k &gt;= 2 rules is a setting (<code>defer_ttl_s</code> 900...3600 s): a quorum not gathered in time</li>
+</ol>
+<p>   lets the action expire.</p>
+</main></body></html>

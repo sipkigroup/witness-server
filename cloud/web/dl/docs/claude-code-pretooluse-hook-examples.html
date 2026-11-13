@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Claude Code PreToolUse hook: examples, exit code 2, and &quot;PreToolUse hook error&quot;</title><meta name="description" content="How a Claude Code PreToolUse hook works: the JSON on stdin, exit 0 vs exit 2, allow/deny/ask, 3 tested examples, and how to fix &quot;PreToolUse hook error&quot;."><link rel="canonical" href="https://witness.sipkigroup.com/dl/docs/claude-code-pretooluse-hook-examples.html"></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Claude Code PreToolUse hook: examples, exit code 2, and "PreToolUse hook error"</h1>
+<p>A <code>PreToolUse</code> hook is a command Claude Code runs before a tool call, with the call as JSON on stdin. To block the call, exit 2 (your stderr becomes the reason) or exit 0 and print a JSON <code>deny</code>. A <code>PreToolUse:Bash hook error</code> notice that says <code>Failed with non-blocking status code</code> means your hook exited with another code or never started, and the call went ahead anyway. Below: the input, the exit codes, three examples we ran, and the usual causes of the error. Checked against Claude Code 2.1.312 and the official <a href="https://code.claude.com/docs/en/hooks">Hooks reference</a> and <a href="https://code.claude.com/docs/en/hooks-guide">Hooks guide</a>.</p>
+<h2>What the hook receives</h2>
+<p>For a Bash call, stdin carries roughly this (trimmed from the Hooks reference):</p>
+<pre><code>{&quot;session_id&quot;: &quot;abc123&quot;, &quot;cwd&quot;: &quot;/home/user/my-project&quot;, &quot;permission_mode&quot;: &quot;default&quot;,
+ &quot;hook_event_name&quot;: &quot;PreToolUse&quot;, &quot;tool_name&quot;: &quot;Bash&quot;,
+ &quot;tool_input&quot;: {&quot;command&quot;: &quot;npm test&quot;, &quot;description&quot;: &quot;Run test suite&quot;},
+ &quot;tool_use_id&quot;: &quot;toolu_01ABC123...&quot;}</code></pre>
+<p>For <code>Write</code>, <code>Edit</code> and <code>Read</code>, <code>tool_input.file_path</code> "is always absolute": Claude Code expands <code>~</code> and relative paths before the hook runs. MCP calls arrive as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and also carry <code>mcp_server</code>.</p>
+<h2>Exit codes and decisions</h2>
+<table><tr><th>Your hook</th><th>Result</th></tr><tr><td>exit 0, prints nothing</td><td>no decision; the normal permission flow applies</td></tr><tr><td>exit 0, prints a JSON decision</td><td>the decision applies</td></tr><tr><td>exit 2</td><td>call blocked; stderr is the reason Claude sees</td></tr><tr><td>any other exit code without a valid JSON decision, a crash, a missing script</td><td>"non-blocking error": the call goes ahead</td></tr><tr><td>runs past its <code>timeout</code> (600 s by default for a command hook)</td><td>output discarded, call goes ahead</td></tr></table>
+<p>The JSON form, printed on exit 0:</p>
+<pre><code>{&quot;hookSpecificOutput&quot;: {&quot;hookEventName&quot;: &quot;PreToolUse&quot;,
+  &quot;permissionDecision&quot;: &quot;deny&quot;, &quot;permissionDecisionReason&quot;: &quot;Not on this branch&quot;}}</code></pre>
+<p><code>permissionDecision</code> is <code>allow</code> (skip the prompt), <code>deny</code>, <code>ask</code> (prompt the user) or <code>defer</code> (only honoured in <code>claude -p</code>). With several hooks the strictest wins: <code>deny</code> &gt; <code>defer</code> &gt; <code>ask</code> &gt; <code>allow</code>. A hook's <code>allow</code> does not override a deny rule in settings, and a hook's <code>deny</code> holds in every permission mode, <code>bypassPermissions</code> included. Exit 1 is the trap: the reference warns that it "is a non-blocking error ... even though 1 is the conventional Unix failure code. If your hook is meant to enforce a policy, use <code>exit 2</code>."</p>
+<h2>Registering a hook</h2>
+<p>In <code>.claude/settings.json</code> (project) or <code>~/.claude/settings.json</code> (user):</p>
+<pre><code>{&quot;hooks&quot;: {&quot;PreToolUse&quot;: [
+  {&quot;matcher&quot;: &quot;Bash&quot;, &quot;hooks&quot;: [{&quot;type&quot;: &quot;command&quot;,
+    &quot;command&quot;: &quot;\&quot;$CLAUDE_PROJECT_DIR\&quot;/.claude/hooks/block-rm-rf.sh || exit 2&quot;,
+    &quot;timeout&quot;: 10, &quot;onFailure&quot;: &quot;block&quot;}]},
+  {&quot;matcher&quot;: &quot;Edit|Write|NotebookEdit&quot;, &quot;hooks&quot;: [{&quot;type&quot;: &quot;command&quot;,
+    &quot;command&quot;: &quot;\&quot;$CLAUDE_PROJECT_DIR\&quot;/.claude/hooks/stay-in-project.sh || exit 2&quot;,
+    &quot;timeout&quot;: 10, &quot;onFailure&quot;: &quot;block&quot;}]},
+  {&quot;matcher&quot;: &quot;*&quot;, &quot;hooks&quot;: [{&quot;type&quot;: &quot;command&quot;,
+    &quot;command&quot;: &quot;\&quot;$CLAUDE_PROJECT_DIR\&quot;/.claude/hooks/log-calls.sh&quot;}]}
+]}}</code></pre>
+<p><code>matcher</code> is the tool name: letters, <code>|</code> and <code>,</code> mean exact names; anything else is an unanchored regular expression (<code>Edit.*</code> also matches <code>NotebookEdit</code>). Matchers are case-sensitive. A plugin's hooks refer to their scripts through <code>${CLAUDE_PLUGIN_ROOT}</code>. Run <code>/hooks</code> to see what is loaded and where each hook comes from.</p>
+<h2>Three examples</h2>
+<p>The scripts need <code>jq</code> and <code>chmod +x</code>. We piped sample events through each one on macOS; outputs are noted.</p>
+<p><strong>1. Refuse <code>rm -rf</code></strong> (a JSON decision, so the reason reaches Claude):</p>
+<pre><code>#!/bin/bash
+cmd=$(jq -r &#x27;.tool_input.command // empty&#x27;)
+if printf &#x27;%s&#x27; &quot;$cmd&quot; | grep -Eq &#x27;(^|[;&amp;|[:space:]])rm[[:space:]]+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-r[[:space:]]+-f|-f[[:space:]]+-r)&#x27;; then
+  jq -nc &#x27;{hookSpecificOutput: {hookEventName: &quot;PreToolUse&quot;,
+    permissionDecision: &quot;deny&quot;, permissionDecisionReason: &quot;rm -rf is blocked by a project hook&quot;}}&#x27;
+fi
+exit 0</code></pre>
+<p>It denied <code>rm -rf build</code>, <code>cd x &amp;&amp; rm -fr /</code> and <code>rm -r -f a</code>, and let <code>ls -la</code> through. It also denies <code>git rm -rf x</code>, and it does not see <code>find . -delete</code> or a script that deletes files. Text matching is a fence, not a wall.</p>
+<p><strong>2. No writes outside the project</strong> (the exit 2 form):</p>
+<pre><code>#!/bin/bash
+in=$(cat)
+path=$(jq -r &#x27;.tool_input.file_path // .tool_input.notebook_path // empty&#x27; &lt;&lt;&lt;&quot;$in&quot;)
+[ -z &quot;$path&quot; ] &amp;&amp; exit 0
+root=$(cd &quot;$CLAUDE_PROJECT_DIR&quot; &amp;&amp; pwd -P)
+dir=$(dirname &quot;$path&quot;)
+while [ ! -d &quot;$dir&quot; ]; do dir=$(dirname &quot;$dir&quot;); done
+case &quot;$(cd &quot;$dir&quot; &amp;&amp; pwd -P)/&quot; in &quot;$root&quot;/*) exit 0 ;; esac
+echo &quot;Write outside the project refused: $path&quot; &gt;&amp;2
+exit 2</code></pre>
+<p>It resolves the nearest existing directory, so <code>project/../x</code> and symlinked folders count as outside. Result: <code>/etc/hosts</code> and <code>project/../x</code> exit 2, <code>project/new/dir/f</code> exits 0. It does not cover Bash: <code>echo x &gt; /etc/hosts</code> is a Bash call.</p>
+<p><strong>3. Log every call, decide nothing:</strong></p>
+<pre><code>#!/bin/bash
+jq -c &#x27;{t: (now | todate), tool: .tool_name, input: .tool_input}&#x27; \
+  &gt;&gt; &quot;$CLAUDE_PROJECT_DIR/.claude/tool-calls.jsonl&quot;
+exit 0</code></pre>
+<p>One line per call. The agent can edit this file like any other, so it is a debugging log, not an audit trail.</p>
+<h2>Fixing "PreToolUse hook error"</h2>
+<p>Test the script by hand first, as the Hooks guide suggests:</p>
+<pre><code>echo &#x27;{&quot;tool_name&quot;:&quot;Bash&quot;,&quot;tool_input&quot;:{&quot;command&quot;:&quot;ls&quot;}}&#x27; | ./my-hook.sh; echo $?</code></pre>
+<p>What the notice usually means:</p>
+<ul>
+<li><code>No such file or directory</code> or exit 127: the hook never ran. Wrong path, or a relative path that breaks when Claude changes directory. Use <code>"$CLAUDE_PROJECT_DIR"/...</code>.</li>
+<li><code>jq: command not found</code>: install <code>jq</code> or parse with Python or Node.</li>
+<li><code>Permission denied</code>: <code>chmod +x</code> the script.</li>
+<li>A JSON parse or validation message: stdout must be exactly one JSON object. A stray <code>echo</code> before it breaks it, even on exit 0. Build the JSON with <code>jq -n</code>, not string concatenation.</li>
+<li>A slow hook: past its <code>timeout</code> it is cancelled and the call goes ahead (with <code>onFailure: "block"</code> the error says <code>timed out</code> and the call is blocked). Raise the timeout, or make the hook faster.</li>
+<li>Nothing at all, and the hook does not fire: check the matcher spelling and run <code>/hooks</code>. Full detail is in the debug log: <code>claude --debug</code>, then <code>~/.claude/debug/&lt;session-id&gt;.txt</code>.</li>
+</ul>
+<p>The point to remember: in every case above except a JSON <code>deny</code>, the call ran.</p>
+<h2>Make a policy hook fail closed</h2>
+<p>A broken hook should block, not wave everything through. Three layers, as in the settings above:</p>
+<ol>
+<li>Catch your own errors and print a JSON <code>deny</code>.</li>
+<li>Run the hook as <code>script || exit 2</code>, so a missing file or interpreter becomes a block.</li>
+<li>Add <code>"onFailure": "block"</code>: a crash, timeout or invalid output then blocks the call. It requires Claude Code v2.1.295 or later; older versions ignore the key.</li>
+</ol>
+<h2>Do you need a hook at all?</h2>
+<p>Often not. If the rule is a fixed pattern, a deny rule is simpler and cannot crash:</p>
+<pre><code>{&quot;permissions&quot;: {&quot;deny&quot;: [&quot;Bash(rm -rf *)&quot;, &quot;Edit(//etc/**)&quot;]}}</code></pre>
+<p>In a path rule a single leading <code>/</code> means the settings file's folder; <code>//</code> is the filesystem root. <code>ask</code> rules make Claude Code prompt for a pattern. For what a command does once it runs, the sandbox is the boundary, not a hook. Use a hook when the answer depends on context: the arguments, the branch, the time, a lookup, or a person. The full comparison: <a href="claude-code-hooks-vs-permissions-deny.html">Claude Code hooks vs permissions.deny</a>.</p>
+<p>One case built-ins do not cover: a call that should wait for a specific person to approve it while nobody is at the terminal. Deus Witness is a <code>PreToolUse</code> hook for that (<code>deus-witness-hook</code>): it holds a call your signed mandate does not cover until you approve it with a passkey, checks the signed receipt before it prints <code>allow</code>, and denies on any error. <code>deus-witness-hook --doctor "$PWD"</code> checks the three fail-closed layers above. Setup: <a href="require-approval-before-claude-code-runs-command-unattended.html">Require approval before Claude Code runs a command unattended</a>. Running without prompts at all: <a href="claude-code-dangerously-skip-permissions.html">What --dangerously-skip-permissions skips</a>.</p>
+</main></body></html>

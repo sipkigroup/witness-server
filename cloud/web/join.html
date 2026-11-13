@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Join a team - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow">
+<h1>Join a team</h1>
+<div id="msg" class="notice" hidden></div>
+<section id="out" class="card" hidden>
+ <p>You were invited to sign for a team. First create your own passkey on this device (or sign in if you already have one); then come back to this link.</p>
+ <div class="row"><a id="su" class="btn big" href="signup.html">Create passkey</a><a id="li" class="btn ghost big" href="login.html">Sign in</a></div>
+</section>
+<section id="in" class="card" hidden>
+ <p>Join with your passkey <strong id="who"></strong>. The link works once.</p>
+ <p><button id="join" class="btn big" type="button">Join</button></p>
+</section>
+<section id="done" class="card" hidden><h2>Joined</h2><p id="donetext"></p><p><a class="btn" href="team.html">Open team</a></p></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/join.js"></script>
+</body></html>

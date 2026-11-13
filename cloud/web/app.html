@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Witness"><title>Dashboard - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<h1>Dashboard <span id="pcount"></span></h1>
+<div id="msg" class="notice" hidden></div>
+
+<section class="card" id="pending-card" hidden>
+ <h2>Waiting for your approval</h2>
+ <div id="pending"></div>
+</section>
+
+<section class="card" id="push-card">
+ <h2>Notifications on this device</h2>
+ <p class="hint">Get a push when an agent waits for your approval. Tapping it opens the approval page; approving still needs Face ID, a fingerprint or a security key (your passkey). The notification says only that something is waiting: no agent, action or recipient. Delivery is not guaranteed and not instant; the <a href="approve.html">Approvals page</a> is the source of truth.</p>
+ <div id="pushmsg" class="notice" hidden></div>
+ <div id="push-ios" hidden>
+  <h3>iPhone / iPad: add Witness to the Home Screen to get approval requests</h3>
+  <ol id="push-ios-steps"></ol>
+  <p id="push-ios-state" class="notice warn"></p>
+  <div class="row"><button id="push-ios-check" class="btn ghost" type="button">Check again</button></div>
+ </div>
+ <p id="pushstate" class="hint">Checking...</p>
+ <div class="row"><button id="pushon" class="btn" type="button" hidden>Enable notifications</button><button id="pushtest" class="btn ghost" type="button" hidden>Send a test</button><button id="pushoff" class="btn ghost" type="button" hidden>Turn off on this device</button></div>
+</section>
+
+<section class="card" id="chan-card">
+ <h2>Other notification channels</h2>
+ <p class="hint">For agents that work while you are away: get a message in Telegram, Slack or by e-mail when an agent waits for your approval. The message has only a link to the request (no agent, action or recipient); approving is still done on the approval page with your passkey. The token, webhook or address is stored encrypted and never shown again.</p>
+ <p id="chan-ios" class="notice warn">iPhone / iPad: Web Push reaches you only if Witness was added to the Home Screen.</p>
+ <div id="chanmsg" class="notice" hidden></div>
+ <div id="chanlist"></div>
+ <div class="row"><div><label for="chankind">Add a channel</label><select id="chankind"><option value="telegram">Telegram (your own bot)</option><option value="slack">Slack (incoming webhook)</option><option value="email">E-mail</option></select></div></div>
+ <p id="chanhelp" class="hint"></p>
+ <div id="chanfields" class="row"></div>
+ <div class="row"><button id="chanfind" class="btn ghost" type="button">Find my chat</button><button id="chanadd" class="btn" type="button">Add channel</button></div>
+</section>
+
+<section class="card">
+ <h2>Agents</h2>
+ <div id="agents"></div>
+ <form id="newagent" class="row">
+  <div><label for="an">New agent name</label><input id="an" maxlength="60" required placeholder="my-agent"></div>
+  <div><label for="ap">Preset</label><select id="ap"><option value="demo">demo (mail, purchase, delete, publish)</option><option value="filesystem">filesystem (MCP file server)</option><option value="claude-code">claude-code (Claude Code hook: Bash, Edit, Write, WebFetch)</option><option value="openshell">openshell (NVIDIA OpenShell middleware: HTTP requests of a sandbox)</option><option value="empty">empty (everything denied)</option></select></div>
+  <div><label>&nbsp;</label><button id="newbtn" class="btn" type="submit">Create agent</button></div>
+ </form>
+ <div id="newerr" class="notice err" role="alert" hidden></div>
+ <div id="newkey" class="notice warn" hidden></div>
+</section>
+
+<section class="card">
+ <h2>Budget</h2>
+ <div id="budget"><p class="hint">No active mandate yet.</p></div>
+</section>
+
+<section class="card">
+ <h2>Activity</h2>
+ <div class="row"><label for="ff" class="inline">Agent</label><select id="ff" class="inline"><option value="">all agents</option></select></div>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Target</th><th>Verdict</th><th>Reason</th></tr></thead><tbody id="feed"></tbody></table></div>
+ <p><button id="more" class="btn ghost" type="button" hidden>Show more</button></p>
+</section>
+
+<section class="card">
+ <h2>Tool map</h2>
+ <p class="hint">How each MCP tool call of an agent becomes an action the witness judges. The server validates it when you save. Unknown tools are denied by default.</p>
+ <label for="tmagent">Agent</label><select id="tmagent"></select>
+ <label for="tm">Tool map (JSON)</label><textarea id="tm" spellcheck="false"></textarea>
+ <div id="tmmsg" class="notice" hidden></div>
+ <p><button id="tmsave" class="btn" type="button">Save and validate</button></p>
+</section>
+
+<section class="card">
+ <h2>Closed data</h2>
+ <p class="hint">Exact phrases (case-insensitive) that must never leave in the text of an action, by class. Plain literal matching: a paraphrase evades it. Classes you name here are the ones a mandate can forbid.</p>
+ <div id="dp"></div>
+ <div class="row"><input id="dpname" placeholder="class, e.g. home_address" class="num"><button id="dpadd" class="btn ghost" type="button">Add class</button><button id="dpsave" class="btn" type="button">Save</button></div>
+ <div id="dpmsg" class="notice" hidden></div>
+</section>
+
+<section class="card">
+ <h2>Evidence pack</h2>
+ <p>A zip with your ledger, receipts and checkpoint. Verify it offline with <code>python verify_pack.py</code>.</p>
+ <div id="anchorbox"><p id="anchor"></p><details><summary id="anchorsum">More</summary><div id="anchormore"></div></details></div>
+ <a class="btn" href="/api/export" download>Download evidence pack</a>
+</section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/app.js"></script>
+<script type="module" src="js/push.js"></script>
+</body></html>

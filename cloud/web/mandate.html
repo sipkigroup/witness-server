@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Sign mandate - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="app.html">&larr; Dashboard</a></p>
+<h1>Mandate for <span id="agentname"></span></h1>
+<div id="msg" class="notice" hidden></div>
+
+<section id="active" class="card" hidden>
+ <h2>Active mandate</h2>
+ <dl class="kv" id="activekv"></dl>
+ <p class="hint">Revoking stops the agent at once; one signature of any signer is enough. Allowing more needs the signatures of the policy.</p>
+ <p><button id="revoke" class="btn danger" type="button">Revoke mandate</button></p>
+</section>
+<section id="pick" class="card" hidden><h2>Choose an agent</h2><p class="hint">Which agent is this mandate for?</p><div id="picklist"></div></section>
+<div id="suggnote" class="notice ok" hidden></div>
+<section id="imp" class="card">
+ <details id="impd"><summary class="impsum">Import from JSON <span class="hint">&nbsp;(click to open)</span></summary>
+  <p class="hint">Paste the JSON printed by <code>deus-witness-hook --print-form &lt;project dir&gt;</code> (the recommended rules for Claude Code). It is checked, shown here as text, and put into the form below; nothing is signed until you press "Review and sign" and use your passkey.</p>
+  <label for="imp_text">Form JSON</label><textarea id="imp_text" rows="10" spellcheck="false" autocomplete="off"></textarea>
+  <div id="imp_err" class="notice err" role="alert" hidden><ul id="imp_errl"></ul></div>
+  <div id="imp_prev" hidden><h3>If you apply this, the form will ask you to sign</h3><div id="imp_rows"></div><p class="hint">Fields not in the JSON are not allowed. Purchases not given are forbidden.</p></div>
+  <p id="imp_hint" class="hint" hidden></p>
+  <div class="row"><button id="imp_check" class="btn ghost" type="button">Check</button><button id="imp_apply" class="btn" type="button" disabled>Apply to the form</button></div>
+ </details>
+</section>
+<div id="impwarn" class="notice warn" role="alert" hidden><strong>The JSON in Import was not applied; the form shows the preset defaults.</strong> <span class="row"><button id="impwarn_back" class="btn big" type="button">Go back to Import</button></span><details class="more"><summary>Ignore the JSON instead</summary><p class="hint">The JSON is discarded. You review the preset defaults below, not what you pasted.</p><button id="impwarn_go" class="btn ghost" type="button">Review the preset defaults, not my JSON</button></details></div>
+<form id="form" class="card">
+ <p class="hint">A mandate is what you allow this agent to do. Anything not listed is not allowed. You sign it with your passkey; the witness enforces it and nobody can change it afterwards. The mandate is tied to the agent's tool map as it is when you sign: if you edit the tool map later, sign a new mandate, otherwise the agent is refused (TOOLMAP_CHANGED).</p>
+ <div class="grid2">
+  <div><label for="days">Valid for (days)</label><input id="days" type="number" min="1" max="365" value="30" inputmode="numeric"></div>
+  <div><label for="cur">Currency</label><input id="cur" value="USD" readonly></div>
+ </div>
+
+ <h3>Purchases</h3>
+ <label><input type="checkbox" id="pu_on">Allow purchases</label>
+ <div class="grid2">
+  <div><label for="pu_budget">Budget per 24 hours (dollars)</label><input id="pu_budget" inputmode="decimal" placeholder="200.00"></div>
+  <div><label for="pu_max">Max per single purchase (dollars)</label><input id="pu_max" inputmode="decimal" placeholder="100.00"></div>
+  <div><label for="pu_min">Min per single purchase (dollars, optional)</label><input id="pu_min" inputmode="decimal" placeholder="0.00"></div>
+  <div><label for="pu_payees">Only these payees (one id per line, exactly as the agent's tool names it; empty = any)</label><textarea id="pu_payees" rows="3" spellcheck="false" autocomplete="off" placeholder="merchant-123&#10;shop.example"></textarea></div>
+ </div>
+
+ <h3>Messages (email, chat)</h3>
+ <label><input type="checkbox" id="ms_on">Allow messages</label>
+ <label for="ms_dom">Allowed recipient domains <span class="hint">comma-separated, e.g. acme.example</span></label><input id="ms_dom" placeholder="acme.example">
+ <label for="ms_to">Allowed individual addresses <span class="hint">comma-separated</span></label><input id="ms_to" placeholder="bob@partner.example">
+
+ <h3>Closed data <span class="hint">never allowed in the text of an action</span></h3>
+ <p class="hint">Found by format, with checksums where the format has one (level L2): no list of phrases needed, the same result every time. Honest limit: a number written in words, split across messages or encoded is not found; the recipient rules above are the stronger line.</p>
+ <div class="roles" id="l2"></div>
+ <label for="fd">Your own classes <span class="hint">comma-separated, the phrases are on the dashboard (level L1, literal match), e.g. home_address</span></label><input id="fd" value="home_address">
+
+ <h3>Deleting</h3>
+ <label for="del_mode">Policy</label>
+ <select id="del_mode"><option value="none">Not specified (irreversible deletes denied, reversible ones need your approval)</option><option value="targets">Allow deleting listed targets</option></select>
+ <div id="del_box" hidden>
+  <label for="del_t">Targets <span class="hint">comma-separated, a trailing * is a prefix, e.g. cache-*</span></label><input id="del_t" value="cache-*">
+  <label><input type="checkbox" id="del_irr">Also allow irreversible deletes of these targets</label>
+ </div>
+
+ <h3>Publishing</h3>
+ <label for="pub_mode">Policy</label>
+ <select id="pub_mode"><option value="none">Not specified (every publish needs your approval)</option><option value="channels">Allow listed channels</option></select>
+ <div id="pub_box" hidden><label for="pub_c">Channels <span class="hint">comma-separated</span></label><input id="pub_c" placeholder="blog"></div>
+
+ <h3>Shell commands</h3>
+ <p class="hint">Dangerous commands (rm -rf, dd, mkfs, chmod -R on your home, git push --force, curl | sh, reading credentials ...) always need your approval: no list covers them.</p>
+ <label for="cmd_mode">Policy</label>
+ <select id="cmd_mode"><option value="none">Not specified (every command needs your approval)</option><option value="list">Run listed commands without asking</option></select>
+ <div id="cmd_box" hidden>
+  <label for="cmd_allow">Commands that run without asking <span class="hint">comma-separated; the program, plus the sub-command for git, npm, cargo, docker ...; read-only ones (find, sed, awk, jq only in the form that reads and prints), and local file commands that run only when every path is inside the project</span></label><input id="cmd_allow" value="ls, pwd, cd, cat, head, tail, wc, echo, grep, rg, which, file, stat, du, df, date, uname, git status, git log, git diff, git show, git branch, diff, tree, sort, uniq, cut, tr, nl, column, basename, dirname, realpath, sha1sum, sha256sum, sha512sum, shasum, cmp, comm, test, sleep, git blame, git ls-files, git rev-parse, git describe, git shortlog, git grep, git reflog, mkdir, touch, cp, mv, ln, chmod, rm, rmdir, git add, git commit, git checkout, git switch, git restore, git mv, git rm, find, sed, awk, jq, ps, lsof, whoami, id, git remote, git tag list, git stash list, git stash show, git config get, npm ls, npm list, pip list, pip3 list, pip freeze, pip3 freeze, pip show, pip3 show, uv pip, git check-ignore, git ls-tree, git rev-list, git merge-base, git show-ref, od, hexdump, strings, xxd, --version">
+  <label for="cmd_unlisted">Other commands</label>
+  <select id="cmd_unlisted"><option value="ask">Need my approval</option><option value="allow">Run without asking (dangerous ones still need my approval)</option><option value="deny">Are refused (dangerous ones too)</option></select>
+  <label for="cmd_sandboxed">Test runners in Claude Code's strict sandbox <span class="hint">pytest, python -m pytest/mypy, ruff, npm test/run, npx jest/tsc, cargo test, go test, make ...</span></label>
+  <select id="cmd_sandboxed"><option value="ask">Need my approval</option><option value="allow">Run without asking, only inside a strict sandbox</option></select>
+  <details id="sandbox_help"><summary>How to turn on the strict sandbox (macOS)</summary>
+   <p class="hint">A test runner runs code the agent may have written. Without the sandbox below every runner needs your approval, whatever you choose here. With it, the operating system keeps the runner from reading your keys and from reaching the network. The keys are Claude Code's own, from code.claude.com/docs/en/sandboxing. Set three places:</p>
+   <p class="hint">1. Your user settings <code>~/.claude/settings.json</code> (or managed settings) lock the network. Claude Code ignores this key in a project's settings, and the hook cannot see <code>--settings</code>:</p>
+   <pre id="sandbox_user_settings">{ "sandbox": { "network": { "strictAllowlist": true } } }</pre>
+   <p class="hint">2. The project's <code>.claude/settings.json</code>:</p>
+   <pre id="sandbox_settings">{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": { "denyRead": ["~/", "./.env"], "allowRead": ["."] }
+  }
+}</pre>
+   <p class="hint">3. The shell you start Claude Code from: <code>export CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1</code>. A settings <code>env</code> block does not turn the scrub on.</p>
+   <p class="hint">"With the retry disabled, Claude Code ignores the <code>dangerouslyDisableSandbox</code> parameter." Without <code>strictAllowlist</code>, <code>bypassPermissions</code> mode lets a sandboxed command reach any host. Accepted permission modes: <code>default</code>, <code>acceptEdits</code> and <code>bypassPermissions</code> (that includes <code>--dangerously-skip-permissions</code>). In <code>auto</code>, <code>plan</code> and <code>dontAsk</code> the runner is asked. Keep <code>sandbox.excludedCommands</code> and <code>sandbox.network.allowedDomains</code> empty and add no Unix sockets. Any of these, a <code>.env</code> file of the project left readable, or Linux/Windows makes the sandbox "not strict", and the runner is asked. The scrub also removes <code>DEUS_WITNESS_KEY</code> from the hook's environment, so give the hook its key with the key file that <code>deus-witness try</code> saves. A mandate signed before this option keeps asking until you sign a new one with it.</p>
+  </details>
+ </div>
+
+ <h3>HTTP requests (OpenShell sandbox)</h3>
+ <p class="hint">A rule names an endpoint: METHOD host[:port]/path. <code>*</code> is one path segment, a final <code>**</code> is one or more; no port means 443. A rule allows that endpoint with any query and body; requests carrying secrets or personal data are refused anyway, and every other request is asked or refused, as you choose below.</p>
+ <label for="http_mode">Policy</label>
+ <select id="http_mode"><option value="none">Not specified (every request needs your approval)</option><option value="list">Run listed requests without asking</option><option value="forbid">Forbidden (every request is refused)</option></select>
+ <div id="http_box" hidden>
+  <label for="http_allow">Requests that run without asking <span class="hint">comma-separated, e.g. GET api.github.com/repos/acme/app/**</span></label><input id="http_allow" placeholder="GET api.github.com/repos/acme/app/**">
+  <label for="http_unlisted">Other requests</label>
+  <select id="http_unlisted"><option value="ask">Need my approval</option><option value="deny">Are refused</option></select>
+ </div>
+
+ <div id="warnbox" class="notice err" role="alert" hidden><ul id="warnlist"></ul><div class="row"><button id="warnfix" class="btn" type="button">Set it</button><button id="warngo" class="btn ghost" type="button">Continue, forbid it</button></div></div>
+ <p><button class="btn big" type="submit">Review and sign</button></p>
+</form>
+
+<section id="sign" class="card" hidden>
+ <h2>Check, then sign</h2>
+ <p>This is exactly what your passkey will sign. Your browser encoded it from the data below; the server does not hand you a hash.</p>
+ <div id="human"></div>
+ <details><summary>Show exact bytes</summary>
+  <h3>Payload (CDE, hex)</h3><pre id="hexp"></pre>
+  <h3>Challenge (SHA-256, hex)</h3><pre id="hexc"></pre>
+  <p class="hint">challenge = SHA-256("deus-aar-wa-0.1" 0x00 "application/aar-mandate+cbor" 0x00 payload). The passkey signs over this challenge.</p>
+ </details>
+ <div class="row"><button id="back" class="btn ghost" type="button">Edit</button><button id="signbtn" class="btn big" type="button">Sign with passkey</button></div>
+ <p class="hint">Honest limit: your passkey device cannot show you the mandate; you trust this page. The page scripts are fixed files whose SHA-256 hashes are published on the home page.</p>
+</section>
+
+<section id="done" class="card" hidden>
+ <h2 id="donehead">Mandate active</h2>
+ <p id="doneinfo"></p>
+ <p><a class="btn" href="app.html">Back to dashboard</a></p>
+</section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/mandate.js"></script>
+</body></html>

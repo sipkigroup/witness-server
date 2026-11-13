@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Recovery codes - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow">
+<h1>Recovery codes</h1>
+<div id="msg" class="notice" hidden></div>
+<div class="card">
+ <p id="state">-</p>
+ <p>Ten codes, each works once. If you lose every device with a passkey, a code lets you add a new passkey - nothing else. Using a code
+ signs out every session of your account and notifies your other devices.</p>
+ <p>We keep only a one-way hash of each code (scrypt). We cannot show them again: you see them once, right after you make them.</p>
+ <p><button id="make" class="btn" type="button">Make 10 new codes</button></p>
+ <p class="hint">Making new codes asks for your passkey and voids every code made before.</p>
+</div>
+<div class="card" id="shown" hidden>
+ <h2>Your new codes</h2>
+ <div class="notice warn">Save them now. Leaving this page hides them for good.</div>
+ <pre id="codes" class="mono"></pre>
+ <p class="row"><span id="copy"></span><button id="dl" class="btn ghost" type="button">Download .txt</button></p>
+ <p class="hint">Keep them offline: on paper or in a password manager, not in the same place as your phone. Anyone who has a code can add a
+ passkey to your account (you would get a notification). In a team, a code alone gives nobody your role: the other members still have to
+ replace your key in the team policy.</p>
+</div>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/recovery_codes.js"></script>
+</body></html>

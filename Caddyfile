@@ -1,0 +1,13 @@
+# TLS terminator for the witness (profile "https"). Caddy gets a Let's Encrypt certificate for DW_DOMAIN automatically:
+# the name must resolve to this host and ports 80/443 must be reachable. Own certificate instead: replace the first line inside
+# the block with `tls /certs/fullchain.pem /certs/key.pem` and mount ./certs:/certs:ro in docker-compose.yml.
+# Closed network try-out: `tls internal` (Caddy's own CA; clients must trust its root from the "caddy" volume).
+{$DW_DOMAIN} {
+	request_body {
+		max_size 256KB
+	}
+	reverse_proxy witness:8787 {
+		# The witness takes the client IP for its per-IP limits from X-Real-IP: always OVERWRITE what the client sent.
+		header_up X-Real-IP {remote_host}
+	}
+}

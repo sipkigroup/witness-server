@@ -1,0 +1,11 @@
+{
+ "fetched_at": "2026-10-23T18:28:22Z",
+ "fmspc": "20A06F000000",
+ "pck_ca": "platform",
+ "urls": {
+  "tcb": "https://api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc=20A06F000000",
+  "qe": "https://api.trustedservices.intel.com/tdx/certification/v4/qe/identity",
+  "pckcrl": "https://api.trustedservices.intel.com/sgx/certification/v4/pckcrl?ca=platform&encoding=der",
+  "rootcacrl": "https://certificates.trustedservices.intel.com/IntelSGXRootCA.der"
+ }
+}

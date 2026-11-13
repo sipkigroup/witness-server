@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Audit log for AI agent actions you can verify offline</title><meta name="description" content="What makes an AI agent audit log trustworthy, how a signed ledger and receipts work, and how to check an evidence pack offline with deus-witness-verify-pack. With the real output and the limits."><link rel="canonical" href="https://witness.sipkigroup.com/dl/docs/verifiable-audit-log-ai-agent-actions.html"></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Audit log for AI agent actions you can verify offline</h1>
+<p>An agent runs tools for hours without you. Later someone asks: what did it do, and who allowed it? A plain log file answers only "what the logger says". This guide explains what a log must have to be checked by a third party without trusting its author, then shows how Deus Witness packs it and how to verify a real pack offline.</p>
+<h2>What a trustworthy log needs</h2>
+<p>Logging in Claude Code itself is useful but is a record on the same machine as the agent. Its hook events, for example, give you <code>PreToolUse</code> and <code>PostToolUse</code> inputs (<a href="https://code.claude.com/docs/en/hooks">Hooks reference</a>), which you can write to a file. For an audit you want more properties than a file has:</p>
+<ul>
+<li><strong>Tamper evidence.</strong> Each entry includes the hash of the previous one (a hash chain), so removing or editing an old entry breaks every later one.</li>
+<li><strong>Authorship.</strong> Entries and checkpoints are signed, so you know who vouches for them.</li>
+<li><strong>Completeness.</strong> The log says up to which entry it is complete; "the log ends here" is itself signed.</li>
+<li><strong>A time that the logger cannot move back.</strong> A hash of the log published somewhere else (a timestamp service, a blockchain timestamp) proves it existed by then.</li>
+<li><strong>Checking without the author.</strong> The checker is open and runs on your machine without any server.</li>
+</ul>
+<h2>A signed ledger and receipts</h2>
+<p>Deus Witness (a service plus a hook, <code>pip install deus-witness</code>) judges every tool call of an agent against a mandate you signed with a passkey. Each decision (<code>allow</code>, <code>deny</code> or <code>defer</code>) is appended to a hash-chained ledger and answered with a <strong>receipt</strong>: a signed statement "this call, this verdict, this ledger position". The hook only lets a call run after it has verified the receipt. Periodically the ledger gets a signed checkpoint, and every hour a Merkle root of new checkpoints goes to OpenTimestamps calendars, which commit to Bitcoin.</p>
+<p>From the dashboard you export an <strong>evidence pack</strong>, a zip with the ledger, checkpoints, receipts, the registry of keys, anchor files and a signed manifest.</p>
+<h2>Verify a pack offline</h2>
+<p>Install the checker (Python 3.10 or newer). It comes from the package, not from the pack, so a doctored pack cannot bring its own checker:</p>
+<pre><code>python3 -m venv ~/dw &amp;&amp; ~/dw/bin/pip install deus-witness
+curl -sLO https://witness.sipkigroup.com/demo/deus-witness-demo-pack.zip
+~/dw/bin/deus-witness-verify-pack deus-witness-demo-pack.zip --offline</code></pre>
+<p>That is a public demo pack (its key is public, it is not a real account). I ran exactly this with deus-witness 0.2.26. Output, shortened:</p>
+<pre><code>manifest: signed by the witness key
+complete as of 2026-10-19 03:14:26 UTC (seq 24)
+ledger: valid (26 entries)
+receipts: 6/6 included
+anchor ...: pending (inclusion in batch root proven; not stamped)
+anchors: NONE stamped ... the history is vouched for by the witness alone
+trust: verdicts: the witness&#x27;s allow/deny/defer decisions are NOT replayed here ...
+RESULT: VALID</code></pre>
+<p>The exit code is 0 for <code>RESULT: VALID</code>, 1 for <code>INVALID</code>. Now change one byte of <code>ledger/ledger.cose</code> inside the zip and run it again: the lines become <code>manifest: MISMATCH ledger/ledger.cose</code>, <code>ledger: invalid ...</code> and <code>RESULT: INVALID</code>, exit 1. Add <code>--require-anchors</code> and a pack without a stamped anchor is <code>INVALID</code> too, which is the setting to use when the operator is not you.</p>
+<p>Two flags make the check independent of the pack: <code>--witness-kid=&lt;hex&gt;</code> (the key id you fetched yourself from <code>/v1/witness</code>) and <code>--owner-kid=&lt;hex&gt;</code> (a key your Devices page shows). A mismatch is <code>INVALID</code>. Without them the checker reads the keys from the pack and prints a <code>trust:</code> line saying so.</p>
+<h2>Limits (read the trust lines)</h2>
+<ul>
+<li><strong>Verdicts are not replayed.</strong> <code>VALID</code> means the signatures, chain, Merkle roots, key registry and anchors hold. The checker does not re-run the witness's decision rules against the mandate; the line <code>trust: verdicts ... NOT replayed</code> says so. You see what the witness decided and that it cannot be altered afterwards, not that the decision was right.</li>
+<li><strong>Without an anchor, the witness could have rewritten the history.</strong> <code>pending</code> is normal for hours; once Bitcoin includes the batch, a re-downloaded pack shows the block.</li>
+<li><strong>Only calls that pass through the witness are in it.</strong> An agent with other channels is out of scope; see <a href="https://witness.sipkigroup.com/dl/docs/coverage.html">what the witness sees</a>.</li>
+<li><strong>Some refusals are in the operator's database only</strong>, not in the ledger (for example a call with no mandate). The concepts page lists them.</li>
+<li>The witness is only as independent as its operator; at this stage the operator is the author of the project.</li>
+</ul>
+<p>Full option list and older pack versions: <a href="verify.html">Verify</a>. How the receipts are made: <a href="concepts.html">Concepts</a>. To produce such a log from Claude Code in CI: <a href="require-human-approval-claude-code-ci.html">Require human approval for Claude Code tool calls</a>, and to try it yourself, <a href="quickstart.html">Quickstart</a>. The browser demo at <code>/demo/</code> builds the same kind of pack in about a minute.</p>
+</main></body></html>

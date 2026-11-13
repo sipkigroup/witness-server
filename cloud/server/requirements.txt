@@ -1,0 +1,2 @@
+# Server runtime dependencies = the deployment image's (one source of truth).
+-r ../deploy/requirements.txt

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Node 2: independent co-signer - Deus Witness</title>
+<meta name="description" content="A second signer of the journal heads, running in an AMD SEV-SNP confidential container: its key, its attestation report, its last co-signature and its alarms."></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<h1>Node 2: independent co-signer</h1>
+<div id="stage" class="notice warn"><strong>Test stage.</strong> The only real attestation report so far (22 October 2026) was taken with an <strong>allow-all container policy</strong>, used for a probe. With such a policy the operator (we) can run commands inside the container next to the key, so node 2 is <strong>not independent of us yet</strong>, and the checker says NOT COVERED. This page shows what node 2 publishes; the verdict is yours to compute.</div>
+<div id="msg" class="notice" hidden></div>
+
+<section class="card"><h2>What node 2 does</h2>
+<p>Every anchor batch of the witness (node 1) holds a signed checkpoint of each journal that changed. Node 2 receives each batch with, per journal, a proof that the new journal tree <em>extends</em> the last one node 2 co-signed (an RFC 9162 consistency proof). If all of it holds, node 2 co-signs the batch with its key K2. If node 1 shows another tree of the same size, a smaller tree, or cannot prove the extension, node 2 signs an <strong>alarm</strong> that carries both checkpoints: anyone can check it offline.</p>
+<p>Node 2 never sees journal entries, only the hashes of the checkpoints. Its key is created in the memory of an AMD SEV-SNP confidential container (Azure Container Instances) and is bound to an AMD-signed attestation report. A restart creates a new key; the list below shows every key with its report.</p>
+</section>
+
+<section class="card"><h2>Last co-signature</h2><dl class="kv" id="latest"><dt>status</dt><dd>loading</dd></dl></section>
+
+<section class="card"><h2>Keys K2 and their SEV-SNP reports</h2><div id="keys"><p class="hint">loading</p></div>
+<p class="hint">host_data is the SHA-256 of the container policy text that the platform enforced. Recompute it from the open node 2 image (<code>az confcom acipolicygen</code>) and compare. The measurement is that of the Microsoft utility VM.</p></section>
+
+<section class="card"><h2>Alarms</h2><div id="alarms"><p class="hint">loading</p></div>
+<p class="hint">FORK (same size, other tree) and ROLLBACK (a smaller tree signed later) are definitive. NOT_PROVEN_APPEND_ONLY means node 1 could not prove that a journal only grew; it is not by itself proof of a rewrite. Every co-signature counts the alarms raised before it, so an alarm that disappears from this list is visible in the next co-signature.</p></section>
+
+<section class="card"><h2>Check it yourself</h2>
+<ol class="steps">
+<li>Download your evidence pack (Dashboard, Export) and unzip it.</li>
+<li>Run the checker from a source you trust, not from the pack:
+<pre class="mono">python -I pack/verify/verify_pack.py pack --offline</pre>
+The line <code>node2:</code> says COVERED, NOT COVERED (with the reason) or ALARM.</li>
+<li>Keep the file <code>node2-pin.json</code> that the checker writes next to the pack folder. On the next check it detects a node 2 restarted from an old state (the chain it is shown differs from the one you saw).</li>
+<li>Pin the expected build: <code>--node2-expect=expect.json</code> with <code>{"policy_sha256": ..., "measurement": ...}</code> recomputed from the open node 2 image, and <code>--node2-genesis=&lt;hex&gt;</code> once the genesis is published.</li>
+<li>The raw data: <code>GET /v1/node2/keys</code>, <code>/v1/node2/latest</code>, <code>/v1/node2/chain?from=1</code>, <code>/v1/node2/alarms</code>. All of it is signed by K2 or AMD; node 1 only relays it.</li>
+</ol></section>
+
+<section class="card"><h2>What this does not prove</h2>
+<ul>
+<li>Anything before node 2 first saw your journal: the first checkpoint it sees is taken on trust.</li>
+<li>That Microsoft and AMD are honest: they sign the platform and the utility VM. One cloud and one chip maker are a single trust boundary.</li>
+<li>That the container runs the published node 2 code, until the policy is not allow-all and you compared its hash with your own build.</li>
+<li>That node 1 shows node 2 your journal at all: if it does not, your checkpoints stay without a co-signature, and the checker says NOT COVERED. The absence is the signal, so a checker that you run is needed.</li>
+<li>Freshness: the time inside a co-signature is node 1's batch time; node 2 has no clock of its own yet.</li>
+<li>Revocation of AMD certificates and a minimum firmware level are not checked offline.</li>
+</ul></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/node2.js"></script>
+</body></html>

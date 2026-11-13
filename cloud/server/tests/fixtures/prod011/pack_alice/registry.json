@@ -1,0 +1,24 @@
+{
+ "principal": "dw:929bbd10cc726f94298e706a89be35b0",
+ "entry": {
+  "alg": "ES256",
+  "pin_source": "webauthn-registration:localhost:2026-10-19T17:44:57Z:registry-log#1",
+  "pub": "04587bf19a13fcb97e6828e45afbaafc68cfe460b65c76672232ff6366ebeac0394b6f95022c386389c0cccd33df7836423dc7cef10069dc495defaf51e2ff14c9",
+  "webauthn": {
+   "credential_id": "QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE",
+   "origins": [
+    "http://localhost:8810"
+   ],
+   "rp_id": "localhost"
+  }
+ },
+ "log": [
+  {
+   "seq": 1,
+   "prev": "",
+   "hash": "74efe1b23299f05e11c9efbca9c68afa8f6a337d0c75a5f330916b1fdb0a4504",
+   "entry_json": "{\"alg\":\"ES256\",\"pin_source\":\"webauthn-registration:localhost:2026-10-19T17:44:57Z:registry-log#1\",\"pub\":\"04587bf19a13fcb97e6828e45afbaafc68cfe460b65c76672232ff6366ebeac0394b6f95022c386389c0cccd33df7836423dc7cef10069dc495defaf51e2ff14c9\",\"webauthn\":{\"credential_id\":\"QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE\",\"origins\":[\"http://localhost:8810\"],\"rp_id\":\"localhost\"}}"
+  }
+ ],
+ "head": "74efe1b23299f05e11c9efbca9c68afa8f6a337d0c75a5f330916b1fdb0a4504"
+}

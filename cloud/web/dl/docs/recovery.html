@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>Recovery - Deus Witness docs</title></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>Recovery: a lost phone without weaker security (0.2.2)</h1>
+<p>Your passkey lives on a device. Lose the device and, until 0.2.2, you lost the account. 0.2.2 gives three ways back, and none of</p>
+<p>them lets anyone sign for you without either a passkey you already hold or other people who know you.</p>
+<table><tr><th>you lost</th><th>way back</th><th>what vouches for the new key</th></tr><tr><td>one device, you still have another passkey</td><td><strong>Devices</strong>: remove the lost one</td><td>a signature by a passkey you still hold</td></tr><tr><td>every passkey, you have a recovery code</td><td><strong>Recovery code</strong> -&gt; add a new passkey</td><td>only the witness (said so in the pack)</td></tr><tr><td>your team key (organisation with a policy)</td><td>the <strong>other members</strong> replace your key</td><td>their signatures (rule <code>recovery</code>, k &gt;= 2)</td></tr></table>
+<h2>1. Several passkeys (Devices page)</h2>
+<ul>
+<li>Keep at least two passkeys on different devices (a phone and a hardware key, or a phone and a laptop). Any active one signs you in</li>
+</ul>
+<p>  and signs for your own account.</p>
+<ul>
+<li><strong>Adding</strong> one is two separate prompts: the new device creates its passkey, then a passkey you already use **signs exactly that new</li>
+</ul>
+<p>  key** (a wa-sig of type <code>application/dw-key-event+cbor</code> over <code>{principal, op, kid, pub, cred, nonce}</code>). Until that signature arrives</p>
+<p>  the new key is not active. A cookie alone cannot add a key; the new key cannot vouch for itself (<code>409 KEY_SELF</code>).</p>
+<ul>
+<li><strong>Removing</strong> one is signed the same way. The last active passkey can never be removed (<code>409 LAST_KEY</code>). A removed passkey stops at</li>
+</ul>
+<p>  once: it cannot sign in (<code>401 CREDENTIAL_REVOKED</code>), step up, approve or sign anything (<code>409 KEY_REVOKED</code>), and the sessions it</p>
+<p>  opened end.</p>
+<ul>
+<li>Every addition and removal is a row of the registry hash chain (<code>registry_log</code>, hourly anchor) and shows in the evidence pack.</li>
+</ul>
+<p>  Your other devices get a push ("a passkey was added to or removed from your account").</p>
+<h2>2. Recovery codes</h2>
+<ul>
+<li>Ten one-time codes, made on the <strong>Recovery codes</strong> page after a fresh passkey signature (step-up). They are <strong>shown once</strong>; the server</li>
+</ul>
+<p>  keeps only a scrypt hash of each (N = 2^14, r = 8, p = 1, 16-byte salt per code). Making new codes voids the old ones.</p>
+<ul>
+<li>A code has 20 symbols (<code>XXXX-XXXX-XXXX-XXXX-XXXX</code>, no I/O/0/1): the first group finds the row, the other 80 bits are the secret.</li>
+</ul>
+<p>  Wrong, unknown and used codes get the same answer (<code>401 RECOVERY_INVALID</code>) after the same scrypt work. Limits: 10 attempts per hour</p>
+<p>  per IP; 10 FAILED attempts per hour per account the code's lookup group reaches (0.2.12, R7-05: then that account's codes wait an hour);</p>
+<p>  a code no account has (garbage) also counts against one ceiling for the whole server (300 per hour), which real codes never pay - a flood of</p>
+<p>  garbage from many addresses cannot lock owners out.</p>
+<ul>
+<li>Using a code: the code is spent, <strong>every session of the account ends</strong>, every device of the person gets a push ("a recovery code was</li>
+</ul>
+<p>  just used"), and the browser gets a 15-minute session that can do <strong>one thing only</strong>: add a new passkey (every other path answers</p>
+<p>  <code>403 RECOVERY_ONLY</code>). After the new passkey is created the recovery session ends; you sign in with the new passkey, remove the lost one</p>
+<p>  on Devices, and make new codes.</p>
+<ul>
+<li><strong>Phone or computer (0.2.14).</strong> With confirmation levels the new key is a <strong>laptop</strong> key unless you choose "my new phone"</li>
+</ul>
+<p>  on the recovery page (<code>POST /api/auth/recovery/passkey/begin {"label", "device": "phone"}</code>). Only a phone key may remove or demote your lost</p>
+<p>  phone's key, so after losing the phone: run recovery <strong>on the new phone</strong>, choose "my new phone", sign in with it, remove the lost key.</p>
+<p>  The declaration is recorded (<code>key_device</code>, <code>by: "recovery-code"</code>) and pushed to your devices. Keep the codes on paper: whoever holds a code</p>
+<p>  can declare a new "phone".</p>
+<ul>
+<li><strong>The new phone waits (0.2.15).</strong> A key declared "my new phone" with a recovery code counts as a <strong>phone only 24 hours later</strong> (the server</li>
+</ul>
+<p>  may set 24-72 h: <code>DW_RECOVERY_PHONE_DELAY_H</code>); until then it is a laptop key (it signs you in and confirms ordinary project commands, but does</p>
+<p>  not remove the lost phone, confirm phone-level actions or vouch for another phone key). The registry row carries <code>not_before</code>; the pack checker</p>
+<p>  prints <code>keys: &lt;kid&gt; declared the new phone with a recovery code at T; counts as phone from T+24h</code> and fails a row whose wait is shorter</p>
+<p>  than 24 h or longer than 72 h (<code>RECOVERY_DELAY</code>). At the declaration every other device of yours gets a push (kind <code>p</code>: "A recovery code was used</p>
+<p>  to declare a NEW PHONE ... Not you? cancel"); Devices shows the waiting key with <strong>"This was not me - cancel"</strong>. Cancelling needs a step-up with</p>
+<p>  your <strong>phone</strong>; if you have no phone key, with any <strong>other</strong> active key that is not waiting itself (a waiting key never cancels another one).</p>
+<p>  Cancelling ends the claim for good (the key stays a laptop key until you remove it, its sessions end) and <strong>stops every unused recovery code</strong></p>
+<p>  (whoever used one probably holds the sheet): make new ones. Removing a waiting key follows the same rule. With <strong>no other device left</strong> the</p>
+<p>  wait still holds: come back after 24 h. 0.2.16: until then the waiting key makes no new recovery codes and removes no passkey (409</p>
+<p>  <code>PHONE_PENDING</code>). The "first marking" shortcut (an account that never had a phone may mark a key phone without a phone</p>
+<p>  signature) is closed while a recovery code was used in the last 24 h or a declared phone waits - otherwise a code would skip the wait.</p>
+<p>  <strong>In a team</strong> whose policy has the rule <code>recovery</code> (k &gt;= 2), two other members can end the wait early: any member opens</p>
+<p>  <code>POST /api/org/phone-lift {"user_id"}</code>, the others sign it on the sign page (typ <code>application/dw-phone-lift+cbor</code>); the person never signs it.</p>
+<p>  The registry row then says <code>lifted: true, by: "team-quorum"</code> with the quorum envelope. E-mail: the service stores no e-mail addresses, so</p>
+<p>  the notice goes by push only.</p>
+<ul>
+<li>A key added with a code is recorded <code>by: "recovery-code"</code>. No old passkey signed it, so <strong>only the witness vouches for it</strong>, and the</li>
+</ul>
+<p>  pack checker says exactly that: <code>keys: 2 keys (1 added: 0 by passkey, 1 by recovery code (witness-attested); 1 removed)</code>.</p>
+<h2>3. Organisations: the others replace your key</h2>
+<p>A team policy names <strong>one key per member</strong>. A new passkey on your account does not sign for the team until the policy names it.</p>
+<ul>
+<li>The policy may carry an optional rule <code>recovery: {"role": "any", "k": K}</code> (Team page, "Other members who replace someone's lost key").</li>
+</ul>
+<p>  K must be <strong>at least 2</strong> - one person alone never takes over someone else's key - and reachable whichever one member is lost</p>
+<p>  (otherwise <code>POLICY_MALFORMED</code>).</p>
+<ul>
+<li>After you added a new passkey (code or another device), any signer opens <strong>"Lost passkey: replace key"</strong> on the Team page. The request</li>
+</ul>
+<p>  is a policy version that changes <strong>only your key</strong> (same roles, label and rules). It needs K signatures of OTHER members; your lost key</p>
+<p>  never counts (<code>409 RECOVERY_SELF</code>). The sign page tells each signer to confirm with you in person or by phone first.</p>
+<ul>
+<li>Without a <code>recovery</code> rule the replacement is an ordinary policy change (rule <code>policy</code>). If the only owner loses the only owner key and</li>
+</ul>
+<p>  there is no <code>recovery</code> rule, nobody can change the policy any more: add the rule while you can.</p>
+<ul>
+<li>The registry row of that version names the swap (<code>"key_swap": {"old_kid", "new_kid"}</code>), and the checker prints it:</li>
+</ul>
+<pre><code>org policy: chain ok (v1..v4)
+org recovery: v4 replaced key 3992a358 -&gt; b97f1671 (rule recovery any k=2, 2 signers, the replaced key not among them: yes)
+keys: 2 keys (1 added: 0 by passkey, 1 by recovery code (witness-attested); 1 removed), 0/0 signatures by a key active at the time
+quorum: 1/1 entries meet policy-at-time
+RESULT: VALID</code></pre>
+<p>(from a test run, 19.10.2026: the owner of a</p>
+<p>3-member organisation lost the phone; Bob and Carol replaced the key.)</p>
+<h2>4. Mandates signed by the lost key</h2>
+<p>They <strong>stay valid</strong>: each signature was good when it was recorded, the agents keep working, and the pack still verifies. The checker's</p>
+<p>second pass accepts a signature only from a key that was active at the entry's witnessed time - before its removal, yes; after, <code>INVALID</code></p>
+<p>(<code>keys: FAIL KEY_NOT_ACTIVE@&lt;seq&gt;</code>).</p>
+<p>If you do not trust them any more (the phone was stolen unlocked), <strong>Devices -&gt; "Revoke all"</strong> lists the active mandates that key signed</p>
+<p>and revokes them with a current passkey in one ceremony per 20 mandates: one batch envelope <code>wb</code> of typ</p>
+<p><code>application/aar-revocation+cbor</code> whose challenge covers the items <strong>and the type</strong>, so an approval batch can never be replayed as a</p>
+<p>revocation (<code>REVOCATION_SIG</code>), nor the other way round. API: <code>GET /api/mandates/by-key/{kid}</code>, <code>POST /api/mandates/revoke-batch</code>.</p>
+<h2>5. API (machine form: <code>contract/v02/openapi-0.2.2-recovery.yaml</code>)</h2>
+<p>Person-level (under <code>/api/auth/</code>, any member including an observer): <code>GET /api/auth/keys</code>, <code>POST /api/auth/keys/add/{begin,finish,confirm}</code>,</p>
+<p><code>POST /api/auth/keys/{kid}/remove/begin</code>, <code>POST /api/auth/keys/{kid}/remove</code>, <code>GET|POST /api/auth/recovery-codes</code>,</p>
+<p><code>POST /api/auth/recovery/login</code>, <code>GET /api/auth/recovery/state</code>, <code>POST /api/auth/recovery/passkey/{begin,finish}</code>.</p>
+<p>Organisation-level: <code>POST /api/org/key-replace</code>, <code>GET /api/mandates/by-key/{kid}</code>, <code>POST /api/mandates/revoke-batch</code>.</p>
+<p><code>GET /api/me</code> adds <code>signing_keys</code> (the passkeys that may sign in the current account: every active one of a solo account, the member's</p>
+<p>key in a team).</p>
+<h2>6. Honest limits</h2>
+<ol>
+<li><strong>A recovery code is a key to the account.</strong> Whoever holds one (and knows nothing else) can add a passkey, then remove yours and make</li>
+</ol>
+<p>   new codes. What stands in the way: the push to your devices, the registry row, and in a team the other members. Keep codes offline.</p>
+<ol>
+<li><strong>The witness vouches for a code-added key.</strong> The pack shows <code>by recovery code (witness-attested)</code>; a third party trusts the witness</li>
+</ol>
+<p>   for that step, as for the time of every entry.</p>
+<ol>
+<li><strong>Removal does not reach the lost device.</strong> It stops the key here; it does not erase the passkey on the phone, nor at the platform</li>
+</ol>
+<p>   (iCloud Keychain / Google Password Manager may sync it to the thief's other devices - remove it there too).</p>
+<ol>
+<li><strong>Old sessions.</strong> Sessions opened before 0.2.2 do not record which passkey opened them; removing any key ends all of those.</li>
+<li><strong>Agent API keys are separate.</strong> A stolen session could have read nothing secret, but if you fear it was used, recreate the agents' keys.</li>
+<li><strong>Checkers.</strong> A pack with key changes needs the 0.2.2 checker. A 0.2.1 checker ignores the key rows: where a second passkey signed</li>
+</ol>
+<p>   it answers <code>INVALID</code> (<code>ledger: invalid MANDATE_KEY@0</code> in my probe), otherwise it may say <code>VALID</code> without having looked at the key</p>
+<p>   changes. The Swift checker does</p>
+<p>   not know key events yet.</p>
+<ol>
+<li>Push delivery is best effort (see Approvals): a security notice can arrive late or not at all.</li>
+</ol>
+<h2>0.2.5: what a recovery-code key can do in a team (R4-09)</h2>
+<p>A team policy names one key per member. A passkey you added with a recovery code (or on a second device) is <strong>not</strong> in the policy. In an organisation with a policy that key gets <strong>no rights there</strong> until the other members swap it in (Team -&gt; "Lost passkey: replace key", rule <code>recovery</code>):</p>
+<ul>
+<li>step-up in that organisation is refused: <code>403 KEY_NOT_IN_POLICY</code> (this blocks editing tool maps, protected data, advisor, invites, agent keys, push routing, recovery codes);</li>
+<li>the protected literals are shown <strong>masked</strong>, as to an observer;</li>
+<li>your own account (no policy) and its pages behave as before; once the quorum replaced your key, the new key is in the policy and everything works.</li>
+</ul>
+<p>So a stolen paper code of a team owner does not by itself open the team: before the quorum looks at the replacement request, the thief can read nothing protected and change nothing in the team.</p>
+<p><strong>Partly covered since 0.2.15:</strong> a key added with a code reaches the phone level only after the wait (24-72 h), and the other devices can cancel it. <strong>Closed in 0.2.16:</strong> during the wait the declared key can neither make new recovery codes nor remove any passkey, phone or laptop (409 <code>PHONE_PENDING</code> until the wait ends); the owner's other keys still can, and can cancel it. It can still open a key-replacement request that looks like an ordinary "lost phone": the team's confirmation by voice or in person (shown on the signing page) is the protection there. The price: a person who lost every device waits 24 h before making new codes.</p>
+</main></body></html>

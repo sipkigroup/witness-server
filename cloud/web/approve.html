@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Witness"><title>Approvals - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow" id="main">
+<p class="backlink"><a href="app.html">&larr; Dashboard</a></p>
+<h1 id="title">Approval needed</h1>
+<div id="msg" class="notice" hidden></div>
+
+<section id="queue" hidden>
+ <div class="row tabs" role="tablist"><button id="t_mine" class="btn" type="button">For my roles</button><button id="t_all" class="btn ghost" type="button">All waiting</button></div>
+ <p class="hint" id="qhint"></p>
+ <section class="card" id="held-card" hidden><h2 id="heldhead">Held by the data advisor</h2><p class="hint" id="heldhint">The mandate allows these actions, but the advisor flagged their text. The advisor never decides: you release (the witness then judges the action as usual) or reject.</p><div id="held"></div></section>
+ <section class="card" id="groups-card" hidden><h2>Batches</h2><p class="hint">Same agent, same kind of action, same recipient or channel. You review every item, then approve all with one passkey prompt.</p><div id="groups"></div></section>
+ <section class="card"><h2>One by one</h2><div id="singles"><p class="hint">Nothing is waiting.</p></div></section>
+</section>
+
+<section id="batch" class="card" hidden>
+ <h2 id="bhead"></h2>
+ <p id="bintro"></p>
+ <div id="blist" class="batchlist" tabindex="0" aria-label="Items of the batch"></div>
+ <p class="hint" id="bgate">Scroll to the end of the list to enable approval.</p>
+ <details><summary>Show exact bytes</summary>
+  <h3>Items (SHA-256 of each approval payload, computed here)</h3><pre id="bitems"></pre>
+  <h3>Challenge (hex)</h3><pre id="bch"></pre>
+  <p class="hint">challenge = SHA-256("deus-aar-wb-0.1" 0x00 "application/aar-approval+cbor" 0x00 CDE(items)). Each payload holds SHA-256 of the mandate and of the action, both computed in your browser.</p>
+ </details>
+ <div class="row"><button id="bback" class="btn ghost" type="button">Back</button><button id="bgo" class="btn big" type="button" disabled>Approve</button></div>
+ <p class="hint">Refusing works one by one: open an item from the list. Honest limit: your passkey device does not display the items; you trust this page.</p>
+</section>
+
+<section id="box" class="card decision" hidden>
+ <section id="qw" hidden>
+  <p id="qw_harm" class="harm"></p>
+  <div id="riskbar" class="riskbar" role="img" hidden><span class="segs"><i></i><i></i><i></i><i></i></span><b id="risk_word"></b></div>
+  <pre id="cmdline" class="cmdline" hidden></pre>
+  <button id="qw_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_more">Details &#9656;</button>
+ </section>
+ <div id="qw_more" class="qwmore" hidden>
+ <dl class="kv simple" id="qw_simple"><dt>Agent</dt><dd id="sx_who"></dd><dt>Target</dt><dd id="sx_where"></dd><dt>Action</dt><dd id="sx_act"></dd><dt>Rollback</dt><dd id="sx_undo"></dd><dt id="what_dt">Command</dt><dd id="what_dd"><pre id="what" class="what"></pre><div id="what_parts" hidden></div></dd></dl>
+ <button id="tech_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_tech" hidden>More technical &#9656;</button>
+ <div id="qw_tech" class="qwtech" hidden>
+ <p id="boxlead" class="lead">Your rules do not clearly allow this, so you decide.</p>
+ <div id="must">
+  <p id="dangerline" class="notice err" role="alert" hidden></p>
+  <p id="advmark" class="notice warn" hidden></p>
+  <div id="execbox" class="notice warn" hidden><strong id="exechead"></strong><ul id="execfiles"></ul><p class="hint" id="execnote"></p></div>
+  <div id="honest" class="notice warn" role="alert" hidden></div>
+  <div id="pvblock" hidden><p class="hint" id="pvlabel">What it sends:</p><pre id="pvtext"></pre></div>
+ </div>
+ <p id="mustend" class="mustend" aria-hidden="true"></p>
+ <pre id="qw_det"></pre>
+ <div id="qw_parts"></div>
+ <p id="allow_trust" hidden></p>
+ <details id="more_opts" open><summary id="more_sum" hidden>More options: a longer time, or this agent's later runs</summary>
+ <section id="allow" class="notice warn" hidden>
+  <label class="check"><input type="checkbox" id="allow_cb"> <strong id="allow_label">Allow this command in this project</strong></label>
+  <p class="hint" id="allow_note"></p>
+  <div id="allow_more" hidden>
+   <p><label for="allow_days">For</label> <select id="allow_days"><option value="1" selected>1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></p>
+   <p class="hint">Only these exact commands, only in this folder (and its sub-folders), only for this agent and its current mandate. The approve button then signs this permission
+   (one passkey prompt) instead of approving just this request; the agent repeats the call. It is recorded in your ledger, shown in every receipt it lets through,
+   listed on <a href="allowances.html">Project permissions</a> and revoked there in one click.</p>
+  </div>
+ </section>
+ <section id="repeat" class="notice" hidden>
+  <label class="check"><input type="checkbox" id="rep_cb"> <strong>Also approve this exact call for this agent's later runs</strong></label>
+  <p class="hint" id="rep_note">For agents that run on a schedule (cron, <code>claude -p</code>, CI): the next run makes the same call and it runs without asking you.</p>
+  <div id="rep_more" hidden>
+   <p><label for="rep_uses">Up to</label> <select id="rep_uses"><option value="1" selected>1 more time</option><option value="3">3 more times</option><option value="10">10 more times</option></select>
+   <label for="rep_hours">within</label> <select id="rep_hours"><option value="1">1 hour</option><option value="24" selected>24 hours</option><option value="72">72 hours</option></select></p>
+   <p id="rep_sum" class="notice warn"></p>
+   <p class="hint">Only this agent, this tool and exactly these arguments, under its current mandate. Anything else is asked as usual, and so is this call
+   once the time or the uses run out, after a new mandate, a removed passkey or a freeze. One passkey prompt signs it, every receipt it lets through
+   names your signature, and it is listed on <a href="allowances.html">Permissions</a> and revoked there in one click.</p>
+   <p class="notice warn" id="rep_cmd" hidden>A shell command: this approves the command line, not what is in the files it runs. It ends, and you are
+   asked again, as soon as the agent writes a script or source file this command runs. A change made another way (a program you let run that rewrites
+   the script, a person's edit, <code>git checkout</code>) is not seen for a plain script: choose the fewest uses and the shortest time.</p>
+  </div>
+ </section>
+ </details>
+ <p class="hint" id="later_why" hidden></p>
+ <details id="more" class="more"><summary>Technical details</summary>
+ <p id="level" class="notice" hidden></p>
+ <h3 class="small">The action</h3>
+ <dl class="kv" id="act"></dl>
+ <p class="hint" id="pvnote"></p>
+ <details id="actdet"><summary>Hashes and checks</summary>
+ <p class="hint">Also signed by your approval (hashes and checks of the witness):</p>
+ <dl class="kv" id="acttech"></dl>
+ <pre id="pvargs"></pre></details>
+ <details id="mandet"><summary>Under mandate</summary>
+ <dl class="kv" id="man"></dl></details>
+ <details><summary>Show exact bytes</summary>
+  <h3>Payload (CDE, hex)</h3><pre id="hexp"></pre>
+  <h3>Challenge (hex)</h3><pre id="hexc"></pre>
+  <p class="hint">The payload contains SHA-256 of the mandate and of the action above, both computed in your browser.</p>
+ </details>
+ <p class="hint" id="unavail" hidden></p>
+ <p class="hint">Both choices are signed with your passkey. Honest limit: your passkey device does not display the action; you trust this page.</p>
+ <div class="row" id="susrow"><button id="sus" class="btn ghost" type="button">This looks suspicious</button> <button id="freeze" class="btn ghost" type="button">Freeze this agent</button></div>
+ <p class="hint" id="sushint">Did not expect this request, or getting too many? This mutes notifications from this agent for 1 hour and records it. The request is not approved by silence: it waits here and expires.</p>
+ </details>
+ </div>
+ </div>
+ <div class="row stickybar" id="decide"><p id="stale" class="barnote hint stale" hidden></p><p id="left" class="barnote hint"></p><p id="gate" class="barnote gate" hidden>The command is long: read all of it in Details to unlock Allow.</p><button id="yes" class="btn big" type="button">Allow once</button><button id="allow24" class="btn big later" type="button" hidden><span aria-hidden="true">&#8635;</span> Allow this from now on</button><button id="no" class="btn danger big" type="button">Deny</button><p id="later_note" class="barnote hint" hidden></p></div>
+ <section class="card" id="later_confirm" hidden aria-live="polite"><h2>Allow this from now on?</h2>
+  <p>You are about to allow exactly this, with your passkey:</p><ul id="lc_rows"></ul>
+  <p><strong>Agent:</strong> <span id="lc_agent"></span> &middot; <strong>until</strong> <span id="lc_until"></span></p>
+  <p class="hint" id="lc_revoke"></p>
+  <div class="row"><button id="lc_ok" class="btn big" type="button">Confirm with passkey</button><button id="lc_back" class="btn big" type="button">Back</button></div></section>
+ <div class="row stickybar" id="release" hidden><button id="rel" class="btn big" type="button">Release</button><button id="rej" class="btn danger big" type="button">Reject</button></div>
+</section>
+<section id="done" class="card" hidden><h2 id="donehead"></h2><p id="donetext"></p><p><a class="btn" href="approve.html">Back to approvals</a></p></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/approve.js"></script>
+</body></html>

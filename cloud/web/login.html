@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Sign in - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow">
+<h1>Sign in</h1>
+<div class="card">
+ <p>Use the passkey you created at registration. On a phone, choose "use a phone or tablet" and scan the QR code.</p>
+ <p id="why" class="notice warn" role="status" hidden></p>
+ <p id="hint" class="notice ok" role="status" hidden></p>
+ <div id="msg" class="notice" hidden></div>
+ <p><button id="go" class="btn big" type="button">Sign in with passkey</button></p>
+ <p class="hint">No account yet? <a href="signup.html">Create one</a>.</p>
+ <p class="hint">Lost the phone or key that held your passkey? <a href="recover.html">Use a recovery code</a>.</p>
+</div>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/login.js"></script>
+</body></html>

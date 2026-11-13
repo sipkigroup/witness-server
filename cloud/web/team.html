@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Team - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="app.html">&larr; Dashboard</a></p>
+<h1>Team <span id="orgname" class="hint"></span></h1>
+<div id="msg" class="notice" hidden></div>
+
+<section class="card" id="orgs-card" hidden>
+ <label for="orgsel">Organisation</label>
+ <div class="row"><select id="orgsel" class="inline"></select><button id="orgswitch" class="btn ghost" type="button">Switch</button></div>
+</section>
+
+<section class="card" id="sr-card" hidden>
+ <h2>Waiting for your signature</h2>
+ <div id="srs"></div>
+</section>
+
+<section class="card">
+ <h2>Current policy</h2>
+ <p class="hint">Who must sign what. The policy is a signed document: changing it needs the signatures that the current version names.</p>
+ <div id="policy"></div>
+</section>
+
+<section class="card">
+ <h2>Members</h2>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Label</th><th>Roles</th><th>Status</th><th>Key</th><th></th></tr></thead><tbody id="members"></tbody></table></div>
+ <p class="hint">Roles: owner (policy, members, agents, tool maps), budget signer (mandates and approvals with money), access signer (messages, files, deletes, publishing), observer (read only, evidence pack; signs nothing and is not in the policy). A new member stays "pending" until a policy version lists them.</p>
+</section>
+
+<section class="card" id="invite-card" hidden>
+ <h2>Invite a member</h2>
+ <p class="hint">The link works once, for 24 hours. Creating it asks for your passkey again.</p>
+ <div class="roles" id="invroles">
+  <label><input type="checkbox" value="budget" checked>budget signer</label>
+  <label><input type="checkbox" value="access">access signer</label>
+  <label><input type="checkbox" value="owner">owner</label>
+  <label><input type="checkbox" value="observer">observer (read only)</label>
+ </div>
+ <p><button id="invite" class="btn" type="button">Create invite link</button></p>
+ <div id="invout" class="notice warn" hidden></div>
+</section>
+
+<section class="card" id="edit-card" hidden>
+ <h2 id="edit-head">Change the policy</h2>
+ <p class="hint" id="edit-hint">You prepare a draft; it takes effect when the signers that the current policy names have signed it.</p>
+ <h3>Members in the policy</h3>
+ <div id="pmembers"></div>
+ <h3>Rules</h3>
+ <div class="grid2">
+  <div><label for="r_over">Purchases over (dollars) need more signatures</label><input id="r_over" class="num" inputmode="decimal" value="500"></div>
+  <div><label for="r_overk">Budget signatures needed above that amount</label><input id="r_overk" class="num" type="number" min="1" max="16" value="2"></div>
+ </div>
+ <div class="grid2">
+  <div><label for="r_acck">Access signatures for mandates with messages, files, deletes, publishing</label><input id="r_acck" class="num" type="number" min="1" max="16" value="1"></div>
+  <div><label for="r_polk">Owner signatures to change the policy</label><input id="r_polk" class="num" type="number" min="1" max="16" value="1"></div>
+  <div><label for="r_reck">Other members who replace someone's lost key (0 = off, at least 2)</label><input id="r_reck" class="num" type="number" min="0" max="15" value="0"><span class="hint">Without it, a member who loses the phone can only be put back by a policy change (the owner's rule). If the owner loses theirs and there is no second owner, nobody can.</span></div>
+ </div>
+ <p class="hint">Purchases at or under the amount need one budget signature; held purchases over it need the same number of budget signatures to approve. Revoking a mandate always needs one signature of any signer: stopping is easy, allowing is hard.</p>
+ <div id="pwords"></div>
+ <div id="editmsg" class="notice" hidden></div>
+ <p><button id="draft" class="btn big" type="button">Prepare draft and sign</button></p>
+</section>
+
+<section class="card" id="deleg-card" hidden>
+ <h2>Who confirms whose agent</h2>
+ <p class="hint">Assign an agent to the person who runs it. Its questions are then confirmed by other members (the roles your policy asks for), never by that person, who may still refuse. If you name approvers, only they confirm; when nobody who may confirm is left (or their term ends), the agent's action is blocked, not let through. A question nobody answers expires as a refusal.</p>
+ <p class="hint" id="d_signed_note">Since 0.2.15 the assignment is part of the signed team policy: saving drafts the next policy version, and it is in force once the signers of the rule "Changing this policy" sign it. The evidence pack then proves, without trusting this server, that nobody confirmed their own agent's actions. An assignment made before that is applied at once by the server until it is signed into the policy.</p>
+ <div class="grid2">
+  <div><label for="d_agent">Agent</label><select id="d_agent" class="inline"></select></div>
+  <div><label for="d_op">Run by</label><select id="d_op" class="inline"></select></div>
+ </div>
+ <p><strong>Approvers</strong> <span class="hint">(none ticked: anyone the policy allows, except the person who runs it)</span></p>
+ <div id="d_appr" class="roles"></div>
+ <label for="d_days">Approvers' term (days, empty = no end)</label><input id="d_days" class="num" type="number" min="1" max="366">
+ <div id="d_cur" class="hint"></div>
+ <div id="delegmsg" class="notice" hidden></div>
+ <p><button id="d_save" class="btn" type="button">Save assignment</button> <button id="d_end" class="btn ghost" type="button">End assignment</button></p>
+</section>
+
+<section class="card" id="settings-card" hidden>
+ <h2>Settings</h2>
+ <label for="s_profile">Profile <span class="hint">(owner only)</span></label>
+ <select id="s_profile" class="inline"><option value="smb">Small business: independent timestamps on the first screen</option><option value="enterprise">Enterprise: show both anchors (Bitcoin and RFC 3161 timestamp authorities)</option></select>
+ <div class="grid2">
+  <div><label for="s_ttl">An approval waits (minutes, 15 to 60)</label><input id="s_ttl" class="num" type="number" min="15" max="60"></div>
+  <div><label for="s_esc">Escalate to owners after (minutes)</label><input id="s_esc" class="num" type="number" min="1" max="1440"></div>
+ </div>
+ <div class="grid2">
+  <div><label for="s_pend">Max waiting requests per agent</label><input id="s_pend" class="num" type="number" min="1" max="100"></div>
+  <div><label for="s_hour">Max requests per agent per hour</label><input id="s_hour" class="num" type="number" min="1" max="1000"></div>
+ </div>
+ <label for="s_adv">Data advisor <span class="hint">(only holds an action for a person; never allows)</span></label>
+ <select id="s_adv" class="inline"><option value="off">off</option><option value="heuristic">heuristic</option><option value="ner">NER (experimental)</option></select>
+ <div id="setmsg" class="notice" hidden></div>
+ <p><button id="setsave" class="btn" type="button">Save settings</button></p>
+</section>
+<section class="card" id="anchors-card"><h2>Timestamps</h2><div id="anchors"></div></section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/team.js"></script>
+</body></html>

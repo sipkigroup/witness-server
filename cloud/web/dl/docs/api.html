@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="../../css/app.css"><title>API - Deus Witness docs</title></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a></header><main class="wrap narrow doc"><p class="docnav"><a href="quickstart.html">Quickstart</a> | <a href="concepts.html">Concepts</a> | <a href="api.html">API</a> | <a href="verify.html">Verify</a> | <a href="coverage.html">Coverage</a> | <a href="teams.html">Teams</a> | <a href="anchors.html">Anchors</a> | <a href="recovery.html">Recovery</a> | <a href="require-human-approval-claude-code-ci.html">Human approval in CI</a> | <a href="verifiable-audit-log-ai-agent-actions.html">Verifiable audit log</a> | <a href="run-claude-code-unattended-cron-github-actions.html">Unattended runs</a> | <a href="require-approval-before-claude-code-runs-command-unattended.html">Approval when unattended</a> | <a href="claude-code-hooks-vs-permissions-deny.html">Hooks vs deny</a> | <a href="claude-code-dangerously-skip-permissions.html">Skip permissions</a> | <a href="claude-code-pretooluse-hook-examples.html">PreToolUse hook</a> | <a href="claude-code-permissions-deny-not-working.html">Deny not working</a> | <a href="claude-code-headless-mode-permissions.html">Headless permissions</a> | <a href="mcp-human-in-the-loop-tool-approval.html">MCP human-in-the-loop</a></p>
+<h1>API</h1>
+<p>Base URL: <code>https://witness.sipkigroup.com</code>. JSON bodies, bytes are base64url without padding (<code>*_b64</code>), times are Unix seconds. Errors: <code>{"error": "&lt;CODE&gt;", "detail": "..."}</code>. A machine-readable description is in the OpenAPI file of the repository.</p>
+<h2>Agent API (Bearer key <code>dwk_...</code>)</h2>
+<table><tr><th>call</th><th>body</th><th>answer</th></tr><tr><td><code>POST /v1/actions</code></td><td><code>{tool, args, client?}</code></td><td>ActionResult</td></tr><tr><td><code>GET /v1/actions/{rid}?wait=0..25</code></td><td></td><td>ActionResult (long poll while <code>pending_approval</code>)</td></tr><tr><td><code>POST /v1/actions/{rid}/present</code></td><td><code>{}</code></td><td><code>{result: accept|reject, reason}</code> (consumes the receipt; call before executing)</td></tr><tr><td><code>POST /v1/actions/{rid}/report</code></td><td><code>{executed: bool}</code></td><td><code>{result: released|ignored}</code></td></tr><tr><td><code>GET /v1/witness</code></td><td></td><td><code>{iss, alg, kid_hex, pub_hex, web_js_sha256}</code></td></tr></table>
+<p>ActionResult: <code>{rid, verdict: allow|deny|defer|pass, reason, status, action, expires, aar_b64, proof, approval_url}</code>. Repeating the same request while it is pending or approved returns the same action. For an allow the receipt <code>aar_b64</code> is in the answer at once; <code>GET /v1/actions/{rid}</code> returns the inclusion proof.</p>
+<p>Limits: 300 requests per minute per key, status reads (GET) counted in their own window (429 <code>RATE_LIMIT</code>, "slow down: N requests a minute per key; the call did not run"), 5000 actions per day per account and 2000 per agent (429 <code>QUOTA</code>), request body 256 KB (413 <code>BODY_TOO_LARGE</code>). Creating an agent needs a fresh passkey step-up (403 <code>STEPUP_REQUIRED</code>).</p>
+<p>Python SDK:</p>
+<pre><code>from deus_witness import Witness
+w = Witness(&quot;https://witness.sipkigroup.com&quot;, &quot;dwk_...&quot;)
+r = w.act(&quot;send_email&quot;, {&quot;to&quot;: &quot;bob@acme.example&quot;, &quot;subject&quot;: &quot;hi&quot;, &quot;body&quot;: &quot;...&quot;})
+if r.verdict == &quot;allow&quot; and w.present(r.rid)[&quot;result&quot;] == &quot;accept&quot;:
+    ...   # do the thing
+    w.report(r.rid, True)</code></pre>
+<p><code>Witness.act(..., verify=True)</code> and the proxy check that the receipt belongs to the call that was sent. The TypeScript SDK does not verify receipts yet.</p>
+<h2>Web API (cookie <code>dw_session</code>; writes need <code>Origin</code> equal to the site origin)</h2>
+<p>Used by the dashboard; it needs a browser passkey.</p>
+<ul>
+<li>Auth: <code>POST /api/auth/register/begin|finish</code>, <code>login/begin|finish</code>, <code>logout</code>; <code>GET /api/me</code>.</li>
+<li>Agents: <code>GET|POST /api/agents</code>, <code>PUT /api/agents/{id}/toolmap</code>, <code>DELETE /api/agents/{id}</code>.</li>
+<li>Mandates: <code>POST /api/mandates/draft</code>, <code>POST /api/mandates</code> (<code>{mandate, envelope_b64}</code>), <code>GET /api/mandates</code>.</li>
+<li>Activity: <code>GET /api/feed?agent_id=&amp;before=&amp;limit=</code>, <code>GET /api/budget</code>, <code>GET /api/approvals?status=pending</code>, <code>GET|POST /api/approvals/{rid}</code>.</li>
+<li>Export: <code>GET /api/export</code> (evidence pack zip; 6 per hour per account).</li>
+<li>Health: <code>GET /healthz</code> -&gt; <code>{ok, ledgers, last_anchor_t}</code>.</li>
+</ul>
+<p>The signing envelope (<code>wa-sig</code>) and test vectors are in the contract folder of the repository.</p>
+</main></body></html>

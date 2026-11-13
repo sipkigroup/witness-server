@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)"><title>Quick start - Deus Witness</title>
+<meta name="description" content="Your Deus Witness quick start: two passkey touches make the account yours, then you decide on the waiting call; your agent's calls that need you wait here."></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap narrow" id="main">
+<h1 id="title">Your quick start</h1>
+<div id="msg" class="notice" hidden></div>
+
+<section id="none" class="card" hidden>
+ <p>This browser has no quick start link. Run <code>deus-witness try</code> in a terminal on this computer: it opens this page with the link (the link is shown once and only to this browser).</p>
+ <p class="hint">Already made your passkey? <a href="login.html?next=trial.html">Sign in</a>.</p>
+</section>
+
+<section id="claim" class="card" hidden>
+ <h2>Make this account yours</h2>
+ <p class="lead">Your agent now asks before anything risky. One button makes this account yours: your device creates a passkey (Touch ID, Face ID or Windows Hello) and signs the rules below.</p>
+ <ul id="rulesum" class="rulesum"></ul>
+ <p class="gobtn"><button id="go" class="btn big" type="button">Create passkey &amp; sign rules (2 touches)</button></p>
+ <p id="pmhint" class="hint pmhint">If Bitwarden, 1Password or another password manager opens instead, choose &ldquo;Use your device&rdquo; (or &ldquo;Use a passkey on this device&rdquo;), then Touch ID / Face ID.</p>
+ <p id="waithead" class="hint">Waiting for the first call of your agent that needs you of your agent that needs you&hellip; Use Claude Code as usual: the call shows up here. You do not have to wait: the button above works before any call arrives.</p>
+ <div id="waiting"></div>
+ <details><summary>Which rules you sign (in full)</summary>
+ <p class="hint">The recommended mandate for your project:</p>
+ <dl class="kv" id="rules"></dl></details>
+ <details><summary>How it works, and the honest limit</summary>
+ <p class="hint">One button: your device creates a passkey (Touch ID, Windows Hello, or a phone via QR code) and you sign the rules above with it. The calls
+ that waited are then judged again under these rules; one that still needs you is asked on the next screen. Nothing is allowed before this, and your agent is told
+ not to press this. Honest limit: before your first touch, a program that controls your browser profile could claim this account first (see Privacy). After it, only your passkey signs.</p></details>
+ <details><summary>What the hook sends to the witness</summary><ul id="sent"></ul><p class="hint"><a href="/privacy.html">Privacy summary</a> (a quick start account without a passkey is erased after 7 days; with a passkey it stays, free).</p></details>
+</section>
+
+<section id="signrules" class="card" hidden>
+ <h2>Sign the rules</h2>
+ <p>Your passkey is made. One more touch signs the rules (this browser needs a second click for the second passkey prompt).</p>
+ <p><button id="sign" class="btn big" type="button">Sign the rules with your passkey</button></p>
+ <p class="hint pmhint">If a password manager says &ldquo;No passkeys found&rdquo;, choose &ldquo;Use your device&rdquo; (do not close it).</p>
+ <dl class="kv" id="human"></dl>
+</section>
+
+<section id="done" class="card" hidden>
+ <h2 id="donehead">Done: the account is yours</h2>
+ <p id="doneinfo"></p>
+ <div id="next"></div>
+ <p class="hint" id="expiry"></p>
+ <p class="row"><button id="keep" class="btn ghost" type="button" hidden>Keep this account</button> <a class="btn ghost" href="app.html">Dashboard</a></p>
+</section>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/trial.js"></script>
+</body></html>

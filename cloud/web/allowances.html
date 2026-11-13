@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)"><title>Project permissions - Deus Witness</title></head>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<h1>Project permissions</h1>
+<div id="msg" class="notice" hidden></div>
+<div class="card">
+ <p>Shell commands you allowed for one project from an approval request ("Allow this command in this project"). Each one is an addition to the
+ agent's mandate that you signed with your passkey: exactly these commands, only in that folder, until the date shown. Dangerous commands are never
+ on this list: they are asked every time.</p>
+ <p class="notice warn" id="trust"></p>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Commands</th><th>Project</th><th>Agent</th><th>Until</th><th>Used</th><th>Status</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+ <p class="hint" id="empty" hidden>No project permissions yet. They appear here when you tick "Allow this command in this project" while approving a shell command.</p>
+ <p class="hint">Revoke takes one click and no passkey: ending a permission only narrows what the agent may do. It is recorded in your ledger; the next call of that
+ command is asked again. A permission also ends when its date passes or when the agent's mandate is replaced or revoked.</p>
+</div>
+<div class="card" id="later">
+ <h2>Approvals for later runs</h2>
+ <p>Calls you approved from an approval request with "Also approve this exact call for this agent's later runs". Each one is a passkey signature
+ for this agent, this tool and exactly these arguments, under the mandate it was asked under, for the number of uses and until the time shown.
+ Any other call is asked as usual.</p>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Call</th><th>Agent</th><th>Until</th><th>Used</th><th>Status</th><th></th></tr></thead><tbody id="lrows"></tbody></table></div>
+ <p class="hint" id="lempty" hidden>None yet. They appear here when you open "More options" on an approval and tick "Also approve this exact call for this agent's later runs" while approving.</p>
+ <p class="hint">Revoke takes one click and no passkey: the uses left are never applied, and the next such call is asked again. It also ends when its
+ time passes, when its uses are spent, or when the agent's mandate is replaced or revoked.</p>
+</div>
+</main>
+<script type="module" src="js/boot.js"></script>
+<script type="module" src="js/allowances.js"></script>
+</body></html>

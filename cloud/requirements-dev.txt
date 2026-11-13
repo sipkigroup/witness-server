@@ -1,0 +1,8 @@
+# Everything needed to run all Witness Cloud test suites (server, mcp, contract, fuzz, e2e).
+-r deploy/requirements.txt
+pytest>=8
+hypothesis>=6.100
+pycose>=1.1
+openapi-spec-validator>=0.7
+mcp>=1.2,<2
+playwright==1.56.0   # e2e only: pinned so that the chromium revision matches a preinstalled browser cache

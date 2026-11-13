@@ -761,6 +761,7 @@ def _risky_text(text):
 _G1_DEL = re.compile(r"\b(rmtree|rm\s+-\w*[rf]|rimraf|unlink|os\.remove|os\.rmdir|removedirs|rmdir|shred|fs\.rm(Sync)?|rm_rf|"
                      r"FileUtils\.rm|Remove-Item|del\s+/[sq])", re.I)
 _G1_HOME = re.compile(r"(~(/|['\"\s]|$)|expanduser|Path\.home|\$\{?HOME\b|['\"]HOME['\"]|homedir\(|\bos\.homedir|\.\./)")
+_G1_TMP_ABS = re.compile(r"(?<![\w.~/$-])/(?:private/)?(?:tmp|var/folders)(?:/[\w.-]+)*")
 _G1_ABS = re.compile(r"(?<![\w.~/$-])/(?!tmp\b|private/tmp\b|private/var/folders\b|var/folders\b|dev/null\b)[A-Za-z][\w./-]*")
 _G4_WORDS = re.compile(r"(\.claude(?![\w-])(?!/worktrees/)|\.mcp\.json|\.git/hooks|core\.hooksPath|deus-witness|\.deus-witness|crontab|launchctl|"
                        r"LaunchAgents|LaunchDaemons|systemctl\s+--user|\.(zshrc|zprofile|zshenv|bashrc|bash_profile|profile)\b|authorized_keys)")
@@ -794,10 +795,28 @@ _G1_SAFE = ("/tmp", "/private/tmp", "/var/folders", "/private/var/folders", "/de
 _G1_SYS_READ = ("/usr/bin/", "/bin/", "/usr/sbin/", "/sbin/", "/usr/lib/", "/System/", "/usr/share/")
 
 
+# 13.11 (r0274, red team): the person's home (the hook's HOME when the caller knows it) for the text gates below. A home kept inside a temp
+# directory (HOME=/tmp/u, /var/folders/../T/u: containers, CI) made `~/...` a _G1_SAFE path: code deleting ~/Documents was no G1. A path
+# at / under / above the home -- the hook's and this process' -- is never "safe temp" (bashparse.around_home).
+import contextvars as _cv  # noqa: E402
+_HOME_CTX = _cv.ContextVar("dw_eg_home", default=None)
+
+
+def _homes():
+    hs = [_HOME_CTX.get(), os.path.expanduser("~")]
+    return [h for h in hs if isinstance(h, str) and h.startswith("/") and h != "/"]
+
+
+def _g1_temp(a):
+    """-> True for an absolute path under a _G1_SAFE root that is not around a home (r0274)."""
+    from app.hookjudge.bashparse import around_home
+    return any(a == s or a.startswith(s + "/") for s in _G1_SAFE) and not any(around_home(a, h) for h in _homes())
+
+
 def _g1_norm(t):
     """A path-like token -> its absolute form ("" when relative / unknown)."""
     t = t.strip("'\"")
-    h = os.path.expanduser("~")
+    h = (_homes() or [os.path.expanduser("~")])[0]
     m = re.match(r"^(~|\$\{HOME\}|\$HOME)(?=/|$)", t)
     if m:
         t = h + t[m.end():]
@@ -815,6 +834,12 @@ def _in_cache(a):
     The cache root itself (rmtree ~/.cache) stays outside: it destroys every other tool's cache too."""
     if _CACHE_SUB.match(a):
         return True
+    from app.hookjudge.bashparse import canon_path
+    q = canon_path(a)
+    for h in _homes():                                          # r0274: the cache of a home kept elsewhere (HOME=/tmp/u: CI, containers)
+        h = canon_path(h).rstrip("/")
+        if h and any(q.startswith(h + c) and len(q) > len(h + c) for c in ("/.cache/", "/Library/Caches/")):
+            return True
     x = os.environ.get("XDG_CACHE_HOME")
     return bool(x and x.startswith("/") and a.startswith(x.rstrip("/") + "/"))
 
@@ -826,7 +851,7 @@ def _g1_outside(t, pr):
         return False
     if _in_cache(a):
         return False
-    if any(a == s or a.startswith(s + "/") for s in _G1_SAFE):
+    if _g1_temp(a):
         return False
     return not (pr and (a.rstrip("/") + "/").startswith(pr))
 
@@ -834,10 +859,11 @@ def _g1_outside(t, pr):
 def _path_bins(pr):
     """The user's PATH directories a write could shadow a program in: ~/.local/bin, ~/bin and every writable $PATH entry outside the
     project (its own .venv/bin stays the project's)."""
-    h = os.path.expanduser("~")
-    out = {h + "/.local/bin", h + "/bin"}
+    out = set()
+    for h in _homes():
+        out |= {h + "/.local/bin", h + "/bin"}
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d.startswith("/") and not any(d == s or d.startswith(s + "/") for s in _G1_SAFE) and not (pr and (d.rstrip("/") + "/").startswith(pr)):
+        if d.startswith("/") and not _g1_temp(d) and not (pr and (d.rstrip("/") + "/").startswith(pr)):
             try:
                 if os.access(d, os.W_OK):
                     out.add(d.rstrip("/"))
@@ -989,10 +1015,10 @@ def gate_bash(cmd, project=None, writes=None, home=None):
     try:
         one, docs, balanced, unsure = _bp._normalize(cmd)
     except Exception:  # noqa: BLE001
-        return gate_text(cmd, project)
+        return gate_text(cmd, project, home=home)
     if not balanced or unsure is not None or not isinstance(one, str) or not isinstance(writes, list):
-        return gate_text(cmd, project)
-    gs = [gate_text(body, project) for _h, body, _q in docs if isinstance(body, str)]
+        return gate_text(cmd, project, home=home)
+    gs = [gate_text(body, project, home=home) for _h, body, _q in docs if isinstance(body, str)]
     gs.append(gate_text(one, project, shell_writes=[x for x in writes if isinstance(x, str)], home=home))
     for g in ("opaque", "G2", "G4", "G3", "G1"):
         if g in gs:
@@ -1008,14 +1034,23 @@ def _shell_out(p, pr, project, home):
     a = os.path.normpath(p)
     if pr and (a.rstrip("/") + "/").startswith(pr):
         return False
-    if _in_cache(a) or any(a == s_ or a.startswith(s_ + "/") for s_ in _G1_SAFE):
+    if _in_cache(a) or _g1_temp(a):
         return False
     return not _sbx.in_temp(a, project, home if isinstance(home, str) and home.startswith("/") and home != "/" else "/var/empty/no-home")
 
 
 def gate_text(text, project=None, shell_writes=None, home=None):
     """-> the gate the written text reaches ("G1".."G4", "opaque"), or None. text None (the witness cannot read it) -> "unseen".
-    shell_writes (gate_bash only): `text` is a shell line whose own write targets are these resolved paths (not read from the text)."""
+    shell_writes (gate_bash only): `text` is a shell line whose own write targets are these resolved paths (not read from the text).
+    home (r0274): the hook's home folder when known (`~` of the text is that home; a path around it is never safe temp)."""
+    tok = _HOME_CTX.set(home if isinstance(home, str) and home.startswith("/") and home != "/" else None)
+    try:
+        return _gate_text(text, project, shell_writes, home)
+    finally:
+        _HOME_CTX.reset(tok)
+
+
+def _gate_text(text, project=None, shell_writes=None, home=None):
     from app.hookjudge import bashparse as _bp
     if not isinstance(text, str):
         return "unseen"
@@ -1043,6 +1078,7 @@ def gate_text(text, project=None, shell_writes=None, home=None):
     if _G1_DEL.search(text):
         text = _CACHE_TXT.sub(lambda m: m.group(0) if not _in_cache(_g1_norm(m.group(0))) and not re.match(r"\$\{?XDG", m.group(0)) else "CACHE", text)
         outs = [m.group(0) for m in _G1_ABS.finditer(text)]
+        outs += [m.group(0) for m in _G1_TMP_ABS.finditer(text) if not _g1_temp(m.group(0).rstrip("/"))]   # r0274: a home under /tmp
         if _G1_HOME.search(text) or any(not (pr and (o + "/").startswith(pr)) for o in outs):
             return "G1"
     return None
@@ -1136,7 +1172,7 @@ def written_run(tool, args, git_taint=False, info=None):
                        w.get("writes") if isinstance(w.get("writes"), list) else None,
                        w.get("sbx_home") or w.get("home"))
     else:
-        g_ = next((g for g in (gate_text(_written_text(tool, args, p), proj_) for p in ps) if g), None)
+        g_ = next((g for g in (gate_text(_written_text(tool, args, p), proj_, home=w.get("sbx_home") or w.get("home")) for p in ps) if g), None)
     if isinstance(info, dict):
         info["unseen"] = bool(unseen)
         info["gate"] = g_

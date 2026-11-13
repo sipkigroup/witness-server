@@ -878,7 +878,8 @@ def _wipe_of_project(w, text=None):
         if _TEMP_ROOTS.match(p):
             return t[:200]                            # the temp root itself: every session's work (and a project kept there)
         home = w.get("sbx_home") if isinstance(w.get("sbx_home"), str) and w.get("sbx_home").startswith("/") else None
-        if home and posixpath.dirname(p) == posixpath.normpath(home) and not _in(pr, p):
+        from .bashparse import canon_path
+        if home and canon_path(posixpath.dirname(p)) == canon_path(home) and not _in(pr, p):   # r0274: a home under /tmp (firmlink)
             return t[:200]                            # a whole top folder of the home (~/Documents, ~/Library): the kernel refuses it
             #                                           too -- refused here at once (defense in depth, no question, nobody notified)
     return None
@@ -1036,7 +1037,8 @@ def temp_write_ask(L, mid, a, tool, args, now):
     if is_secret_path(pth) or is_persist_path(pth) or is_agent_config_path(pth) or is_git_exec_path(pth):
         return a
     home = w.get("home")
-    if isinstance(home, str) and home not in ("", "/") and pth.startswith(home.rstrip("/") + "/"):
+    from .bashparse import around_home
+    if around_home(pth, home):                      # r0274: at / under / above the home, firmlink-insensitive
         return a
     _, v0, why0 = L.S.decide_for(mid, a, now)
     if (v0, why0) != ("deny", "RESOURCE"):

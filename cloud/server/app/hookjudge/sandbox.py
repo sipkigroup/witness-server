@@ -1636,11 +1636,9 @@ def in_temp(p, project=None, home=None, sid=None, noproj=False) -> bool:
     elif not all(isinstance(x, str) and x.startswith("/") and x != "/" for x in (project, home)):
         return False
     q = posixpath.normpath(p)
+    from .bashparse import around_home
     for x in (project, home):
-        if x is None:
-            continue
-        x = posixpath.normpath(x)
-        if q == x or q.startswith(x.rstrip("/") + "/") or x.startswith(q.rstrip("/") + "/"):
+        if x is not None and around_home(q, x):     # r0274: firmlink-insensitive (/private/tmp/u = /tmp/u)
             return False
     if not TEMP_IN.match(q + ("/" if not q.endswith("/") else "")):
         return False

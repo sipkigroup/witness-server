@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from . import fs as _fs
-from .bashparse import TEMP_IN, _abspath, _in_project, classify, is_agent_config_path, is_git_exec_path, is_persist_path, is_secret_path
+from .bashparse import _abspath, temp_in, under_home, _in_project, classify, is_agent_config_path, is_git_exec_path, is_persist_path, is_secret_path
 from . import samefile as _samefile
 
 RESERVED = "_witness"
@@ -356,7 +356,7 @@ def _map(ev, home, env=None):
             #                                         0.2.59): or a place the hook's lock K1 guards (memory, tools, key files, its own install)
             project = project_of(cwd, env)
             if project is not None and not _inside_targets(path, project, home) and not is_secret_path(path) \
-                    and home and path.startswith(home.rstrip("/") + "/"):
+                    and under_home(path, home):
                 # 0.2.91 (friction 04.11): outside the project the write part (class delete) was refused RESOURCE before the question
                 # could be asked: ~/.claude/tools/x.sh, ~/.claude/projects/*/memory/x.md. Now: the question (Write.danger) and, when the
                 # hook kept a shadow copy, the write as an outside write (undo); with no copy only the question
@@ -376,7 +376,7 @@ def _map(ev, home, env=None):
             return [Mapped(tool, args, "%s %s" % (tool, path)), Mapped("Write.danger", args, "%s: git hook (core.hooksPath)" % tool)]
         project = project_of(cwd, env)
         if project is not None and not _inside_targets(path, project, home) and not is_secret_path(path) and not is_agent_config_path(path) \
-                and home and path.startswith(home.rstrip("/") + "/"):
+                and under_home(path, home):
             sh = _fs.current().shadow(path)         # 0.2.90 (FABLE-NOL p.5.3, QA D6): a write outside the project is reversible when the hook
             if sh is None:                          # kept a shadow copy (or the file did not exist): judged as an unlisted command with a
                 pass                                # receipt, not RESOURCE; no copy -> a question (dangerous part), never a silent run
@@ -435,7 +435,7 @@ OUTSIDE_WRITE = "(write outside the project) "
 
 def _inside_targets(p, project, home) -> bool:
     """Inside the project, or a temp directory (the recommended mandate's delete targets); a temp path under the home directory is not temp."""
-    return _in_project(p, project) or bool(TEMP_IN.match(p) and not (home and p.startswith(home.rstrip("/") + "/")))
+    return _in_project(p, project) or temp_in(p, home)     # r0274: firmlink-insensitive, at / above the home too (bashparse.temp_in)
 
 
 def _shadow_ok(sh) -> bool:
@@ -460,7 +460,7 @@ def _outside_writes(c, project, home):
         if not isinstance(w, str) or _inside_targets(w, project, home) or is_secret_path(w) or is_persist_path(w) or is_agent_config_path(w) or is_git_exec_path(w):
             keep.append(w)
             continue
-        if not (home and w.startswith(home.rstrip("/") + "/")):
+        if not under_home(w, home):                 # r0274: firmlink-insensitive (a home under /tmp is /private/tmp/... here)
             c.add("write-outside", w)               # outside the home directory (/etc, /usr, /Volumes): no shadow, asked
             continue
         sh = _fs.current().shadow(w)

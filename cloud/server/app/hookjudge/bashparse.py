@@ -1733,6 +1733,40 @@ LW_GIT_SPECS = {
 }
 LW_GIT_UNSURE = {"-i", "-p", "-e", "--interactive", "--patch", "--edit", "--pathspec-from-file"}
 TEMP_IN = re.compile(r"^(/private)?/(tmp|var/tmp)/.|^(/private)?/var/folders/[^/]+/[^/]+/T/.")
+# 13.11 (r0274, red team): a HOME kept inside a temp directory (containers, CI, some sandboxes: HOME=/tmp/u, /var/folders/../T/u) made
+# every `~/...` a "temp path" for the gates that excuse temp (grep -r KEY ~ ran unasked, a write / delete in ~/Documents fell under the
+# mandate's `<tmp>/*` target). Law: the home folder is the person's wherever the file system keeps it -- a path AT, UNDER or ABOVE the home
+# is never temp. Compared lexically on the macOS firmlink form (/private/tmp = /tmp, /private/var = /var): the hook's HOME is often the
+# unresolved spelling while operands are realpaths, and a realpath of the home would cost the remote fs a round trip.
+_FIRMLINK = re.compile(r"^/private(?=/(?:tmp|var|etc)(?:/|$))")
+
+
+def canon_path(p):
+    """-> `p` normalized, with macOS's /private prefix of /tmp, /var, /etc dropped ("" for a non-absolute / non-string)."""
+    if not isinstance(p, str) or not p.startswith("/"):
+        return ""
+    return _FIRMLINK.sub("", os.path.normpath(p))
+
+
+def around_home(p, home) -> bool:
+    """-> True when `p` is the home folder, inside it or above it (an absolute home other than "/" only)."""
+    h, q = canon_path(home), canon_path(p)
+    if not h or h == "/" or not q:
+        return False
+    return q == h or q.startswith(h.rstrip("/") + "/") or h.startswith(q.rstrip("/") + "/")
+
+
+def under_home(p, home) -> bool:
+    """-> True when `p` lies strictly inside the home folder (firmlink-insensitive, see around_home)."""
+    h, q = canon_path(home), canon_path(p)
+    return bool(h) and h != "/" and bool(q) and q.startswith(h.rstrip("/") + "/")
+
+
+def temp_in(p, home) -> bool:
+    """-> True for a path inside a temp directory that is not around the home folder (TEMP_IN minus the home, r0274)."""
+    return isinstance(p, str) and bool(TEMP_IN.match(p)) and not around_home(p, home)
+
+
 DW_KEYS = re.compile(r"(^|/)\.deus-witness(/|$)|/\.config/deus-witness(/|$)|(^|/)agent-key\.json$")
 CHMOD_MODE = re.compile(r"[0-7]{1,4}|[ugoa]*([-+=]([rwxXst]*|[ugo]))+(,[ugoa]*([-+=]([rwxXst]*|[ugo]))+)*")
 
@@ -1809,7 +1843,7 @@ class _LW:
             return "project"
         if pr is not None and real == pr:
             return "root"
-        return "temp" if TEMP_IN.match(real) else "outside"
+        return "temp" if temp_in(real, self.home) else "outside"
 
     def path(self, o, here=None, role="read"):
         """-> the realpath of operand `o` (None when it cannot be known), tagging what it is. role: read (project, its root or temp), write
@@ -4025,10 +4059,11 @@ def _names_only(name, args) -> bool:
 def _quiet_root(real, home) -> bool:
     """0.2.89: may a recursive read start at `real` (a realpath) without DANGER? Strictly inside the home, not a credential place by name, and
     not the top of / inside a place that holds credentials stores (see above)."""
-    h = (home or "").rstrip("/")
-    if not h or not real.startswith(h + "/") or is_secret_path(real) or DW_KEYS.search(real):
+    h = canon_path(home).rstrip("/")
+    q = canon_path(real)
+    if not h or not q.startswith(h + "/") or is_secret_path(real) or DW_KEYS.search(real):
         return False
-    rel = real[len(h) + 1:].strip("/").split("/")
+    rel = q[len(h) + 1:].strip("/").split("/")
     if not rel or not rel[0]:
         return False
     if rel[0] in _HOME_CRED_TOPS:
@@ -4058,7 +4093,7 @@ def _recursive_outside(name, args, ops, cwd, home, project, c):
             if real is None and any(d.startswith("opaque:path from expansion: %s " % name) for d in c.danger):
                 c.opaque = True                       # already asked for the same reason (one detail, as before)
                 return
-            if real is None or (not _in_project(real, project) and not TEMP_IN.match(real)):
+            if real is None or (not _in_project(real, project) and not temp_in(real, home)):
                 if real is not None and _quiet_root(real, home) and not _follows(name, args):
                     if kind == "read" and not _names_only(name, args):
                         c.head(name + " [outside]")       # 0.2.89: lines of files outside the project: an ordinary question, not DANGER
@@ -4102,7 +4137,7 @@ def _git_grep_outside(args, cwd, home, project, c):
     for r in roots:
         e = None if r is None else _expand(r, here, home)
         real = None if e is None else _abspath(e, here, home)
-        if real is None or (not _in_project(real, project) and not TEMP_IN.match(real)):
+        if real is None or (not _in_project(real, project) and not temp_in(real, home)):
             c.opaque = True
             c.add("opaque", "git grep outside the project: %s" % (r if r is not None else "-c"))
             return
@@ -5140,7 +5175,7 @@ def _deep_inside(p: str, project, home=None) -> bool:
     """A literal path strictly inside the project (not its root, not its .git) or inside a temp directory: the mandate's own delete targets."""
     if not isinstance(p, str):
         return False
-    if TEMP_IN.match(p) and not (home and p.startswith(home.rstrip("/") + "/")):
+    if temp_in(p, home):
         return True
     if not project or not _in_project(p, project) or p.rstrip("/") == project.rstrip("/"):
         return False

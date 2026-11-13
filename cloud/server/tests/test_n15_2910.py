@@ -148,7 +148,9 @@ def test_n4_extract_into_the_project_itself_not_refused(client, owner, tmp_path,
         v, parts = a.line(line)
         assert not any(p[2] == "RESOURCE" for p in parts), (line, parts)          # was: deny RESOURCE "writes: only inside the project"
     v, parts = a.line("tar xf s.tar -C ..")
-    assert any(p[2] == "RESOURCE" for p in parts), parts                         # the folder above the project: still refused
+    # the folder above the project: still refused -- or, r0274, asked as a danger: here it is tmp_path, which also holds the fixture's
+    # home folder (home-cc), so it is no longer "temp" (a path above the home is never temp) but an extraction over the home
+    assert v in ("DENY", "ASK") and any(p[2] in ("RESOURCE", "ESCALATE_COMMAND_DANGER") for p in parts), parts
 
 
 def test_n4_write_outside_still_refused(client, owner, tmp_path):

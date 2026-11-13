@@ -680,10 +680,16 @@ def make_router(ctx):
         want = _view_offer(acc, ans)
         if want is None and ans.get("status") not in ("pending_approval", "held"):
             return None                        # no longer waiting: the decision path answers NOT_DEFERRED / NOT_HELD as before
-        if want is None or want != got:
+        legacy = False
+        if want is not None and want != got:
+            try:                               # r0277: a page older than P2 signs the view without "omitted": the same rows, accepted
+                legacy = signview.view_hash(ans, legacy=True) == got
+            except ValueError:
+                legacy = False
+        if want is None or (want != got and not legacy):
             raise Err(409, "VIEW_CHANGED", "what this page shows is no longer what the witness holds: reload the page and decide again")
-        signview.remember(db, acc["id"], ans, now())     # 0.2.83 (MR-24): the shown object goes into the evidence pack (views/)
-        return want
+        signview.remember(db, acc["id"], ans, now(), legacy)     # 0.2.83 (MR-24): the shown object goes into the evidence pack (views/)
+        return got
 
     def _view_fn(acc, rid, user, b):
         """pv2: -> a callable the decision path runs under its lock (None: no view claimed, an older page)."""
@@ -812,6 +818,7 @@ def make_router(ctx):
         ap = db.one("SELECT signers, on_behalf_of FROM approvals WHERE rid=?", (rid,))
         if ap is not None and ap["signers"]:
             out["decided_by"] = {"signers": json.loads(ap["signers"]), "on_behalf_of": ap["on_behalf_of"]}
+        out["omitted"] = signview.omitted_of(signview.view_of(out, legacy=True))     # r0277 (P2): what the first screen does not show whole (signed)
         return out
 
     def _line_full(x):

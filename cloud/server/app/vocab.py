@@ -6,14 +6,17 @@ digest = SHA-256 over RFC 8785 (JCS). The digest goes into the tool map DOCUMENT
 "vocab"), whose SHA-256 is `toolmap_sha256` INSIDE the passkey-signed mandate: so the signature pins which vocabulary the person
 agreed to, without a new member in the mandate itself (the core schema rejects unknown members; old mandates keep their old
 document and still verify). Every vocabulary a mandate pinned is kept (table vocabs) and goes into the evidence pack as
-vocab/<digest>.json, so a checker can rebuild the words offline (plan step 8, not done here).
+vocab/<digest>.json, so a checker can rebuild the words offline.
+r0277 (mr-vocab-2): member "screen" holds the sentences that were written inline before (send a request, git settings, quiet mode,
+"run {n} commands", "You said No ... {when}"); packtools/screencheck.py rebuilds what / harm / risk of each signed view from the
+vocabulary the mandate pinned. A mandate that pinned mr-vocab-1 is checked as before (its words are reported as not rebuildable).
 
 Honest limit: pinning says WHICH dictionary was in force; it does not stop the witness from choosing the reason code (profile, risk 2).
 """
 import hashlib
 import json
 
-V = "mr-vocab-1"
+V = "mr-vocab-2"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
 
 
 def doc():
@@ -22,7 +25,7 @@ def doc():
          "net_harm": q.NET_HARM, "risk_by_code": q.RISK_BY_CODE, "risk_label": q.RISK_LABEL, "long_harm": q.LONG_HARM,
          "path_harm": [[p.pattern, short, full] for p, short, full in q._PATH_HARM],
          "strict_words": q.STRICT_WORDS, "data_tag_words": q.DATA_TAG_WORDS, "danger_words": q.DANGER_WORDS,
-         "push_what": q.PUSH_WHAT, "push_tail": q.PUSH_TAIL}
+         "push_what": q.PUSH_WHAT, "push_tail": q.PUSH_TAIL, "screen": q.SCREEN}
     return json.loads(json.dumps(d, ensure_ascii=False))
 
 

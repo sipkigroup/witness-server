@@ -7,7 +7,7 @@ import { bytesToHex } from './cde.js';
 
 export const VIEW_V = 'dw-view-1';
 export const VIEW_KEYS = ['rid', 'status', 'tool', 'action', 'args_preview', 'text_preview', 'reason', 'adv', 'line_commands', 'net_code',
-  'exec_changed', 'written_run', 'masked_dep', 'unseen_write', 'line_full', 'text_cut', 'what', 'harm', 'risk', 'details'];   // 05.11: the question's plain words (qwords.py)   // 04.11 (Hypothesis I2): every command of a shell line, whole   // N4 29.10: unseen_write only when the answer has it   // 29.10 MDEP: masked_dep only when the answer has it (the view of an older row is as before)
+  'exec_changed', 'written_run', 'masked_dep', 'unseen_write', 'line_full', 'text_cut', 'what', 'harm', 'risk', 'details', 'omitted'];   // r0277 (P2): what the first screen does not show whole, built by the server   // 05.11: the question's plain words (qwords.py)   // 04.11 (Hypothesis I2): every command of a shell line, whole   // N4 29.10: unseen_write only when the answer has it   // 29.10 MDEP: masked_dep only when the answer has it (the view of an older row is as before)
 
 // RFC 8785: members sorted by UTF-16 code units (JS string order), no white space, ECMAScript numbers and strings (JSON.stringify)
 export function jcs(v) {

@@ -369,8 +369,9 @@ def words(rb, created_at):
     if not isinstance(rb, dict) or not isinstance(rb.get("at"), int):
         return None
     mins = max(1, int(((created_at or rb["at"]) - rb["at"]) // 60)) if isinstance(created_at, int) else None
-    when = "%d min ago" % mins if mins is not None and mins < 120 else ("%d h ago" % (mins // 60) if mins is not None else "earlier")
-    return "You said No to this %s; the agent is trying another way." % when
+    from app.qwords import SCREEN as S        # r0277: the words are templates of the pinned vocabulary (mr-vocab-2 "screen")
+    when = S["when_min"].format(n=mins) if mins is not None and mins < 120 else (S["when_h"].format(n=mins // 60) if mins is not None else S["when_earlier"])
+    return S["refused_before"].format(when=when)
 
 
 def detail(rb):

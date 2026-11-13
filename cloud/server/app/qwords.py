@@ -39,6 +39,32 @@ REASON_WORDS = {
 }
 NET_HARM = "Information from your computer could be sent to this site."
 
+# r0277 (P1 of the profile: the checker rebuilds the words offline): EVERY sentence the first screen shows (what / harm) is a template of
+# the closed vocabulary (app/vocab.py "screen", mr-vocab-2). Placeholders: {t} = a target quoted from the call as the server parsed it,
+# {n} = the number of commands of the line (line_commands), {when} = how long ago the person said No. Nothing else is variable.
+SCREEN = {
+    "unnamed": "(unnamed)",
+    "send_request": "Your agent wants to send a request to {t}",
+    "secret_to_host": "Your keys or passwords could be sent to this site.",
+    "persist": "The agent could stay on your computer for good.",
+    "sandbox_publish": "Code could publish to {t} in your name.",
+    "git_read_what": "Your agent wants to read your git settings",
+    "git_read_harm": "It only reads them; nothing is changed or sent.",
+    "git_change_what": "Your agent wants to change git settings that run programs",
+    "git_change_harm": "Git would run this later without asking you.",
+    "own_settings_what": "Your agent wants to change its own settings",
+    "own_settings_harm": "It could change how your agent or Witness works next time.",
+    "temp_write_what": "Your agent wants to write a file outside the project: {t}",
+    "temp_write_harm": "Other programs and users of this computer can read and change it.",
+    "quiet_what": "Your agent wants to turn on quiet mode (Claude Code's strict sandbox) for all your projects",
+    "quiet_harm": "It changes your Claude Code settings; some tools may need a host added later.",
+    "many_commands": "Your agent wants to run {n} commands",
+    "refused_before": "You said No to this {when}; the agent is trying another way.",
+    "when_min": "{n} min ago",
+    "when_h": "{n} h ago",
+    "when_earlier": "earlier",
+}
+
 # 05.11 (owner, the risk scale): the SERVER puts the level, from the reason code and the parsed target -- never from the agent's words. Four steps
 # (no percent: false precision). Signed with the view (signview.KEYS "risk"); the page draws the bar and the word ("High risk").
 RISK_ORDER = ("low", "medium", "high", "critical")
@@ -368,7 +394,7 @@ def words(x):
         if ent is None:
             what, harm = UNKNOWN_WHAT, UNKNOWN_HARM
         else:
-            what = ent[0].format(t=t or "(unnamed)")
+            what = ent[0].format(t=t or SCREEN["unnamed"])
             harm = ent[1]
             long_harm = LONG_HARM.get(str(reason), "")
             if kind == "path" or (kind == "command" and t.startswith(("persist:", "agent-config:"))):
@@ -380,17 +406,17 @@ def words(x):
                 else:
                     if kind == "command":
                         persist = True
-                        harm = "The agent could stay on your computer for good."
+                        harm = SCREEN["persist"]
                         long_harm = "It changes a place that starts by itself later: the agent could stay on your computer for good."
             if kind == "host" and reason in ("ESCALATE_HTTP", "ESCALATE_COMMAND_DANGER") and t:
                 harm = NET_HARM
                 long_harm = LONG_HARM["ESCALATE_HTTP"] if reason == "ESCALATE_HTTP" else LONG_HARM["ESCALATE_COMMAND_DANGER"]
             if kind == "host" and reason in ("ESCALATE_SECRET_SEEN", "ESCALATE_DATA", "ESCALATE_EGRESS_UNSPECIFIED") and t:
-                what = "Your agent wants to send a request to %s" % t
-                harm = "Your keys or passwords could be sent to this site."
+                what = SCREEN["send_request"].format(t=t)
+                harm = SCREEN["secret_to_host"]
                 long_harm = "This could send your keys or passwords out of this project folder, to %s." % t
         if kind == "host" and ent is not None and reason in ("ESCALATE_HTTP", "ESCALATE_COMMAND_DANGER") and t:
-            what = "Your agent wants to send a request to %s" % t
+            what = SCREEN["send_request"].format(t=t)
         so = _sbx_open(x)
         if so and ent is not None:
             # 10.11 (r0260): the strict sandbox is open to a host where code can write in the person's name, and code in it can read the
@@ -409,7 +435,7 @@ def words(x):
                     (reason == "ESCALATE_COMMAND_DANGER" and kind == "command" and str(t).startswith(("net-out:", "exit:")))) \
                     and not persist and kind != "host":
                 # 11.11 (r0260): `git push` / `npm publish` (a dangerous line whose mark is leaving the machine) says the same short harm
-                harm, long_harm = "Code could publish to %s in your name." % _clean(so[0], 60), sl
+                harm, long_harm = SCREEN["sandbox_publish"].format(t=_clean(so[0], 60)), sl
             else:
                 long_harm = (long_harm + " " if long_harm else "") + sl
         dcat_, ddet_ = danger_category(t) if kind == "command" and reason == "ESCALATE_COMMAND_DANGER" and not persist else (None, t)
@@ -423,7 +449,7 @@ def words(x):
             dmark_ = _clean(cat0_ if det0_.strip() and det0_.strip() in tp0_ else t, 300)     # the detail once: not when the text has it
         sp_, sent_ = _strict_words(t) if kind in ("command", "path") else (None, None)
         if sent_ is not None:                       # r0261: a reason of the strict closed list (its own words, not "dangerous command")
-            tt_ = _clean(t[len(sp_.strip()):].strip(), 160) or "(unnamed)"
+            tt_ = _clean(t[len(sp_.strip()):].strip(), 160) or SCREEN["unnamed"]
             if sp_ == "(strict data) ":                 # 12.11 (L3): "(email_address)" was the DLP's tag: its words, the tag under Details
                 tt_ = ", ".join(dict.fromkeys(DATA_TAG_WORDS.get(g.strip(), "a private value") for g in tt_.split(",") if g.strip()))
                 dmark_ = dmark_ or _clean(t, 300)
@@ -439,30 +465,30 @@ def words(x):
             ad_ = ad_[len(HARNESS_MARK_):].strip() if ad_.startswith(HARNESS_MARK_) else ad_
             ac_mark = _clean(t, 300)
             if git_config_read(x, t):
-                what, harm = "Your agent wants to read your git settings", "It only reads them; nothing is changed or sent."
+                what, harm = SCREEN["git_read_what"], SCREEN["git_read_harm"]
                 long_harm = ("Witness asks about every line that touches git's settings, because a setting can make git run a program "
                              "later. This line only reads them (for example your name and e-mail for a commit).")
                 persist, ac_risk = False, "low"
                 ac_mark = ""                        # 12.11 (r0264, L3 q-Z62DVF): no "agent-config:(hook) git config" under a Low read
             elif ad_.startswith("git config") or re.search(r"(^|/)\.git/(hooks|config)|(^|/)\.gitconfig$", ad_):
-                what, harm = "Your agent wants to change git settings that run programs", "Git would run this later without asking you."
+                what, harm = SCREEN["git_change_what"], SCREEN["git_change_harm"]
                 long_harm = "Git runs what its settings and hooks name by itself later, without asking you."
                 ac_risk = "high"
             else:
-                what = "Your agent wants to change its own settings"
+                what = SCREEN["own_settings_what"]
                 if not re.search(r"(^|/)\.claude(/|$)|(^|/)\.mcp\.json$|(^|/)\.cursor/", ad_):
-                    harm = "It could change how your agent or Witness works next time."
+                    harm = SCREEN["own_settings_harm"]
                     long_harm = "These files decide how your agent and Witness start next time."
         if kind == "path" and t.startswith(TEMP_WRITE.strip()) and sent_ is None:
             # r0261f (0.2.59): a file the agent writes in the shared temp of this computer (strict_policy.temp_write_ask): plain words
-            what = "Your agent wants to write a file outside the project: %s" % (_clean(t[len(TEMP_WRITE.strip()):].strip(), 160) or "(unnamed)")
-            harm = "Other programs and users of this computer can read and change it."
+            what = SCREEN["temp_write_what"].format(t=_clean(t[len(TEMP_WRITE.strip()):].strip(), 160) or SCREEN["unnamed"])
+            harm = SCREEN["temp_write_harm"]
             long_harm = ("It is a shared temporary folder, not your project and not the agent's own temporary folder. Nothing runs it by "
                          "itself; it is asked each time because it is outside what your mandate lets the agent write.")
         if kind == "command" and t.startswith("witness:" + QUIET_ON) and sent_ is None:
             # 0.2.92 (r0262): the agent's fixed line for quiet mode (client 0.2.60, /deus-witness:try): plain words, built here
-            what = "Your agent wants to turn on quiet mode (Claude Code's strict sandbox) for all your projects"
-            harm = "It changes your Claude Code settings; some tools may need a host added later."
+            what = SCREEN["quiet_what"]
+            harm = SCREEN["quiet_harm"]
             long_harm = ("It writes ~/.claude/settings.json (a backup is kept): commands then run in Claude Code's sandbox with no network "
                          "except the hosts you list, and cannot read your SSH and cloud keys, login keychain or browser cookies; secrets "
                          "in environment variables are hidden from commands and hooks; Claude Code may switch its permission mode to default. "
@@ -486,7 +512,7 @@ def words(x):
         if kind == "command" and reason == "ESCALATE_COMMAND" and len(heads) > 1:
             # 05.11 (RT hole 3): a line of several commands. The title is short; EVERY command is named on the first screen (the line under the
             # buttons' title) and listed in full under Details ("Commands of the line"), so the first one alone never hides `make deploy`.
-            what = "Your agent wants to run %d commands" % len(heads)
+            what = SCREEN["many_commands"].format(n=len(heads))
         sc_ = _exec_member(x, "sc")
         if isinstance(sc_, dict) and isinstance(sc_.get("src"), str):
             # r0275: the file is a copy the agent made of a credential: the credential is named under Details (provenance)

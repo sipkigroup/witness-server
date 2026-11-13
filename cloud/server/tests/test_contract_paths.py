@@ -110,5 +110,6 @@ def test_fixtures_shapes_equal(app):
     assert set(c.get("/api/me").json()["keycard"]) == set(fx("me")["keycard"])
     # 0.2.13: `confirm` (where it may be confirmed: laptop / phone) is an addition of the server to a pending item, not in the 0.1 contract;
     # 0.2.29: so is `repeat_offer` ("approve this call for later runs"); pv2810: and `view_sha256` (the presentation hash the page signs); 05.11: and `what` / `harm` / `details` (the question in plain words, signed with the view)
-    assert set(c.get("/api/approvals/" + got["rid"]).json()) - {"confirm", "repeat_offer", "view_sha256", "what", "harm", "risk", "details"} == set(fx("approval-get"))
+    # r0277 (P2): and `omitted` (what the first screen does not show whole, signed with the view)
+    assert set(c.get("/api/approvals/" + got["rid"]).json()) - {"confirm", "repeat_offer", "view_sha256", "what", "harm", "risk", "details", "omitted"} == set(fx("approval-get"))
     assert set(c.get("/api/feed").json()["items"][0]) == set(fx("feed")["items"][0])

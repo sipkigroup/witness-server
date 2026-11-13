@@ -432,7 +432,8 @@ def verify_files():
              "verify/tsa.py": _read(TSA_PY),
              "verify/mandate_check.py": _read(os.path.join(SERVER, "packtools", "mandate_check.py")),     # 0.2.83: verdict lines, shown objects
              "verify/run_context.py": _read(os.path.join(SERVER, "packtools", "run_context.py")),         # 0.2.85: runs/<id>.cose
-             "verify/tlogcheck.py": _read(os.path.join(SERVER, "packtools", "tlogcheck.py"))}             # r0269: tlog/ (C2SP checkpoint, proofs)
+             "verify/tlogcheck.py": _read(os.path.join(SERVER, "packtools", "tlogcheck.py")),             # r0269: tlog/ (C2SP checkpoint, proofs)
+             "verify/screencheck.py": _read(os.path.join(SERVER, "packtools", "screencheck.py"))}         # r0277: the first screen rebuilt (P1, P2)
     for m in CORE_MODULES:
         files["verify/svidetel_v4/%s.py" % m] = _read(os.path.join(_paths.CORE_DIR, "svidetel_v4", m + ".py"))
     return files

@@ -325,6 +325,15 @@ def _main(argv):
             vw += rw
         xl, xw = MC.views_extra(root, man["files"].keys())     # 0.2.84 (R5-V4): files under views/ that are not read are named
         vl += xl
+        sw = []
+        if not vwhy:                           # r0277 (P1 / P2): the first screen rebuilt from the pinned vocabulary, the signed list of what it hid
+            try:
+                import cbor2
+                import screencheck as SC
+                sl, vwhy, sw = SC.screen_checks(root, entries, pviews, cbor2.loads, req)
+            except ImportError:
+                sl = ["screens: not checked (verify/screencheck.py is missing: a pack older than r0277)"]
+            vl += sl
         for line in vl:
             print(line)
         if vwhy:
@@ -335,6 +344,14 @@ def _main(argv):
                          "this INVALID)" % (vw.count("VIEW_UNVERIFIABLE") + vw.count("VIEW_NOT_SIGNED")))
         if xw:
             trust.append("files under views/ that no check read (VIEW_EXTRA_FILE above): they are not evidence of what was shown")
+        if "WORDING_LEGACY" in sw or "WORDING_UNVERIFIABLE" in sw:
+            trust.append("the words of %d first screen(s) (what / harm): not rebuilt from a pinned vocabulary (a mandate older than mr-vocab-2, "
+                         "or its vocabulary is not in the pack)" % (sw.count("WORDING_LEGACY") + sw.count("WORDING_UNVERIFIABLE")))
+        if "OMITTED_UNDECLARED" in sw:
+            trust.append("what %d page(s) did not show whole on the first screen: not signed (a page older than r0277)" % sw.count("OMITTED_UNDECLARED"))
+        if any(line.startswith("screen ") and "words rebuilt" in line for line in vl):
+            trust.append("the reason code and the parse behind the rebuilt words are the witness's (P1 proves the sentence is the pinned "
+                         "vocabulary's, not that the code was right)")
         if os.path.isdir(os.path.join(root, "runs")):     # 0.2.85: the CI run context the witness signed (run_context.py)
             try:
                 import run_context as RC

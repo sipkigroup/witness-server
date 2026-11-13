@@ -1,0 +1,573 @@
+{
+ "cases": [
+  {
+   "expect": "VALID APPROVED_PARTIAL_VIEW",
+   "id": "S-01",
+   "note": "honest: a request to a host quoted from the call",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "d8464c05914953f2424ab5a8e8ba9a99567d6519ffe59d50224305601fecd6f5",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "VALID APPROVED_PARTIAL_VIEW",
+   "id": "S-02",
+   "note": "honest: a line of three commands, its text cut by the witness",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "command",
+    "recipient": "make"
+   },
+   "view": {
+    "action": {
+     "class": "command",
+     "recipient": "make"
+    },
+    "harm": "It runs a program on your computer.",
+    "line_commands": [
+     "make",
+     "pytest -q",
+     "git status"
+    ],
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "line_commands"
+      },
+      {
+       "how": "folded",
+       "m": "text_cut"
+      },
+      {
+       "how": "cut",
+       "m": "text_preview"
+      },
+      {
+       "how": "folded",
+       "m": "text_preview"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "medium",
+    "status": "pending_approval",
+    "text_cut": true,
+    "text_preview": "make ; pytest -q ; git status",
+    "tool": "Bash",
+    "v": "dw-view-1",
+    "what": "Your agent wants to run 3 commands"
+   },
+   "view_sha256": "05f385e239234e6be4bbab96aeed8ca673f2e7e77152d7ed02e116f38993829b",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-03",
+   "note": "what: one word replaced",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to read a request to api.example.com"
+   },
+   "view_sha256": "46fb3b767a0dfc74f88a26fe7617ce9a14d60b7dd52f2f97817459db246f4c37",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-04",
+   "note": "harm: reassuring text of the agent",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "This is a harmless read; nothing leaves your computer.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "d35993a420c7eba3c89817264c9b47a9110e6b0674786b500362f0527b2ca2ee",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-05",
+   "note": "{t} is not the call's target",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to docs.python.org"
+   },
+   "view_sha256": "a7d03f9f56e7542e1db019d083c03fd3fce3c5c5b5b932d3bf2387596f148d07",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-06",
+   "note": "words of another vocabulary than the committed one (the committed one is given)",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "file",
+    "recipient": "/p/.env"
+   },
+   "view": {
+    "action": {
+     "class": "file",
+     "recipient": "/p/.env"
+    },
+    "harm": "Your keys or passwords could be sent out.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "critical",
+    "status": "pending_approval",
+    "tool": "Read",
+    "v": "dw-view-1",
+    "what": "Your helper would like to act on /p/.env a few minutes after it read a secret"
+   },
+   "view_sha256": "4336c05c4e72e243cbc161517dd4361b0e0bb362418b9b931135b29a4813fa80",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID VOCAB_MISMATCH",
+   "id": "S-07",
+   "note": "the vocabulary given does not hash to the committed digest",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "d8464c05914953f2424ab5a8e8ba9a99567d6519ffe59d50224305601fecd6f5",
+   "vocab": "b1785aae4da572cb405c569f8397ccd73f0cccdd7a2e5f6648b1e3134ca591af"
+  },
+  {
+   "expect": "INVALID OMITTED_MISMATCH",
+   "id": "S-08",
+   "note": "omitted: a folded member missing",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "c8dcecc372ae76277ff7120cf6d67dabd9046db05ca7c4e16b73e1c3c723b62c",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID OMITTED_MISMATCH",
+   "id": "S-09",
+   "note": "omitted: a first-screen member listed as hidden",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      },
+      {
+       "how": "folded",
+       "m": "what"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "34a9cba62c6eb02ee7aa6fabd9b9bf0efddd441874316881fe3adf17d1b7b5ee",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "VALID OMITTED_UNDECLARED",
+   "id": "S-10",
+   "note": "no omitted (a page older than r0277)",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "540e8a3ddcdcec54d78fc7ff2edcf8b4fd1ef586d2b0ce31b7d148517e8c2512",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-11",
+   "note": "risk outside the closed levels",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) api.example.com"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "negligible",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "68548e305806670c60331b00329909b9ded23620c1b65c00c3fe9b313476fbe8",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-12",
+   "note": "run {n} commands with a wrong count",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "command",
+    "recipient": "make"
+   },
+   "view": {
+    "action": {
+     "class": "command",
+     "recipient": "make"
+    },
+    "harm": "It runs a program on your computer.",
+    "line_commands": [
+     "make",
+     "pytest -q",
+     "git status"
+    ],
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "line_commands"
+      },
+      {
+       "how": "folded",
+       "m": "text_preview"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "medium",
+    "status": "pending_approval",
+    "text_preview": "make ; pytest -q ; git status",
+    "tool": "Bash",
+    "v": "dw-view-1",
+    "what": "Your agent wants to run 2 commands"
+   },
+   "view_sha256": "e5b819d57613cf5d7d1567011ea15953327c1a1998158d53601ff6078be1d2a4",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  },
+  {
+   "expect": "INVALID WORDING_NOT_DERIVED",
+   "id": "S-13",
+   "note": "the shown action names another recipient than the signed receipt",
+   "pinned": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2",
+   "receipt_action": {
+    "class": "disclosure",
+    "recipient": "(network) evil.example"
+   },
+   "view": {
+    "action": {
+     "class": "disclosure",
+     "recipient": "(network) api.example.com"
+    },
+    "details": "Why it matters: This could send your keys or passwords out of this project folder, to api.example.com.\nTool: WebFetch",
+    "harm": "Your keys or passwords could be sent to this site.",
+    "omitted": {
+     "items": [
+      {
+       "how": "folded",
+       "m": "action"
+      },
+      {
+       "how": "folded",
+       "m": "details"
+      },
+      {
+       "how": "folded",
+       "m": "tool"
+      }
+     ],
+     "rule": "mr-omit-1"
+    },
+    "rid": "r-0277",
+    "risk": "high",
+    "status": "pending_approval",
+    "tool": "WebFetch",
+    "v": "dw-view-1",
+    "what": "Your agent wants to send a request to api.example.com"
+   },
+   "view_sha256": "d8464c05914953f2424ab5a8e8ba9a99567d6519ffe59d50224305601fecd6f5",
+   "vocab": "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2"
+  }
+ ],
+ "v": "mr-screen-vectors-1",
+ "vocabularies": {
+  "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2": "{\"danger_words\":{\"disk\":[\"Your agent wants to use a disk tool\",\"A whole disk could be erased.\",\"Disk tools work below the files.\",\"critical\"],\"exit\":[\"Your agent wants to run a program that reaches the internet\",\"It can send data out of this computer.\",\"This program talks to servers outside this computer (or acts as you there).\",\"high\"],\"fetch\":[\"Your agent wants to download code from the internet\",\"It downloads; nothing of yours is sent.\",\"It reads from a remote repository. Nothing of your project is sent.\",\"medium\"],\"git-config\":[\"Your agent wants to change git settings that run programs\",\"Git would run this later without asking you.\",\"Git runs this by itself later, without asking you.\",\"high\"],\"git-destroy\":[\"Your agent wants to throw away git work\",\"Uncommitted work or history could be lost for good.\",\"Changes not committed yet, a branch or a stash that git forgets cannot be brought back.\",\"high\"],\"git-force-push\":[\"Your agent wants to overwrite history on the server\",\"Other people's work could be lost.\",\"A force-push replaces the branch on the server.\",\"high\"],\"install\":[\"Your agent wants to install packages from the internet\",\"Code downloaded from the internet would run on your computer.\",\"Installing runs the packages' own setup code on this computer, outside any sandbox. Usual for development; say no if you did not expect a new package.\",\"medium\"],\"loopback-write\":[\"Your agent wants to send data to a program on this computer\",\"A local service (a browser, Docker) could act on it.\",\"Local services (a browser's debugging port, Docker, a database) act with your rights.\",\"high\"],\"opaque\":[\"Your agent wants to run a command Witness cannot fully check\",\"Part of it is hidden from Witness.\",\"Part of the line comes from a variable, a sourced file or a form Witness does not read, so it cannot tell what that part does.\",\"medium\"],\"pipe-to-shell\":[\"Your agent wants to download a script and run it at once\",\"Code nobody has read would run.\",\"The downloaded text goes straight into a shell; nobody sees it before it runs.\",\"high\"],\"push\":[\"Your agent wants to send your code to a server\",\"Your code leaves this computer.\",\"A push publishes commits to the remote repository; others may see them at once.\",\"high\"],\"rm-rf\":[\"Your agent wants to delete files for good\",\"Files could be deleted for good.\",\"A recursive delete cannot be undone.\",\"high\"],\"secrets\":[\"Your agent wants to read or use your keys or passwords\",\"This holds your keys or passwords.\",\"Keys, tokens or passwords could be read or sent out.\",\"high\"],\"sql-drop\":[\"Your agent wants to delete database data\",\"Data could be lost for good.\",\"Dropped tables do not come back.\",\"high\"],\"witness\":[\"Your agent wants to touch Witness itself\",\"It could switch your guard off.\",\"This is Witness's own key or settings.\",\"critical\"],\"write-outside\":[\"Your agent wants to write outside the project\",\"A file outside your project would change.\",\"The file is outside your project folder; Witness keeps no copy of it.\",\"medium\"]},\"data_tag_words\":{\"api_key\":\"a key or token\",\"bearer\":\"a key or token\",\"card_number\":\"a card number\",\"crypto_address\":\"a crypto wallet address\",\"email_address\":\"an e-mail address\",\"iban\":\"a bank account number\",\"passwd\":\"a password\",\"password\":\"a password\",\"personal_words\":\"personal data\",\"phone\":\"a phone number\",\"postal_address\":\"a postal address\",\"private_key\":\"a private key\",\"secret\":\"a password or key\",\"secret_assign\":\"a password or key\",\"seed_phrase\":\"a wallet recovery phrase\",\"spelled_address\":\"a postal address\",\"spelled_digits\":\"a phone or card number\",\"spelled_email\":\"an e-mail address\",\"ssn\":\"a social security number\",\"telegram_token\":\"a key or token\",\"token\":\"a key or token\"},\"long_harm\":{\"ESCALATE_COMMAND\":\"It runs code on your computer. It could change or delete files in this project.\",\"ESCALATE_COMMAND_DANGER\":\"It can delete or overwrite files, or send data out of this computer.\",\"ESCALATE_COUNT\":\"A loop or a runaway agent could do a lot of damage in a short time.\",\"ESCALATE_DATA\":\"Private data (keys, passwords, personal details) could leave this project.\",\"ESCALATE_DELETE\":\"Deleted data may be gone for good.\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"Data could be sent to a host your mandate does not name.\",\"ESCALATE_EXEC_CHANGED\":\"Code you have not seen would run on your computer.\",\"ESCALATE_FILE\":\"A file your mandate does not cover would change.\",\"ESCALATE_HTTP\":\"A request can send data out of this project, or fetch something that changes your computer.\",\"ESCALATE_NOT_LISTED\":\"Its effect is not covered by your mandate.\",\"ESCALATE_PUBLISH\":\"Data leaves this computer and cannot be taken back. Your mandate names no channel for it.\",\"ESCALATE_SECRET_COPY\":\"Earlier the agent copied a credential file here (you allowed the copy). Reading the copy reads the credential.\",\"ESCALATE_SECRET_SEEN\":\"It could carry your keys or passwords out of this project folder.\",\"ESCALATE_WRITTEN_RUN\":\"The agent could run code you never read.\"},\"net_harm\":\"Information from your computer could be sent to this site.\",\"path_harm\":[[\"(^|/)\\\\.(zshrc|zprofile|zshenv|bashrc|bash_profile|profile)$\",\"The agent could stay on your computer for good.\",\"It changes a file that runs every time you open a terminal: the agent could stay on your computer for good.\"],[\"/LaunchAgents/|/LaunchDaemons/|/crontab|/systemd/\",\"The agent could stay on your computer for good.\",\"This entry starts at every login: the agent could stay on your computer for good.\"],[\"(^|/)\\\\.claude(/|$)|(^|/)\\\\.mcp\\\\.json$|(^|/)\\\\.cursor/\",\"Witness could be switched off for the next session.\",\"These are your agent's own settings: a change can switch Witness off for its next session.\"],[\"(^|/)\\\\.git/(hooks|config)|(^|/)\\\\.gitconfig$\",\"Git would run this later without asking you.\",\"Git runs this by itself later, without asking you.\"],[\"(^|/)\\\\.(ssh|aws|gnupg)(/|$)|(^|/)\\\\.env(\\\\.|$)|id_rsa|id_ed25519|credentials\",\"This holds your keys or passwords.\",\"This holds your keys or passwords.\"]],\"push_tail\":\"Open to decide\",\"push_what\":{\"ADVISORY_HOLD\":\"your agent wants to act, and its text was flagged\",\"ESCALATE_COMMAND\":\"your agent wants to run a command\",\"ESCALATE_COMMAND_DANGER\":\"your agent wants to run a risky command\",\"ESCALATE_COUNT\":\"your agent keeps repeating the same action\",\"ESCALATE_DATA\":\"your agent wants to send out something private\",\"ESCALATE_DELETE\":\"your agent wants to delete something\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"your agent wants to use the internet\",\"ESCALATE_EXEC_CHANGED\":\"your agent wants to run a file that changed\",\"ESCALATE_FILE\":\"your agent wants to change a file\",\"ESCALATE_HTTP\":\"your agent wants to use the internet\",\"ESCALATE_MONEY\":\"your agent wants to pay for something\",\"ESCALATE_NET_UNSEEN\":\"your agent wants to use the internet\",\"ESCALATE_NOT_LISTED\":\"your agent wants to do something new\",\"ESCALATE_PUBLISH\":\"your agent wants to send something out\",\"ESCALATE_SECRET_COPY\":\"your agent wants to read a copy of a secret\",\"ESCALATE_SECRET_SEEN\":\"your agent wants to act after it read a secret\",\"ESCALATE_TRIAL_CLAIM\":\"your agent wants to start a trial\",\"ESCALATE_USER_CONTENT_HOST\":\"your agent wants to send data to a public site\",\"ESCALATE_WRITTEN_RUN\":\"your agent wants to run a file it wrote\"},\"reason_words\":{\"ADVISORY_HOLD\":[\"Your agent wants to do {t}; the data advisor flagged its text\",\"The text may contain private data.\"],\"ESCALATE_COMMAND\":[\"Your agent wants to run a command that is not on your list: {t}\",\"It runs a program on your computer.\"],\"ESCALATE_COMMAND_DANGER\":[\"Your agent wants to run a dangerous command: {t}\",\"This command can damage files or leak data.\"],\"ESCALATE_COUNT\":[\"Your agent is repeating the same kind of action too often: {t}\",\"A runaway agent could do a lot of damage fast.\"],\"ESCALATE_DATA\":[\"Your agent wants to send something to {t} that may carry data your mandate protects\",\"Private data could leave this project.\"],\"ESCALATE_DELETE\":[\"Your agent wants to delete {t}\",\"Files could be deleted for good.\"],\"ESCALATE_EGRESS_UNSPECIFIED\":[\"Your agent wants to reach {t}, outside this computer\",\"Information could be sent to an unknown site.\"],\"ESCALATE_EXEC_CHANGED\":[\"Your agent wants to run {t}, and files it runs changed since you last confirmed them\",\"Code you have not seen would run.\"],\"ESCALATE_FILE\":[\"Your agent wants to change the file {t}\",\"A file your rules do not cover would change.\"],\"ESCALATE_HTTP\":[\"Your agent wants to send a web request to {t}\",\"Information from your computer could be sent to this site.\"],\"ESCALATE_MONEY\":[\"Your agent wants to pay {t}\",\"Money would be spent and may not come back.\"],\"ESCALATE_NET_UNSEEN\":[\"Your agent wants to run a network program ({t}) whose destination is not in the line\",\"It could send data to a place you cannot see.\"],\"ESCALATE_NOT_LISTED\":[\"Your agent wants to use something that is not on your list: {t}\",\"Its effect is not covered by your rules.\"],\"ESCALATE_PUBLISH\":[\"Your agent wants to send or publish something to {t}\",\"Information would leave this computer for good.\"],\"ESCALATE_SECRET_COPY\":[\"Your agent wants to read {t}, a copy it made of a secret\",\"Your keys or passwords would reach the agent.\"],\"ESCALATE_SECRET_SEEN\":[\"Your agent wants to act on {t} a few minutes after it read a secret\",\"Your keys or passwords could be sent out.\"],\"ESCALATE_TRIAL_CLAIM\":[\"Your agent wants to make its first use of a trial account\",\"It binds the trial to this account.\"],\"ESCALATE_USER_CONTENT_HOST\":[\"Your agent wants to send data to {t}, a site where anyone can publish or read\",\"What it sends may become public.\"],\"ESCALATE_WRITTEN_RUN\":[\"Your agent wants to run a file it wrote itself: {t}\",\"It runs code you have not read.\"]},\"risk_by_code\":{\"ADVISORY_HOLD\":\"medium\",\"ESCALATE_COMMAND\":\"low\",\"ESCALATE_COMMAND_DANGER\":\"high\",\"ESCALATE_COUNT\":\"medium\",\"ESCALATE_DATA\":\"critical\",\"ESCALATE_DELETE\":\"high\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"high\",\"ESCALATE_EXEC_CHANGED\":\"high\",\"ESCALATE_FILE\":\"medium\",\"ESCALATE_HTTP\":\"high\",\"ESCALATE_MONEY\":\"critical\",\"ESCALATE_NET_UNSEEN\":\"high\",\"ESCALATE_NOT_LISTED\":\"low\",\"ESCALATE_PUBLISH\":\"high\",\"ESCALATE_SECRET_COPY\":\"high\",\"ESCALATE_SECRET_SEEN\":\"critical\",\"ESCALATE_TRIAL_CLAIM\":\"low\",\"ESCALATE_USER_CONTENT_HOST\":\"high\",\"ESCALATE_WRITTEN_RUN\":\"high\"},\"risk_label\":{\"critical\":\"Critical\",\"high\":\"High\",\"low\":\"Low\",\"medium\":\"Medium\"},\"screen\":{\"git_change_harm\":\"Git would run this later without asking you.\",\"git_change_what\":\"Your agent wants to change git settings that run programs\",\"git_read_harm\":\"It only reads them; nothing is changed or sent.\",\"git_read_what\":\"Your agent wants to read your git settings\",\"many_commands\":\"Your agent wants to run {n} commands\",\"own_settings_harm\":\"It could change how your agent or Witness works next time.\",\"own_settings_what\":\"Your agent wants to change its own settings\",\"persist\":\"The agent could stay on your computer for good.\",\"quiet_harm\":\"It changes your Claude Code settings; some tools may need a host added later.\",\"quiet_what\":\"Your agent wants to turn on quiet mode (Claude Code's strict sandbox) for all your projects\",\"refused_before\":\"You said No to this {when}; the agent is trying another way.\",\"sandbox_publish\":\"Code could publish to {t} in your name.\",\"secret_to_host\":\"Your keys or passwords could be sent to this site.\",\"send_request\":\"Your agent wants to send a request to {t}\",\"temp_write_harm\":\"Other programs and users of this computer can read and change it.\",\"temp_write_what\":\"Your agent wants to write a file outside the project: {t}\",\"unnamed\":\"(unnamed)\",\"when_earlier\":\"earlier\",\"when_h\":\"{n} h ago\",\"when_min\":\"{n} min ago\"},\"strict_words\":{\"(strict data) \":[\"Your agent's command contains {t}\",\"It may be a password, a token or personal data.\",\"Nothing on this command sends it anywhere (no network, no publishing). Usually a test value or a file the agent edits; if it is your real secret, say no.\",\"medium\"],\"(strict doubt) \":[\"Your agent's command contains text that looks dangerous: {t}\",\"Witness is not sure it is only text.\",\"The command writes or passes text that matches a forbidden action. If it is only text (a document, a test), it is harmless; if code runs it, it is not.\",\"medium\"],\"(strict inject) \":[\"Your agent wants to load code from outside the project into a program: {t}\",\"The command would not run what it says.\",\"This setting makes a program load code from another place, so the command no longer shows what runs.\",\"medium\"],\"(strict irreversible) \":[\"Your agent wants to throw away work that cannot be brought back: {t}\",\"Uncommitted changes, git history or a database are lost for good.\",\"This stays inside your project, but nothing brings it back: changes not committed yet, a branch or a stash git forgets, or a table of a database.\",\"high\"],\"(strict later run) \":[\"Your agent wants to change a file that runs later by itself: {t}\",\"It could run later outside the sandbox.\",\"Git hooks, direnv, your editor, CI or your agent's next session run this file later, without the sandbox and without asking.\",\"high\"],\"(strict outside) \":[\"Your agent wants to start something outside its sandbox: {t}\",\"That program runs without the sandbox's limits.\",\"A browser, another app or an administrator command is not limited by the sandbox: it can reach the internet and your files.\",\"high\"],\"(strict publish) \":[\"Your agent wants to send or publish something outside this computer: {t}\",\"It leaves your computer and cannot be taken back.\",\"The sandbox keeps the agent on this computer, but this program writes somewhere else (a repository, a registry, a server, an e-mail): what it sends cannot be taken back.\",\"high\"],\"(strict witness) \":[\"Your agent wants to touch Witness's own key or settings: {t}\",\"It is the key of the guard itself.\",\"This is the key and settings Witness uses to check your agent. The sandbox blocks the files; a key in a variable can still be seen.\",\"high\"]},\"unknown_harm\":\"Unknown effect\",\"unknown_what\":\"Your agent wants to run a command Witness could not classify\",\"v\":\"mr-vocab-2\"}",
+  "b1785aae4da572cb405c569f8397ccd73f0cccdd7a2e5f6648b1e3134ca591af": "{\"danger_words\":{\"disk\":[\"Your agent wants to use a disk tool\",\"A whole disk could be erased.\",\"Disk tools work below the files.\",\"critical\"],\"exit\":[\"Your agent wants to run a program that reaches the internet\",\"It can send data out of this computer.\",\"This program talks to servers outside this computer (or acts as you there).\",\"high\"],\"fetch\":[\"Your agent wants to download code from the internet\",\"It downloads; nothing of yours is sent.\",\"It reads from a remote repository. Nothing of your project is sent.\",\"medium\"],\"git-config\":[\"Your agent wants to change git settings that run programs\",\"Git would run this later without asking you.\",\"Git runs this by itself later, without asking you.\",\"high\"],\"git-destroy\":[\"Your agent wants to throw away git work\",\"Uncommitted work or history could be lost for good.\",\"Changes not committed yet, a branch or a stash that git forgets cannot be brought back.\",\"high\"],\"git-force-push\":[\"Your agent wants to overwrite history on the server\",\"Other people's work could be lost.\",\"A force-push replaces the branch on the server.\",\"high\"],\"install\":[\"Your agent wants to install packages from the internet\",\"Code downloaded from the internet would run on your computer.\",\"Installing runs the packages' own setup code on this computer, outside any sandbox. Usual for development; say no if you did not expect a new package.\",\"medium\"],\"loopback-write\":[\"Your agent wants to send data to a program on this computer\",\"A local service (a browser, Docker) could act on it.\",\"Local services (a browser's debugging port, Docker, a database) act with your rights.\",\"high\"],\"opaque\":[\"Your agent wants to run a command Witness cannot fully check\",\"Part of it is hidden from Witness.\",\"Part of the line comes from a variable, a sourced file or a form Witness does not read, so it cannot tell what that part does.\",\"medium\"],\"pipe-to-shell\":[\"Your agent wants to download a script and run it at once\",\"Code nobody has read would run.\",\"The downloaded text goes straight into a shell; nobody sees it before it runs.\",\"high\"],\"push\":[\"Your agent wants to send your code to a server\",\"Your code leaves this computer.\",\"A push publishes commits to the remote repository; others may see them at once.\",\"high\"],\"rm-rf\":[\"Your agent wants to delete files for good\",\"Files could be deleted for good.\",\"A recursive delete cannot be undone.\",\"high\"],\"secrets\":[\"Your agent wants to read or use your keys or passwords\",\"This holds your keys or passwords.\",\"Keys, tokens or passwords could be read or sent out.\",\"high\"],\"sql-drop\":[\"Your agent wants to delete database data\",\"Data could be lost for good.\",\"Dropped tables do not come back.\",\"high\"],\"witness\":[\"Your agent wants to touch Witness itself\",\"It could switch your guard off.\",\"This is Witness's own key or settings.\",\"critical\"],\"write-outside\":[\"Your agent wants to write outside the project\",\"A file outside your project would change.\",\"The file is outside your project folder; Witness keeps no copy of it.\",\"medium\"]},\"data_tag_words\":{\"api_key\":\"a key or token\",\"bearer\":\"a key or token\",\"card_number\":\"a card number\",\"crypto_address\":\"a crypto wallet address\",\"email_address\":\"an e-mail address\",\"iban\":\"a bank account number\",\"passwd\":\"a password\",\"password\":\"a password\",\"personal_words\":\"personal data\",\"phone\":\"a phone number\",\"postal_address\":\"a postal address\",\"private_key\":\"a private key\",\"secret\":\"a password or key\",\"secret_assign\":\"a password or key\",\"seed_phrase\":\"a wallet recovery phrase\",\"spelled_address\":\"a postal address\",\"spelled_digits\":\"a phone or card number\",\"spelled_email\":\"an e-mail address\",\"ssn\":\"a social security number\",\"telegram_token\":\"a key or token\",\"token\":\"a key or token\"},\"long_harm\":{\"ESCALATE_COMMAND\":\"It runs code on your computer. It could change or delete files in this project.\",\"ESCALATE_COMMAND_DANGER\":\"It can delete or overwrite files, or send data out of this computer.\",\"ESCALATE_COUNT\":\"A loop or a runaway agent could do a lot of damage in a short time.\",\"ESCALATE_DATA\":\"Private data (keys, passwords, personal details) could leave this project.\",\"ESCALATE_DELETE\":\"Deleted data may be gone for good.\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"Data could be sent to a host your mandate does not name.\",\"ESCALATE_EXEC_CHANGED\":\"Code you have not seen would run on your computer.\",\"ESCALATE_FILE\":\"A file your mandate does not cover would change.\",\"ESCALATE_HTTP\":\"A request can send data out of this project, or fetch something that changes your computer.\",\"ESCALATE_NOT_LISTED\":\"Its effect is not covered by your mandate.\",\"ESCALATE_PUBLISH\":\"Data leaves this computer and cannot be taken back. Your mandate names no channel for it.\",\"ESCALATE_SECRET_COPY\":\"Earlier the agent copied a credential file here (you allowed the copy). Reading the copy reads the credential.\",\"ESCALATE_SECRET_SEEN\":\"It could carry your keys or passwords out of this project folder.\",\"ESCALATE_WRITTEN_RUN\":\"The agent could run code you never read.\"},\"net_harm\":\"Information from your computer could be sent to this site.\",\"path_harm\":[[\"(^|/)\\\\.(zshrc|zprofile|zshenv|bashrc|bash_profile|profile)$\",\"The agent could stay on your computer for good.\",\"It changes a file that runs every time you open a terminal: the agent could stay on your computer for good.\"],[\"/LaunchAgents/|/LaunchDaemons/|/crontab|/systemd/\",\"The agent could stay on your computer for good.\",\"This entry starts at every login: the agent could stay on your computer for good.\"],[\"(^|/)\\\\.claude(/|$)|(^|/)\\\\.mcp\\\\.json$|(^|/)\\\\.cursor/\",\"Witness could be switched off for the next session.\",\"These are your agent's own settings: a change can switch Witness off for its next session.\"],[\"(^|/)\\\\.git/(hooks|config)|(^|/)\\\\.gitconfig$\",\"Git would run this later without asking you.\",\"Git runs this by itself later, without asking you.\"],[\"(^|/)\\\\.(ssh|aws|gnupg)(/|$)|(^|/)\\\\.env(\\\\.|$)|id_rsa|id_ed25519|credentials\",\"This holds your keys or passwords.\",\"This holds your keys or passwords.\"]],\"push_tail\":\"Open to decide\",\"push_what\":{\"ADVISORY_HOLD\":\"your agent wants to act, and its text was flagged\",\"ESCALATE_COMMAND\":\"your agent wants to run a command\",\"ESCALATE_COMMAND_DANGER\":\"your agent wants to run a risky command\",\"ESCALATE_COUNT\":\"your agent keeps repeating the same action\",\"ESCALATE_DATA\":\"your agent wants to send out something private\",\"ESCALATE_DELETE\":\"your agent wants to delete something\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"your agent wants to use the internet\",\"ESCALATE_EXEC_CHANGED\":\"your agent wants to run a file that changed\",\"ESCALATE_FILE\":\"your agent wants to change a file\",\"ESCALATE_HTTP\":\"your agent wants to use the internet\",\"ESCALATE_MONEY\":\"your agent wants to pay for something\",\"ESCALATE_NET_UNSEEN\":\"your agent wants to use the internet\",\"ESCALATE_NOT_LISTED\":\"your agent wants to do something new\",\"ESCALATE_PUBLISH\":\"your agent wants to send something out\",\"ESCALATE_SECRET_COPY\":\"your agent wants to read a copy of a secret\",\"ESCALATE_SECRET_SEEN\":\"your agent wants to act after it read a secret\",\"ESCALATE_TRIAL_CLAIM\":\"your agent wants to start a trial\",\"ESCALATE_USER_CONTENT_HOST\":\"your agent wants to send data to a public site\",\"ESCALATE_WRITTEN_RUN\":\"your agent wants to run a file it wrote\"},\"reason_words\":{\"ADVISORY_HOLD\":[\"Your helper would like to do {t}; the data advisor flagged its text\",\"The text may contain private data.\"],\"ESCALATE_COMMAND\":[\"Your helper would like to run a command that is not on your list: {t}\",\"It runs a program on your computer.\"],\"ESCALATE_COMMAND_DANGER\":[\"Your helper would like to run a dangerous command: {t}\",\"This command can damage files or leak data.\"],\"ESCALATE_COUNT\":[\"Your agent is repeating the same kind of action too often: {t}\",\"A runaway agent could do a lot of damage fast.\"],\"ESCALATE_DATA\":[\"Your helper would like to send something to {t} that may carry data your mandate protects\",\"Private data could leave this project.\"],\"ESCALATE_DELETE\":[\"Your helper would like to delete {t}\",\"Files could be deleted for good.\"],\"ESCALATE_EGRESS_UNSPECIFIED\":[\"Your helper would like to reach {t}, outside this computer\",\"Information could be sent to an unknown site.\"],\"ESCALATE_EXEC_CHANGED\":[\"Your helper would like to run {t}, and files it runs changed since you last confirmed them\",\"Code you have not seen would run.\"],\"ESCALATE_FILE\":[\"Your helper would like to change the file {t}\",\"A file your rules do not cover would change.\"],\"ESCALATE_HTTP\":[\"Your helper would like to send a web request to {t}\",\"Information from your computer could be sent to this site.\"],\"ESCALATE_MONEY\":[\"Your helper would like to pay {t}\",\"Money would be spent and may not come back.\"],\"ESCALATE_NET_UNSEEN\":[\"Your helper would like to run a network program ({t}) whose destination is not in the line\",\"It could send data to a place you cannot see.\"],\"ESCALATE_NOT_LISTED\":[\"Your helper would like to use something that is not on your list: {t}\",\"Its effect is not covered by your rules.\"],\"ESCALATE_PUBLISH\":[\"Your helper would like to send or publish something to {t}\",\"Information would leave this computer for good.\"],\"ESCALATE_SECRET_COPY\":[\"Your helper would like to read {t}, a copy it made of a secret\",\"Your keys or passwords would reach the agent.\"],\"ESCALATE_SECRET_SEEN\":[\"Your helper would like to act on {t} a few minutes after it read a secret\",\"Your keys or passwords could be sent out.\"],\"ESCALATE_TRIAL_CLAIM\":[\"Your helper would like to make its first use of a trial account\",\"It binds the trial to this account.\"],\"ESCALATE_USER_CONTENT_HOST\":[\"Your helper would like to send data to {t}, a site where anyone can publish or read\",\"What it sends may become public.\"],\"ESCALATE_WRITTEN_RUN\":[\"Your helper would like to run a file it wrote itself: {t}\",\"It runs code you have not read.\"]},\"risk_by_code\":{\"ADVISORY_HOLD\":\"medium\",\"ESCALATE_COMMAND\":\"low\",\"ESCALATE_COMMAND_DANGER\":\"high\",\"ESCALATE_COUNT\":\"medium\",\"ESCALATE_DATA\":\"critical\",\"ESCALATE_DELETE\":\"high\",\"ESCALATE_EGRESS_UNSPECIFIED\":\"high\",\"ESCALATE_EXEC_CHANGED\":\"high\",\"ESCALATE_FILE\":\"medium\",\"ESCALATE_HTTP\":\"high\",\"ESCALATE_MONEY\":\"critical\",\"ESCALATE_NET_UNSEEN\":\"high\",\"ESCALATE_NOT_LISTED\":\"low\",\"ESCALATE_PUBLISH\":\"high\",\"ESCALATE_SECRET_COPY\":\"high\",\"ESCALATE_SECRET_SEEN\":\"critical\",\"ESCALATE_TRIAL_CLAIM\":\"low\",\"ESCALATE_USER_CONTENT_HOST\":\"high\",\"ESCALATE_WRITTEN_RUN\":\"high\"},\"risk_label\":{\"critical\":\"Critical\",\"high\":\"High\",\"low\":\"Low\",\"medium\":\"Medium\"},\"screen\":{\"git_change_harm\":\"Git would run this later without asking you.\",\"git_change_what\":\"Your agent wants to change git settings that run programs\",\"git_read_harm\":\"It only reads them; nothing is changed or sent.\",\"git_read_what\":\"Your agent wants to read your git settings\",\"many_commands\":\"Your agent wants to run {n} commands\",\"own_settings_harm\":\"It could change how your agent or Witness works next time.\",\"own_settings_what\":\"Your agent wants to change its own settings\",\"persist\":\"The agent could stay on your computer for good.\",\"quiet_harm\":\"It changes your Claude Code settings; some tools may need a host added later.\",\"quiet_what\":\"Your agent wants to turn on quiet mode (Claude Code's strict sandbox) for all your projects\",\"refused_before\":\"You said No to this {when}; the agent is trying another way.\",\"sandbox_publish\":\"Code could publish to {t} in your name.\",\"secret_to_host\":\"Your keys or passwords could be sent to this site.\",\"send_request\":\"Your agent wants to send a request to {t}\",\"temp_write_harm\":\"Other programs and users of this computer can read and change it.\",\"temp_write_what\":\"Your agent wants to write a file outside the project: {t}\",\"unnamed\":\"(unnamed)\",\"when_earlier\":\"earlier\",\"when_h\":\"{n} h ago\",\"when_min\":\"{n} min ago\"},\"strict_words\":{\"(strict data) \":[\"Your agent's command contains {t}\",\"It may be a password, a token or personal data.\",\"Nothing on this command sends it anywhere (no network, no publishing). Usually a test value or a file the agent edits; if it is your real secret, say no.\",\"medium\"],\"(strict doubt) \":[\"Your agent's command contains text that looks dangerous: {t}\",\"Witness is not sure it is only text.\",\"The command writes or passes text that matches a forbidden action. If it is only text (a document, a test), it is harmless; if code runs it, it is not.\",\"medium\"],\"(strict inject) \":[\"Your agent wants to load code from outside the project into a program: {t}\",\"The command would not run what it says.\",\"This setting makes a program load code from another place, so the command no longer shows what runs.\",\"medium\"],\"(strict irreversible) \":[\"Your agent wants to throw away work that cannot be brought back: {t}\",\"Uncommitted changes, git history or a database are lost for good.\",\"This stays inside your project, but nothing brings it back: changes not committed yet, a branch or a stash git forgets, or a table of a database.\",\"high\"],\"(strict later run) \":[\"Your agent wants to change a file that runs later by itself: {t}\",\"It could run later outside the sandbox.\",\"Git hooks, direnv, your editor, CI or your agent's next session run this file later, without the sandbox and without asking.\",\"high\"],\"(strict outside) \":[\"Your agent wants to start something outside its sandbox: {t}\",\"That program runs without the sandbox's limits.\",\"A browser, another app or an administrator command is not limited by the sandbox: it can reach the internet and your files.\",\"high\"],\"(strict publish) \":[\"Your agent wants to send or publish something outside this computer: {t}\",\"It leaves your computer and cannot be taken back.\",\"The sandbox keeps the agent on this computer, but this program writes somewhere else (a repository, a registry, a server, an e-mail): what it sends cannot be taken back.\",\"high\"],\"(strict witness) \":[\"Your agent wants to touch Witness's own key or settings: {t}\",\"It is the key of the guard itself.\",\"This is the key and settings Witness uses to check your agent. The sandbox blocks the files; a key in a variable can still be seen.\",\"high\"]},\"unknown_harm\":\"Unknown effect\",\"unknown_what\":\"Your agent wants to run a command Witness could not classify\",\"v\":\"mr-vocab-2\"}"
+ }
+}

@@ -27,6 +27,17 @@ class CoseError(Exception):
 
 
 P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+ED_P = 2 ** 255 - 19
+
+
+def ed25519_canonical(b: bytes) -> bool:
+    """r0277 (RFC 8032 5.1.3): a 32-byte point encoding is canonical: y < p, and x = 0 (y = 1 or y = p - 1) never carries the sign bit.
+    OpenSSL (pyca/cryptography) alone accepts such an A (ed25519-speccheck case 11); the core refuses it, as tlogcheck.py does."""
+    if len(b) != 32:
+        return False
+    n = int.from_bytes(b, "little")
+    sign, y = n >> 255, n & ((1 << 255) - 1)
+    return y < ED_P and not (sign and y in (1, ED_P - 1))
 
 
 def thumbprint(alg, pub: bytes) -> bytes:
@@ -103,6 +114,8 @@ class Key:
     def verify(self, sig: bytes, data: bytes) -> bool:
         try:
             if self.alg == ALG_EDDSA:
+                if not (ed25519_canonical(bytes(self.pub)) and len(sig) == 64 and ed25519_canonical(bytes(sig[:32]))):
+                    return False                # r0277: a non-canonical A or R is refused before OpenSSL sees it
                 ed25519.Ed25519PublicKey.from_public_bytes(self.pub).verify(sig, data)
             else:
                 if len(sig) != 64 or int.from_bytes(sig[32:], "big") > P256_N // 2:   # high-S is rejected (-01)

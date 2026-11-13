@@ -153,7 +153,8 @@ def test_home_in_temp_is_judged_as_a_home(client, owner, monkeypatch, strict, tm
     """PRED: without the strict fact nothing of ATTACKS is quiet; with it (deny_read = the home, writes only in the project: the kernel
     holds reads and writes of the home) a home under /tmp or /var/folders gets exactly the answers of a home outside temp. The project's
     temp files ({T}/build-xyz) get the same answers as with a home outside temp; under the strict fact those in the mandate's own temp
-    folder (`<tmp>/*`: $TMPDIR, or /tmp as on Linux / CI) are quiet."""
+    folder (`<tmp>/*`: a $TMPDIR of the person's) are quiet. r0279: a SHARED temp root ($TMPDIR=/tmp, or Linux / CI without one) is no
+    target of the form: the project's files directly in /tmp are not quiet (as on macOS with its own T folder)."""
     got = {}
     for kind in ("real", "tmp", "var_folders"):
         try:
@@ -173,9 +174,15 @@ def test_home_in_temp_is_judged_as_a_home(client, owner, monkeypatch, strict, tm
         if "real" in got:
             assert loud_quiet == got["real"][1], (kind, loud_quiet, got["real"][1])
         if strict:
-            own = [(c, v) for c, v in loud_quiet if c.startswith(("mkdir -p $TMPDIR", "echo x > $TMPDIR", "cat $TMPDIR", "grep -r x $TMPDIR",
-                                                                   "rm -rf $TMPDIR")) or (mt in ("/tmp", "/private/tmp") and "/tmp/build-xyz" in c)]
+            from app.hookjudge.mapping import personal_temp
+            shared = personal_temp(mt) is None                         # r0279: /tmp, /private/tmp: shared, not the mandate's
+            own = [(c, v) for c, v in loud_quiet if not shared and c.startswith(("mkdir -p $TMPDIR", "echo x > $TMPDIR", "cat $TMPDIR",
+                                                                                 "grep -r x $TMPDIR", "rm -rf $TMPDIR"))]
             assert own == [], (kind, own)
+            if shared:
+                writes = [c for c, _ in loud_quiet if "/tmp/build-xyz" in c or "$TMPDIR/build-xyz" in c]
+                PRED = 3                                               # before r0279: 0 (mkdir, echo >, rm -rf in /tmp quiet)
+                assert len(writes) >= PRED, (kind, loud_quiet)
 
 
 PROJ = "/srv/proj-r0274"

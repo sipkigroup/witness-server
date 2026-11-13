@@ -1,7 +1,7 @@
 import { get, post, put, del } from './api.js';
 import { uxText } from './uxguard.js';
 import { h, $, clear, notice, mountNav, fmtTime, fmtMoney, copyButton, mcpConfig, until, safeId, failText } from './ui.js';
-import { coverageView } from './coverage.js';
+import { coverageView, isHookAgent, simpleAccount } from './coverage.js';
 import { anchorText } from './anchors.js';
 import { revokeMandate } from './revoke.js';
 import { explainError } from './webauthn.js';
@@ -56,6 +56,8 @@ async function loadAgents() {
   try { state.mandates = await get('/api/mandates'); } catch (e) { state.mandates = []; }
   const cats = await Promise.all(state.agents.map(coverageOf));
   const box = clear($('#agents'));
+  const adv = $('#advanced');                 // r0278 (find 5): folded only for a one-agent Claude Code account
+  if (adv && !adv.dataset.set) { adv.dataset.set = '1'; adv.open = !simpleAccount(state.agents); }
   if (!state.agents.length) box.append(h('p', { class: 'hint', text: 'No agents yet. Create one below; its API key is shown once.' }));
   state.agents.forEach((a, i) => {
     const m = a.active_mandate_id;
@@ -66,7 +68,7 @@ async function loadAgents() {
         a.frozen_at ? h('span', { class: 'pill deny', text: 'frozen' }) : ''),
       frozenNote(a),
       m ? h('p', { class: 'hint' }, 'Mandate ', h('span', { class: 'mono', text: m })) : h('p', { class: 'hint', text: 'Without a signed mandate every action is denied (NO_MANDATE).' }),
-      cat ? h('div', {}, ...coverageView(cat.coverage)) : '',
+      cat && !(isHookAgent(a) && !cat.coverage) ? h('div', {}, ...coverageView(cat.coverage)) : '',      // r0278 (find 5): no proxy line for a hook agent
       cat && cat.drift ? h('p', { class: 'notice warn', text: 'The MCP tools of this agent changed; new arguments are refused until you review the catalog.' }) : '',
       hookRounds(a.hook_rounds_24h),
       h('div', { class: 'row' },

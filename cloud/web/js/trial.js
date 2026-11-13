@@ -8,7 +8,7 @@ import { encode, bytesToHex } from './cde.js';
 import { sha256, TYP_MANDATE } from './profile.js';
 import { signPayload } from './sign.js';
 import { createCredential, explainError, supported, NO_PASSKEY_TEXT } from './webauthn.js';
-import { describeMandate } from './describe.js';
+import { describeMandate, placesWords } from './describe.js';
 import { inspectFields } from './honest.js';
 import { h, $, clear, notice, mountNav, fmtTime, kv, safeId } from './ui.js';
 import { mountOffer } from './pushoffer.js';
@@ -83,7 +83,7 @@ export function ruleSummary(f) {
   const n = (c.allow || []).length, dom = (m.domains || []).length;
   return [
     'Everyday commands (' + n + ' listed) run without asking; any other command asks you first, dangerous ones always.',
-    'Files change only inside ' + (((d.targets || []).map((t) => String(t).replace(/\/\*?$/, '').split('/').pop() || t).join(', ')) || 'nowhere') + ' (full paths in the rules below).',
+    'Files change only inside ' + placesWords(d.targets) + ' (full paths in the rules below).',
     'Web: ' + (dom ? dom + ' site' + (dom > 1 ? 's' : '') + ' to read from' : 'no sites') + '; no purchases; valid ' + (f.valid_days || 7) + ' days.',
   ];
 }

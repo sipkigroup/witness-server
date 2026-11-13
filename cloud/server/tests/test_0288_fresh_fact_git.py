@@ -211,7 +211,9 @@ def clean_ps(monkeypatch):
 
 
 def _sess(client, owner, tmp_path, monkeypatch, user=STRICT_SETTINGS):
-    return Sess(client, owner, tmp_path, monkeypatch, user=user, project=PROJECT_STRICT)
+    # r0279 (Linux CI): the client is a Mac (Seatbelt); on a runner without bubblewrap the machine's own platform was never strict.
+    # Linux with Claude Code's sandbox installed: test_0257_l2_series2 (plat="linux").
+    return Sess(client, owner, tmp_path, monkeypatch, user=user, project=PROJECT_STRICT, plat="darwin")
 
 
 def test_e2e_fresh_session_is_strict(client, owner, tmp_path, monkeypatch, clean_ps):
@@ -327,7 +329,7 @@ def test_e2e_writes_outside_project_allowed_is_not_strict(client, owner, tmp_pat
             proj["sandbox"]["filesystem"].update(v["filesystem"])
         else:
             proj[k] = v
-    h = Sess(client, owner, tmp_path, monkeypatch, user=STRICT_SETTINGS, project=proj)
+    h = Sess(client, owner, tmp_path, monkeypatch, user=STRICT_SETTINGS, project=proj, plat="darwin")   # r0279: not asked merely for lacking bwrap
     d, why = h.run("pytest -q")
     assert d != "allow" and _last(client) == ASK, (d, why)
 

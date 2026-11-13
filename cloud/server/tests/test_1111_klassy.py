@@ -11,6 +11,8 @@ import uuid
 
 import pytest
 
+from tests.helpers import CLIENT_UID  # r0279: the tests' one client (uid 501 on every OS)
+
 from app.hookjudge import bashparse as bp
 from app.hookjudge import fs as hfs
 from app.hookjudge import inline as inl
@@ -167,15 +169,15 @@ FOREIGN = "99999999-4f50-4617-8899-aabbccddeeff"
 
 
 def _tmp(sid=SID, slug="-x-home"):
-    return "/private/tmp/claude-%d/%s/%s/scratchpad" % (os.getuid(), slug, sid)
+    return "/private/tmp/claude-%d/%s/%s/scratchpad" % (CLIENT_UID, slug, sid)
 
 
 @pytest.mark.parametrize("p,sid,pred", [
     (_tmp() + "/w/a.txt", SID, True),
     (_tmp(slug="-Users-aa") + "/w", SID, True),                  # any slug: the session id decides
     (_tmp(FOREIGN) + "/w", SID, False),                          # another session's folder
-    ("/private/tmp/claude-%d/-x-home" % os.getuid(), SID, False),  # the slug folder itself
-    ("/private/tmp/claude-%d" % os.getuid(), SID, False),        # the root
+    ("/private/tmp/claude-%d/-x-home" % CLIENT_UID, SID, False),  # the slug folder itself
+    ("/private/tmp/claude-%d" % CLIENT_UID, SID, False),        # the root
     (_tmp() + "/../" + FOREIGN + "/x", SID, False),
     (_tmp() + "/w", None, False),                                # no session id
     (_tmp() + "/w", "../x", False),
@@ -211,7 +213,8 @@ def home_dev(client, owner, tmp_path, monkeypatch):
     home = home.resolve()
     d = Dev(client, owner, home / "Vault" / "pr", home=str(home))
     sid = str(uuid.uuid4())
-    root = "/private/tmp/claude-%d/-h%s/%s" % (os.getuid(), sid[:4], sid)   # a short slug: a mark's detail is cut at 200 characters
+    # r0279: a REAL folder, so the OS's own spelling of /tmp (/private/tmp on macOS, /tmp on Linux: there is no /private to create)
+    root = "%s/claude-%d/-h%s/%s" % (os.path.realpath("/tmp"), CLIENT_UID, sid[:4], sid)   # a short slug: a mark's detail is cut at 200 characters
     #                                                                       (a cut path is asked: fail closed); any slug counts here
     os.makedirs(root + "/scratchpad/w", exist_ok=True)
 

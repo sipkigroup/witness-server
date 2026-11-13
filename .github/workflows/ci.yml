@@ -40,8 +40,31 @@ jobs:
       - name: pytest (README section 6, a quarter of the test files)
         working-directory: cloud/server
         run: |
-          files=$(ls tests/test_*.py tests_flow/test_*.py tests_pack/test_*.py tests_prop/test_*.py | sort | awk -v k=${{ matrix.part }} 'NR%4==k')
+          files=$(ls tests/test_*.py tests_flow/test_*.py tests_pack/test_*.py tests_prop/test_*.py | grep -v '^tests_prop/test_props.py$' | sort | awk -v k=${{ matrix.part }} 'NR%4==k')
           ../../.venv/bin/python -m pytest -q -p no:cacheprovider $files
+
+  # r0279: the property tests (tests_prop/test_props.py, ~5 min on a laptop, 3-4x that on a shared runner) ran inside one quarter and
+  # pushed it past its 20 min limit (cancelled, its failures never reported). Their own job, with room.
+  properties:
+    name: tests (properties)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: dependencies (hash-locked, no resolver)
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock
+          .venv/bin/pip install --require-hashes --no-deps -r cloud/server/requirements-test.lock
+          .venv/bin/pip check
+      - name: pytest (tests_prop/test_props.py)
+        working-directory: cloud/server
+        run: ../../.venv/bin/python -m pytest -q -p no:cacheprovider tests_prop/test_props.py
 
   docker:
     name: docker compose (build, start, /healthz, /checkpoint)

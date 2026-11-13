@@ -7,7 +7,7 @@
 import { viewHash } from './signview.js';
 import { bytesToHex } from './cde.js';
 import { inspectFields } from './honest.js';
-import { askOf, dangerText, reasonWords } from './ask.js';
+import { askOf, dangerText, reasonWords, genericDanger } from './ask.js';
 import { dangerShown, execView } from './levels.js';
 import { clip4k } from './queue.js';
 
@@ -117,4 +117,28 @@ export function lineResult(res, rids, approved) {
   if (!bad.length) return { ok: true, text: approved ? 'One answer covers all ' + rids.length + ' parts of this call.' : 'All ' + rids.length + ' parts of this call were refused. Nothing was executed.' };
   const parts = bad.map(([i, x]) => 'part ' + (i + 1) + (x && x.verdict === 'error' ? ' was not ' + (approved ? 'approved' : 'refused') + ' (' + (x.error === 'NOT_WRITTEN' ? 'not written: an earlier part failed' : 'the witness refused it') + ')' : ' was not decided'));
   return { ok: false, text: (approved ? 'Not every part of this call was approved: ' : 'Not every part was refused: ') + parts.join('; ') + '. The call does not run until every part is approved; reload the page.' };
+}
+
+// r0278 (L3 13.11 with the owner, find 3): `curl -s https://x -d @f` is ONE command judged twice (its network part and its command part);
+// the part's view then says nothing the first screen does not: the same command, the generic danger, no code / file / text / masked value.
+// Such a part is still shown (under Details, the signed view) but it does not hold Allow back. leadWhat = the command the first screen shows
+// whole; top = lineFull of the lead. Anything more in the part -> false (it is read before Allow, as before).
+export function partRedundant(g, leadWhat, top) {
+  const v = (g && g.view && typeof g.view === 'object') ? g.view : null;
+  if (!v || typeof leadWhat !== 'string' || !leadWhat) return false;
+  const ask = askOf(v);
+  if (String(ask.what || '') !== leadWhat) return false;
+  const dt = dangerText(dangerShown(v.action, v), v);
+  if (dt && !genericDanger(dt)) return false;
+  if (Array.isArray(v.masked_dep) && v.masked_dep.length) return false;
+  if (v.unseen_write) return false;
+  if (typeof v.net_code === 'string' && v.net_code) return false;
+  if (execView(v.exec_changed).show) return false;
+  if (v.written_run && Array.isArray(v.written_run.files) && v.written_run.files.length) return false;
+  if (typeof v.adv === 'string' && v.adv) return false;
+  if (typeof v.text_preview === 'string' && v.text_preview && v.text_preview !== ask.what) return false;
+  const fc = fullCommands(v.line_full, v.text_cut);
+  if (fc && !(top && JSON.stringify(top.all) === JSON.stringify(fc.all) && !fc.cut)) return false;
+  if (inspectFields([['Part', leadWhat]], []).warnings.length) return false;     // hidden / look-alike characters: read it
+  return true;
 }

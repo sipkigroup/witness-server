@@ -24,6 +24,17 @@ export function offerState(env) {
 
 export async function mountOffer(win, box) {
   if (!box || !win || !win.navigator) return null;
+  // r0278 (find 2): the permission changes outside the page (iPhone Settings, the question answered late): look again when the page is seen again
+  if (!box.__dwSeen && win.document && win.document.addEventListener) {
+    box.__dwSeen = true;
+    win.document.addEventListener('visibilitychange', () => { if (win.document.visibilityState === 'visible' && box.__dwState !== 'on' && box.__dwState !== 'busy') mountOffer(win, box).catch(() => {}); });
+  }
+  const r = await mountOffer1(win, box);
+  if (box.__dwState !== 'busy') box.__dwState = r;
+  return r;
+}
+
+async function mountOffer1(win, box) {
   let keyInfo;
   try { keyInfo = await get('/api/push/key'); } catch (e) { return null; }      // not signed in yet
   if (!keyInfo || !keyInfo.enabled) return null;
@@ -37,11 +48,11 @@ export async function mountOffer(win, box) {
   if (st.button) {
     const b = h('button', { class: 'btn', type: 'button' }, BUTTON);
     b.addEventListener('click', async () => {
-      b.disabled = true; say.textContent = '';
+      b.disabled = true; say.textContent = ''; box.__dwState = 'busy';
       try {
         await enablePush({ nav, Notif: win.Notification, keyInfo, device: deviceLabel(nav.userAgent || '') });
-        clear(box).append(h('p', { class: 'notice ok', text: ON_TEXT }));
-      } catch (e) { say.textContent = (e && e.detail) ? e.code + ': ' + e.detail : String((e && e.message) || e); b.disabled = false; }
+        clear(box).append(h('p', { class: 'notice ok', text: ON_TEXT })); box.__dwState = 'on';
+      } catch (e) { say.textContent = (e && e.detail) ? e.code + ': ' + e.detail : String((e && e.message) || e); b.disabled = false; box.__dwState = 'offer'; }
     });
     parts.unshift(h('p', {}, b));
   }

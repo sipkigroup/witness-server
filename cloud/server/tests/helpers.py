@@ -78,3 +78,20 @@ def promises_on(app):
 
 def promises_off(app):
     app.state.ctx.cfg.anchor = "off"
+
+
+CLIENT_UID = 501      # r0279: the uid of the one client the tests model (tests/conftest.py pins mapping.FORM_UID to it), on every OS
+
+
+def time_scale() -> float:
+    """r0279 (Linux CI 13.11: 0.80 s for a 0.5 s bound, 53 ms for a 50 ms one on a shared GitHub runner): a time bound of the tests is
+    for THIS machine. 1 on a developer's machine; on a CI runner (CI set, as GitHub Actions does) 4, or DW_TIME_SCALE. The checks stay:
+    what they guard is work that grows faster than the input (seconds to minutes at the size limits), not a constant factor."""
+    import os
+    v = os.environ.get("DW_TIME_SCALE")
+    try:
+        if v:
+            return max(1.0, float(v))
+    except ValueError:
+        pass
+    return 4.0 if os.environ.get("CI") else 1.0

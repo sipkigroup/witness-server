@@ -11,6 +11,8 @@ import uuid
 
 import pytest
 
+from tests.helpers import CLIENT_UID  # r0279: the tests' one client (uid 501 on every OS)
+
 from app.hookjudge import mapping
 from tests.test_0611_popravki import _offers
 from tests.test_1111_zakrytyy_spisok import _d, _v
@@ -59,7 +61,8 @@ def test_question_words_name_the_file(client, owner, tmp_path, monkeypatch):
     got = _w(d, "Write", "/tmp/readme-check/example.mjs")
     rid = got[0][1]["rid"]
     g = d.c.get("/api/approvals/" + rid).json()
-    PRED = "Your agent wants to write a file outside the project: /private/tmp/readme-check/example.mjs"   # before: refused, no page
+    # r0279: the path as the client's realpath names it (/private/tmp on macOS, /tmp on Linux)
+    PRED = "Your agent wants to write a file outside the project: %s/readme-check/example.mjs" % os.path.realpath("/tmp")   # before: refused
     assert g["what"] == PRED, g["what"]
     assert "dangerous command" not in g["what"] and "Other programs" in g["harm"], g
     assert g["allowance_offer"]["eligible"] is False and "shared temporary folder" in g["allowance_offer"]["why_not"], g["allowance_offer"]
@@ -100,7 +103,7 @@ def test_link_in_temp_to_a_protected_place_is_judged_where_it_points(client, own
 
 def test_claude_code_temp_stays_silent(client, owner, tmp_path, monkeypatch):
     d = _d(client, owner, tmp_path, monkeypatch, "c")
-    got = _w(d, "Write", "/tmp/claude-%d/-Users-u-p/s/scratchpad/a.js" % os.getuid())
+    got = _w(d, "Write", "/tmp/claude-%d/-Users-u-p/s/scratchpad/a.js" % CLIENT_UID)
     PRED = [("allow", "OK")]
     assert _v(got) == PRED, _v(got)
 

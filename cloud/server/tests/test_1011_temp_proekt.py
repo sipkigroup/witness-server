@@ -9,6 +9,8 @@ import os
 
 import pytest
 
+from tests.helpers import CLIENT_UID  # r0279: the tests' one client (uid 501 on every OS)
+
 from tests import r0261
 
 from app.hookjudge import fs as hfs
@@ -30,7 +32,7 @@ def _ok(got):
 
 
 def _tmp(slug, sid=SID2, rest="scratchpad"):
-    return "/private/tmp/claude-%d/%s/%s/%s" % (os.getuid(), slug, sid, rest)
+    return "/private/tmp/claude-%d/%s/%s/%s" % (CLIENT_UID, slug, sid, rest)
 
 
 # ---------------------------------------------------------------------------------------------------------------- units
@@ -53,9 +55,9 @@ def test_in_temp_same_project_any_session_folder(tmp_path):
         assert hsb.in_temp(p, proj, home, None) is PRED, p          # by the project alone (the hook sent no session id)
     PRED = False
     for p in ("/private/tmp/claude-501/-Users-u-other/%s/scratchpad/a.py" % SID2,     # another project's session
-              "/private/tmp/claude-%d/%s" % (os.getuid(), slug),                      # the project folder itself
-              "/private/tmp/claude-%d/%s/x/y" % (os.getuid(), slug),                  # a folder of no session (too short a name)
-              "/private/tmp/claude-%d/%s/%s" % (os.getuid(), slug, SID2),            # the session folder itself, not inside it
+              "/private/tmp/claude-%d/%s" % (CLIENT_UID, slug),                      # the project folder itself
+              "/private/tmp/claude-%d/%s/x/y" % (CLIENT_UID, slug),                  # a folder of no session (too short a name)
+              "/private/tmp/claude-%d/%s/%s" % (CLIENT_UID, slug, SID2),            # the session folder itself, not inside it
               _tmp(slug + "-x") + "/a.py",                                           # a longer slug (another project)
               _tmp(slug[:-1]) + "/a.py",                                             # a shorter one
               _tmp(slug) + "/.claude/settings.json", _tmp(slug) + "/r/.git/hooks/pre-commit",

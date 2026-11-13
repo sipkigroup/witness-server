@@ -16,9 +16,9 @@ import { signBatch } from './sign.js';
 import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash } from './signview.js';
-import { askOf, dangerText, protectedTarget, reasonWords, GENERIC_DANGER } from './ask.js';
+import { askOf, dangerText, protectedTarget, reasonWords, genericDanger } from './ask.js';
 import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE } from './qwords.js';
-import { partLines, lineCommands, lineFull, lineRows, lineResult } from './line.js';
+import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
 import { gateNeeded, actKey, refusedRecently, REFUSED_MS } from './gate.js';
 
 // 0.2.76 (owner 31.10: "very technical; hide the extra, every needed button visible at once, no scrolling up and down"):
@@ -40,7 +40,8 @@ export function mustSeen(endTop, bar, vh) { return endTop <= Math.min(vh, bar) +
 // a file, code ...), the end of the text is "not seen": Allow stays off until Details is opened (and then, as before, until its end was on
 // screen above the bar). A short command shown whole and nothing else to read: no gate.
 let cmdCut = false;
-let cmdWhole = false;     // 12.11 (r0264): every command of the line stands in full on the first screen (a low question): Details does not repeat them
+let cmdWhole = false;
+let firstWhole = '';      // r0278: the one command the first screen shows whole ('' otherwise)     // 12.11 (r0264): every command of the line stands in full on the first screen (a low question): Details does not repeat them
 // 12.11 (r0263, L3 ISPYTANIE-L3-0260 З1): "Allow once" stayed grey until Details was opened and scrolled to the end even for `pytest | tail`;
 // the person on L3 did not understand it and the call timed out. The gate is kept for what is really dangerous: a high or critical risk
 // (the server's level counts the danger mark), code / a written file / a changed file / hidden characters / a masked value to read. A low or medium question whose every
@@ -53,7 +54,7 @@ function mustHasContent() {
 }
 function detailsClosed() { const d = $('#qw_more'); return !!d && d.hidden; }      // the first level
 function techClosed() { const d = $('#qw_more'), t = $('#qw_tech'); return !!d && (d.hidden || t.hidden); }      // the second level ("More technical"), where #must is
-function cmdOverflow() { const c = $('#cmdline'); return !!c && !c.hidden && c.scrollWidth > c.clientWidth + 1; }
+function cmdOverflow() { const c = $('#cmdline'); return !!c && !c.hidden && (c.scrollWidth > c.clientWidth + 1 || c.scrollHeight > c.clientHeight + 1); }   // r0278: the line wraps (a few lines at most)
 // the end of the ONE full copy of the call under Details: the Details card (#what_dd), or the full list in #must (a line cut at 4 KB), or the
 // signed words (#qw_det, "Full text:") when the card is hidden so as not to repeat it
 function cmdEnd() {
@@ -87,7 +88,8 @@ function gateApply() {
   // 05.11 (outside UX review): the page does not tell the person where to tap; one button opens what must be read and goes to it
   // 05.11 (outside UX review, owner: "do it"): no "tap here, then there"; Details opens by itself, the note says why Allow waits
   if (!gateOpen && !autoOpened && $('#qw_more') && $('#qw_more').hidden && (mustHasContent() || cmdCut || cmdOverflow()) && !$('#qw').hidden) { autoOpened = true; $('#qw_btn').click(); return; }
-  $('#gate').textContent = mustHasContent() ? (manyCmds ? 'This call does several risky things: Allow unlocks once you have scrolled past each of them below. Deny works now.' : 'This one is dangerous: Allow unlocks once you have scrolled to the end of the text below. Deny works now.') : (manyCmds ? 'This call runs several commands. Allow unlocks once each of them below was on screen. Deny works now.' : 'Part of the command does not fit on the first screen. Allow unlocks once all of it below was on screen. Deny works now.');
+  // r0278 (find 3): one short neutral line (it was the fourth "dangerous" of the screen, a yellow block over the buttons)
+  $('#gate').textContent = mustHasContent() ? (manyCmds ? 'This call does several things: Allow unlocks once each of them below was on screen.' : 'Allow unlocks once you have read to the end of the text below.') : (manyCmds ? 'This call runs several commands: Allow unlocks once each of them below was on screen.' : 'Allow unlocks once the whole command below was on screen.');
   fixLater();
 }
 // a decision in flight (Refuse / Reject disabled by decide / go): opening the gate then does not enable Approve again (unlock() does after an error)
@@ -173,16 +175,34 @@ function reloadButton(el) {
   });
   el.append(' ', b);
 }
-const NO_LONGER_WAITING = 'The agent stopped waiting. If you allow, it runs when the agent tries again.';
+// r0278 (L3 13.11 with the owner, find 4): the hook waited 15 s and told the agent "refused", while the page still said "14 min 46 s left to
+// decide". The page follows what the server knows (agent_waiting: the hook's polls; gave_up_at: the hook's last poll said it gave up) and
+// says it in one line instead of the countdown: the answer is kept, it applies when the agent makes the same call again.
+export function stoppedText(t) {
+  const at = typeof t === 'number' && t > 0 ? ' at ' + new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  return 'The agent stopped waiting' + at + '; your answer applies if it asks again (same command).';
+}
+let stoppedAt = null;
+function showStopped(t) {
+  if (typeof t !== 'number' || !(t > 0)) t = stoppedAt || Math.floor(Date.now() / 1000);    // an older server / no gave_up_at: when this page saw it
+  stoppedAt = t;
+  $('#stale').textContent = stoppedText(t); $('#stale').hidden = false; $('#left').hidden = true;
+}
+function showWaiting() { $('#stale').hidden = true; $('#left').hidden = false; }
 // N2 29.10 (series 8b, R1a2): the agent may send the same call again after this page was opened (its hook then waits for it): the page
-// re-reads the item and takes the "no longer waiting" note away, instead of saying it while the agent waits
-function stillWaiting(n = 0) {
-  if (n > 200) return;
+// re-reads the item and takes the "stopped waiting" line away, instead of saying it while the agent waits. r0278: and the other way round
+// (the hook gives up while the page is open): every 3 s while the page is seen, every 15 s in the background, while undecided.
+function followWait(n = 0) {
+  if (n > 2000) return;
   setTimeout(async () => {
-    if ($('#stale').hidden || !$('#done').hidden) return;
-    try { const x = await get('/api/approvals/' + encodeURIComponent(rid)); if (x.agent_waiting !== false) { $('#stale').hidden = true; return; } } catch {}
-    stillWaiting(n + 1);
-  }, 3000);
+    if (!$('#done').hidden || $('#box').hidden) return;
+    try {
+      const x = await get('/api/approvals/' + encodeURIComponent(rid));
+      if (!['pending_approval', 'held'].includes(x.status)) return;
+      if (x.agent_waiting === false && !x.covered_by) showStopped(x.gave_up_at); else if (!$('#stale').hidden) { stoppedAt = null; showWaiting(); }
+    } catch { /* network: try again */ }
+    followWait(n + 1);
+  }, document.hidden ? 15000 : 3000);
 }
 // N3 29.10: the owner let go a page whose file was rewritten since (the server says file_changed): the agent's run is refused, nothing ran
 function changedText(r) {
@@ -367,7 +387,7 @@ async function single(me) {
   }
   // 27.10 (polygon O3): the hook that asked stopped waiting (Claude Code's timeout, Ctrl-C, a closed session). The request is still valid: the
   // owner may approve it and ask the agent to repeat the call (the quickstart path relies on that), so it is said, not cancelled.
-  if (r.agent_waiting === false && !r.covered_by) { $('#stale').textContent = NO_LONGER_WAITING; $('#stale').hidden = false; stillWaiting(); }   // 05.11: one short line by the buttons, no yellow plate
+  if (r.agent_waiting === false && !r.covered_by) showStopped(r.gave_up_at);    // 05.11: one short line by the buttons, no yellow plate (r0278: in place of the countdown)
   if (r.covered_by) notice(msg, 'ok', 'Already allowed for this project (' + r.covered_by + '): the agent repeats the call and it runs. Nothing else to decide here.');
   const aRows = describeAction(r.action), mRows = describeMandate(r.mandate);
   document.getElementById('main').classList.add('single');
@@ -428,7 +448,9 @@ async function single(me) {
   // on this command sends it anywhere" on one page. The server's own words of THIS act (harm, risk; signed) say the danger; the generic line
   // (a bare dangerous flag, nothing more specific) is not drawn next to a low or medium question. High / critical keep it (and its gate).
   const dtx = dangerText(ds, r), rk = riskOf(r);
-  const dGeneric = dtx === GENERIC_DANGER && typeof r.harm === 'string' && !!r.harm && !!rk && (rk.level === 'low' || rk.level === 'medium');
+  // r0278 (L3 13.11 with the owner, find 3: "dangerous" four times on one screen): a generic line (a command that can delete / send, a request to
+  // the internet) is not drawn next to the server's harm line at ANY level: the harm line and the level are on the first screen already
+  const dGeneric = genericDanger(dtx) && typeof r.harm === 'string' && !!r.harm && !!rk;
   $('#dangerline').textContent = dGeneric ? '' : dtx; $('#dangerline').hidden = dGeneric || !dtx;      // 0.2.76: the mark in words, at the top
   if (typeof r.net_code === 'string' && r.net_code) {                  // s7 (O1): the code itself, as the witness got it (masked, <= 4 KB)
     const nc = inspectFields([], [['Code', clip4k(r.net_code)]]);          // 28.10: code keeps its lines
@@ -474,6 +496,7 @@ async function single(me) {
     cmdWhole = !!cmd.lines;
     // 05.11 (outside UX review): the whole command is already on the first screen: Details does not repeat it
     const dup = !cmd.cut && !folded && !hv && cmd.text === (askIns.rows[0][1] || '');
+    firstWhole = dup ? cmd.text : '';
     $('#what_dt').hidden = dup; $('#what_dd').hidden = dup;
     $('#what_parts').hidden = true; $('#what').hidden = false; $('#what_dt').textContent = 'Command';
   }
@@ -534,7 +557,11 @@ async function single(me) {
       }
       ws.push(...pl.warnings); box.append(d);
     });
-    $('#must').append(box);
+    // r0278 (find 3): parts that repeat the first screen (the same command, generic danger, nothing else) are shown under Details, after
+    // what must be read; they do not hold Allow back. Any other part stays in #must (read before Allow), as before.
+    const same = !ws.length && r.line_group.every((g) => partRedundant(g, firstWhole, lf));
+    if (same) { box.className = 'hint lineparts-same'; for (const d of box.children) d.className = 'linepart'; $('#mustend').after(box); }
+    else $('#must').append(box);
     if (ws.length) renderHonest($('#honest'), [...ins.warnings, ...ws]);
   }
   // 29.10 MDEP: the witness asks because it could not resolve a value, and that value is masked by its name (part of the signed view)
@@ -670,7 +697,7 @@ async function single(me) {
     $('#title').textContent = 'This request expired';
     notice(msg, 'warn', 'Nobody answered in time, so this call was not run, and this request can no longer be approved. You can still approve the same call for this agent\'s next runs.');
     $('#left').textContent = 'Expired: ' + new Date(r.expires * 1000).toLocaleString() + '.';
-  } else { tick(); setInterval(tick, 1000); }
+  } else { tick(); setInterval(tick, 1000); if (!r.covered_by) followWait(); }
   if (!late && r.agent_waiting !== false) {      // 0.2.78: how long the agent still waits, and what comes after (the call's start: the pending list, `t`)
     const p = document.createElement('div'); p.id = 'agentwait'; p.className = 'hint agentwait'; p.hidden = true;
     const sh = document.createElement('span'); sh.id = 'agentwait-short';        // 0.2.79 (edit 2): one short line first, the full promise under "why?"
@@ -682,7 +709,7 @@ async function single(me) {
     const upd = () => {
       if (typeof created !== 'number') return;
       p.hidden = false;
-      const m = Math.ceil(created + HOOK_WAIT_S - Date.now() / 1000);      // seconds
+      const m = stoppedAt ? 0 : Math.ceil(created + HOOK_WAIT_S - Date.now() / 1000);      // seconds (r0278: 0 once the server says the hook gave up)
       sh.textContent = m > 0
         ? 'Your agent is waiting (about ' + m + ' s). Approving later still counts.'
         : 'Your agent stopped waiting. Approving still counts.';
@@ -696,10 +723,10 @@ async function single(me) {
   if (!late && r.asked_again && typeof r.asked_again.file === 'string') {      // 0.2.77b (R2-7): why the same command is asked again
     const p = document.createElement('p'); p.id = 'askedagain'; p.className = 'notice warn';
     p.textContent = 'You approved this command before. ' + lateWriteText(r.asked_again.file);
-    ($('#cmdline').hidden ? $('#qw_harm') : $('#cmdline')).after(p);       // 05.11: stays on the first screen (a repeated ask is a warning)
+    ($('#cmdline').hidden ? $('#qw_harmline') : $('#cmdline')).after(p);       // 05.11: stays on the first screen (a repeated ask is a warning)
   }
   if (!late && refusedRecently(agentOfThis, refusedAgents(), Date.now(), actKey(r))) {    // 0.2.77; 12.11 (r0263): only for the same act
-    ($('#cmdline').hidden ? $('#qw_harm') : $('#cmdline')).after(freezeRow(agentOfThis, 'freezetop', 'You refused this a moment ago, and your agent asks for it again.'));   // 05.11: the first screen
+    ($('#cmdline').hidden ? $('#qw_harmline') : $('#cmdline')).after(freezeRow(agentOfThis, 'freezetop', 'You refused this a moment ago, and your agent asks for it again.'));   // 05.11: the first screen
   }
   $('#box').hidden = false;
   if (!late) watchNewer();                             // N2 (27.10)

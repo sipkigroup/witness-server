@@ -75,10 +75,14 @@ export function dangerText(ds, r) {
   const m = /^true \((.*)\)$/.exec(s);
   if (m) return 'Dangerous: ' + m[1].replace(/shown above/g, 'shown below').replace(/see below/g, 'shown below') + '.';
   // 06.11 (owner's check: "curl -sI" was called a command that can delete files): a network call says what it does
-  if (r && (String(r.tool || '') === 'Bash.net' || String((r.action && r.action.recipient) || '').startsWith('(network) '))) return 'Dangerous: this sends a request to the internet. Data from your computer can go out with it. Read it before you decide.';
+  if (r && (String(r.tool || '') === 'Bash.net' || String((r.action && r.action.recipient) || '').startsWith('(network) '))) return NET_DANGER;
   return GENERIC_DANGER;
 }
 export const GENERIC_DANGER = 'Dangerous: this command can delete, overwrite or send out data. Read it before you decide.';
+export const NET_DANGER = 'Dangerous: this sends a request to the internet. Data from your computer can go out with it. Read it before you decide.';
+// r0278 (L3 13.11 with the owner, find 3: "dangerous" four times on one screen): the two generic lines say no more than the server's own
+// harm line of this call (signed, on the first screen); a specific one (a secret, the agent's settings, a git hook, the server's reason) does
+export function genericDanger(t) { return t === GENERIC_DANGER || t === NET_DANGER; }
 
 // 04.11 (L3, red team p.4): why the witness asks, in words for the owner (the page never shows a reason code such as ESCALATE_COMMAND)
 export const REASON_WORDS = {

@@ -609,14 +609,64 @@ def refuse_reason(project_dir: str, home=None) -> str | None:
             % (proj, what))
 
 
-def _scratch_targets() -> list:
+FORM_UID = None             # r0279, TESTS ONLY: the uid of the client the recommended form is built for (None: this process' uid)
+
+# r0279 (Linux CI 13.11): a temp folder every user of the machine can write into is SHARED: /tmp, /var/tmp (and their macOS spellings
+# under /private), /dev/shm, /run/shm, /usr/tmp. The recommended form named realpath(tempfile.gettempdir()) as a write target; on macOS
+# that is the person's own /var/folders/../T, but on Linux $TMPDIR is usually unset and gettempdir() is "/tmp": the form widened every
+# write into the machine's shared /tmp to a silent one (Write /tmp/x: allow OK on Linux, a question on macOS -- law r0261f: a shared
+# temp folder is no folder of the person's to widen, a file there is asked ONCE). Law: a shared temp root is never a write target of a
+# form; the person's own temp folder (a TMPDIR of theirs, /var/folders/../T) stays one.
+SHARED_TEMP_ROOTS = ("/tmp", "/var/tmp", "/dev/shm", "/run/shm", "/usr/tmp")
+
+
+def shared_temp_root(p) -> bool:
+    """True when `p` IS a shared temp root (any spelling: /private/tmp, /tmp/, /private/var/tmp)."""
+    if not isinstance(p, str) or not p.startswith("/"):
+        return False
+    q = os.path.normpath(p)
+    q = q[len("/private"):] if q.startswith("/private/") else q
+    return q in SHARED_TEMP_ROOTS
+
+
+def shared_temp_target(t) -> bool:
+    """A form's write target that names a whole shared temp root: "/tmp/*", "/tmp/**", "/private/tmp/*", "/tmp"."""
+    if not isinstance(t, str):
+        return False
+    s = t
+    while s.endswith("/*") or s.endswith("/**"):
+        s = s[:-3] if s.endswith("/**") else s[:-2]
+    return shared_temp_root(s or "/")
+
+
+def personal_temp(tmp) -> str | None:
+    """-> the realpath of the temp folder `tmp` when it may be a write target of the form; None for a shared one. Shared = a shared temp
+    root by name, or a folder other users can write into (world-writable: the sticky /tmp of any system, wherever it is mounted)."""
+    if not isinstance(tmp, str) or not tmp:
+        return None
+    r = os.path.realpath(tmp)
+    if shared_temp_root(r) or os.path.dirname(r) == r:
+        return None
+    try:
+        if os.stat(r).st_mode & 0o002:
+            return None
+    except OSError:
+        pass
+    return r
+
+
+def _scratch_targets(uid=None) -> list:
     """0.2.58 / 0.2.90: Claude Code's own scratch directory of this user (/private/tmp/claude-<uid>, /tmp/claude-<uid>: session files,
     task outputs) is a delete target of the recommended form too: the agent writes there on every session; under the old form every such
-    write was refused RESOURCE (66 of 1045 calls of the owner's corpus). Nothing else under /tmp (shared) is added."""
-    try:
-        uid = os.getuid()
-    except AttributeError:
-        return []
+    write was refused RESOURCE (66 of 1045 calls of the owner's corpus). Nothing else under /tmp (shared) is added.
+    r0279: the uid is the CLIENT's (the form is built on the person's machine); FORM_UID lets the tests name one client on every OS."""
+    if uid is None:
+        uid = FORM_UID
+    if uid is None:
+        try:
+            uid = os.getuid()
+        except AttributeError:
+            return []
     return ["/private/tmp/claude-%d/*" % uid, "/tmp/claude-%d/*" % uid]
 
 
@@ -632,12 +682,12 @@ def default_form(project_dir: str, web_domains=None, safe_commands=None, home=No
     if why:
         raise ProjectRefused(why)
     proj = os.path.realpath(_expand(project_dir, home))
-    tmp = os.path.realpath(tempfile.gettempdir())
+    tmp = personal_temp(tempfile.gettempdir())         # r0279: None on Linux without a TMPDIR of the person's (shared /tmp)
     scratch = _scratch_targets()
     return {"currency": "USD", "valid_days": 30, "purchase": None,
             "message": {"domains": list(DEFAULT_WEB_DOMAINS if web_domains is None else web_domains), "to": []},
             "forbidden_data": [], "publish": None,
-            "delete": {"targets": [proj + "/*", tmp + "/*"] + scratch, "allow_irreversible": True},
+            "delete": {"targets": [proj + "/*"] + ([tmp + "/*"] if tmp else []) + scratch, "allow_irreversible": True},
             "command": {"allow": list(DEFAULT_SAFE_COMMANDS if safe_commands is None else safe_commands)
                                  + ([SANDBOXED_CODE] if DEFAULT_SANDBOXED_CODE else []), "unlisted": DEFAULT_UNLISTED,
                         "sandboxed": DEFAULT_SANDBOXED}}

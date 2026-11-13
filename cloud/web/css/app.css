@@ -387,3 +387,21 @@ dl.simple pre.what{font-size:.86rem;padding:8px 10px;margin:0;box-shadow:none;bo
 .qwtech{border-top:1px solid var(--line);margin-top:.5em;padding-top:.4em}
 /* the bar of answers sits at the bottom of a short screen (sticky only helps on a long page) */
 @media (max-width:599px){.single #box.card.decision{display:flex;flex-direction:column;min-height:calc(100vh - 250px)}.single #box>#decide{margin-top:auto}}
+/* r0278 (L3 13.11 with the owner, find 3: "dangerous" four times on one screen): the level is a short tag at the end of the ONE harm line,
+   not a bar of its own; the command wraps (whole on the first screen, at most 4 lines); the note over the buttons is a quiet hint */
+.harm .riskbar{display:inline-flex;gap:6px;margin:0 0 0 .3em;vertical-align:baseline;white-space:nowrap}
+.harm .riskbar .segs{flex:0 0 auto;width:44px;gap:2px}
+.harm .riskbar .segs i{height:7px;border-radius:3px}
+.harm .riskbar b{font-size:.88rem}
+.harm .riskbar[data-level=high] b{color:var(--warn)}
+.harm .riskbar[data-level=critical] b{color:var(--bad)}
+pre.cmdline,pre.cmdline.lines{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;text-overflow:clip;max-height:calc(1.4em * 4 + 20px)}
+.stickybar>.gate{color:var(--mute);font-weight:500;font-size:.82rem}
+.lineparts-same{overflow-wrap:anywhere;min-width:0}
+.lineparts-same .linepart{border-top:1px solid var(--line);padding-top:.4em;margin-top:.5em}
+.lineparts-same pre{font-size:.8rem}
+/* r0278 (find 5): the folded rest of the dashboard */
+details.advanced{margin:1em 0}
+details.advanced>summary{cursor:pointer;font-weight:600;padding:12px 0;color:var(--mute)}
+/* r0278: no empty card when Details does not repeat the command (CSS, not [hidden]: #what_dd is shown again later on some pages) */
+#qw_cmd:not(:has(#what_dd:not([hidden]))){display:none}

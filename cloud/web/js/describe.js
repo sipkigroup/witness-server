@@ -55,3 +55,22 @@ export function describeAction(a) {
   for (const [k, v] of Object.entries(a)) if (!['class', 'recipient', 'amount', 'currency', 'data', 'reversible', 'dangerous', 'agent'].includes(k)) L.push([k, typeof v === 'string' ? v : JSON.stringify(v)]);
   return L;
 }
+
+// r0278 (L3 13.11 with the owner, find 1): "inside proekt, T, claude-501, claude-501" -- the last path parts said nothing (T = $TMPDIR)
+// and repeated. In words: the project folder(s) by name, every temporary place as one "temporary files"; the full paths stay in the full list.
+export function isTempPath(t) {
+  // a temporary ROOT itself (a project folder that happens to live under it is a project folder)
+  const p = String(t || '').replace(/\\/g, '/').replace(/\/\*+$/, '').replace(/\/+$/, '');
+  return /^(\/private)?\/tmp(\/claude-\d+)?$/.test(p) || /^(\/private)?\/var\/folders\/[^/]+\/[^/]+\/T$/.test(p) || /^(\/private)?\/var\/tmp$/.test(p)
+    || /\/AppData\/Local\/Temp$/i.test(p) || /^\$\{?TMPDIR\}?$/.test(p);
+}
+export function placesWords(targets) {
+  const L = (targets || []).map((t) => String(t));
+  const temp = L.some(isTempPath);
+  const names = [...new Set(L.filter((t) => !isTempPath(t)).map((t) => t.replace(/\\/g, '/').replace(/\/\*+$/, '').replace(/\/+$/, '').split('/').pop() || t))];
+  const parts = [];
+  if (names.length === 1) parts.push('your project folder ' + names[0]);
+  else if (names.length > 1) parts.push('the folders ' + names.join(', '));
+  if (temp) parts.push('temporary files');
+  return parts.length ? parts.join(' and ') : 'nowhere';
+}

@@ -24,7 +24,7 @@ export function supportState(env) {
   if (ios && version && (version[0] < 16 || (version[0] === 16 && version[1] < 4))) return { state: 'ios-old', version: version.join('.') };
   if (ios && !env.standalone) return { state: 'ios-install' };
   if (!env.hasSW || !env.hasPush || !env.hasNotification) return { state: ios ? 'ios-install' : 'unsupported' };
-  if (env.permission === 'denied') return { state: 'denied' };
+  if (env.permission === 'denied') return { state: ios ? 'denied-ios' : 'denied' };     // r0278: 'default' (not answered yet) is NOT blocked
   return { state: 'ok' };
 }
 
@@ -41,7 +41,19 @@ export const HINTS = {
   'ios-old': 'Web notifications need iOS 16.4 or later (this device: iOS %v). Update iOS, then add this site to the Home Screen.',
   unsupported: 'This browser cannot receive web push notifications. Keep the dashboard open, or use a phone (Android Chrome, or iPhone with the site added to the Home Screen).',
   denied: 'Notifications are blocked for this site. Allow them in the browser or system settings, then reload this page.',
+  // r0278 (L3 13.11 with the owner, find 2): on iPhone the exact place, and the case seen live: the setting is on, the open app still says no
+  'denied-ios': 'Notifications are off for Witness. On iPhone: Settings → Notifications → Witness → Allow Notifications. If it is already on there, close Witness (swipe it away) and open it again from the Home Screen.',
 };
+// r0278 (find 2): the system question went away without an answer (iOS closes it by itself when the app loses focus): not "blocked" -- ask again
+export const NOT_ANSWERED = 'Notifications are not on yet: the question was closed without an answer. Tap the button again; iPhone shows the question once: tap Allow.';
+
+// after Notification.requestPermission() did not give 'granted': what to say. perm = its result, now = Notification.permission read after it.
+// 'denied' only when the browser now says denied; a dismissed question ('default') offers the button again.
+export function refusalText(perm, now, ios) {
+  if (perm === 'granted' || now === 'granted') return '';
+  if (now === 'denied' || (now === undefined && perm === 'denied')) return ios ? HINTS['denied-ios'] : HINTS.denied;
+  return NOT_ANSWERED;
+}
 
 // P0-4: iOS delivers web push only to the site opened from the Home Screen (standalone). The onboarding says how, and checks it.
 export const IOS_STEPS = [
@@ -94,7 +106,11 @@ function sameKey(a, b) {
 export async function enablePush({ nav, Notif, api = { get, post }, keyInfo, device }) {
   if (!keyInfo || !keyInfo.enabled) throw new PushError('PUSH_DISABLED', 'Push is not configured on this server.');
   const perm = await Notif.requestPermission();
-  if (perm !== 'granted') throw new PushError('PERMISSION', perm === 'denied' ? HINTS.denied : 'Notifications were not allowed.');
+  const now = typeof Notif.permission === 'string' ? Notif.permission : undefined;
+  if (perm !== 'granted' && now !== 'granted') {
+    const ios = iosInfo(nav.userAgent || '', nav.platform || '', nav.maxTouchPoints || 0).ios;
+    throw new PushError(now === 'denied' || (now === undefined && perm === 'denied') ? 'PERMISSION' : 'NOT_ANSWERED', refusalText(perm, now, ios));
+  }
   const reg = await ready(nav);
   const key = b64uToBytes(keyInfo.public_key);
   let sub = await reg.pushManager.getSubscription();
@@ -145,6 +161,8 @@ async function mount(win, doc) {
     return;
   }
   const s = supportState(envOf(win));
+  // r0278 (find 2): allowed later in Settings (or the question answered late): the card follows when the page is seen again
+  doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible' && supportState(envOf(win)).state !== s.state) win.location.reload(); });
   if (s.state !== 'ok') { say('warn', HINTS[s.state].replace('%v', s.version || '')); state.textContent = ''; return; }
   let keyInfo;
   try { keyInfo = await get('/api/push/key'); } catch (e) { return; } // not logged in: app.js redirects
@@ -159,7 +177,7 @@ async function mount(win, doc) {
   };
   const run = (fn) => async () => {
     on.disabled = off.disabled = test.disabled = true; say('ok', '');
-    try { await fn(); } catch (e) { say('err', e.detail ? e.code + ': ' + e.detail : e.message); }
+    try { await fn(); } catch (e) { say(e && e.code === 'NOT_ANSWERED' ? 'warn' : 'err', e.detail ? e.code + ': ' + e.detail : e.message); }
     on.disabled = off.disabled = test.disabled = false;
     await show();
   };

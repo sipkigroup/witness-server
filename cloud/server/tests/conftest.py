@@ -21,6 +21,34 @@ from tests.helpers import Owner, ORIGIN, RP
 PORT = 8810
 
 
+# r0279 (Linux CI 13.11): the tests name ONE client, uid 501 (Claude Code's temp root /private/tmp/claude-501 in their paths). The
+# recommended form names the CLIENT's uid; without this pin it took the uid of the process running the tests (1001 on a GitHub runner)
+# and every "own scratch" path of the tests fell outside it. Production never sets it (the client builds the form with its own uid).
+from app.hookjudge import mapping as _mapping  # noqa: E402
+from tests.helpers import CLIENT_UID  # noqa: E402
+_mapping.FORM_UID = CLIENT_UID
+
+
+def _personal_temp_for_the_tests():
+    """r0279: the tests model a person whose temp folder is their own (macOS: /var/folders/../T; Linux: a TMPDIR of theirs). pytest's
+    tmp_path lies in it, and so the projects and homes of the tests do. On a machine whose temp folder is SHARED (Linux or a CI runner
+    without TMPDIR: /tmp) the form rightly names no temp target any more, so the tests would judge a different person. Then the tests
+    get a private 0700 folder inside the shared one as their TMPDIR, as macOS gives every user. The person WITHOUT a TMPDIR of theirs is
+    tested explicitly (tests/test_1311_r0279_shared_temp.py, test_r0274_home_tmp.py with tmpdir=/tmp)."""
+    import atexit
+    import shutil
+    import tempfile
+    if _mapping.personal_temp(tempfile.gettempdir()) is not None:
+        return
+    d = tempfile.mkdtemp(prefix="dw-tests-%s-" % (os.getuid() if hasattr(os, "getuid") else "u"))     # mode 0700
+    os.environ["TMPDIR"] = d
+    tempfile.tempdir = d
+    atexit.register(shutil.rmtree, d, True)
+
+
+_personal_temp_for_the_tests()
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "standing: tests of the 0.2.90 standing mandate (unlisted allow); the legacy fixture does not apply")
 

@@ -19,8 +19,12 @@ from tests.test_0254_find_sed_awk_jq import _env, _project  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _narrow_temp(monkeypatch):
-    monkeypatch.setattr(bashparse, "TEMP_IN", re.compile(r"^(/private)?/(tmp|var/tmp)/."))
+def _narrow_temp(monkeypatch, tmp_path_factory):
+    # r0279 (Linux CI): on Linux tmp_path lives under /tmp itself, so narrowing to /tmp kept `..` a temp path. The tests' own temp root
+    # (wherever the OS keeps it) is now cut out of the temp rule; any other /tmp, /var/tmp path stays temp ("ls -R /tmp/w55").
+    base = os.path.realpath(str(tmp_path_factory.getbasetemp()))
+    base = base[len("/private"):] if base.startswith("/private/") else base
+    monkeypatch.setattr(bashparse, "TEMP_IN", re.compile(r"^(?!(?:/private)?%s(?:/|$))(/private)?/(tmp|var/tmp)/." % re.escape(base)))
 
 
 ASK = ["ls -R ~", "ls -laR /", "ls -lR /Users", "du -a ~", "du -ah ..", "tree ~", "tree -a /Users", "ls -R $HOME", "ls -R ${HOME}",
@@ -115,7 +119,10 @@ def test_real_bsd_tools_show_secret_names_outside(tmp_path):
     """The danger is real: run from the project, these BSD ls / du forms print the key's name in the fake home next to it."""
     proj = _project(tmp_path)
     base = os.path.dirname(proj)
-    for cmd in ("ls -aR ~", "ls -aR ..", "du -a ~", "du -ah ..", "ls -aR .*"):
+    dots = subprocess.run(["bash", "-c", "echo .*"], cwd=proj, capture_output=True, text=True).stdout.split()
+    # r0279 (Linux CI): `.*` reaches `..` only where the shell's glob still matches it (bash 3.2 of macOS; bash >= 5.2 skips . and ..,
+    # GNU ls then gets no such operand). The classifier asks `ls -aR .*` everywhere (test_classifier_opaque): a shell may still match it.
+    for cmd in ("ls -aR ~", "ls -aR ..", "du -a ~", "du -ah ..") + (("ls -aR .*",) if ".." in dots else ()):
         r = _real(cmd, proj, base)
         assert "id_rsa" in r.stdout, (cmd, r.stdout, r.stderr)
     for cmd in ("ls ~", "ls -la ..", "du -sh ~", "du -d 1 ~", "du -sh .."):           # one level: no key name

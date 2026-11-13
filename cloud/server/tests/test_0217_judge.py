@@ -17,6 +17,7 @@ from app import actions as act
 from app.hookjudge import judge as hj
 from deus_witness import client as dwc
 from tests_flow.helpers import set_settings
+from tests.helpers import time_scale
 
 NONCE = "n" * 32
 
@@ -121,7 +122,8 @@ def test_the_longest_line_still_parsed_costs_bounded_time(client, agent, tmp_pat
         r = client.post("/v1/hook/judge", json=_body(cmd, p), headers=agent)
         worst = max(worst, time.perf_counter() - t0)
         assert r.status_code == 200, (name, r.text[:200])
-    assert worst < 0.5, worst
+    assert worst < 0.5 * time_scale(), worst      # r0279: the bound of this machine (tests/helpers.time_scale)
+
 
 
 def test_a_longer_line_is_refused_unparsed_and_counted(client, agent, tmp_path, monkeypatch):

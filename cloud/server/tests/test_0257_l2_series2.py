@@ -134,8 +134,8 @@ class Hook:
     """The real thin hook (deus_witness.hook.main.judge, client from the sources) against the in-process server; HOME is a temp home whose
     ~/.claude/settings.json is the user layer, the managed directory is an empty temp dir."""
 
-    def __init__(self, client, owner, tmp_path, monkeypatch, user, project=None, scrub=True):
-        assert CLIENT_VERSION == "0.2.70"   # 13.11 (r0274): client 0.2.70 (links on the configured witness; home in a temp dir is asked); 13.11 (r0273): client 0.2.69 (trial read waits: TRIAL_NOT_CLAIMED; audit in the home folder; undo-strict words); 13.11 (r0272): client 0.2.68 (pin of the approved call, PostToolUse check); 13.11 (r0271): client 0.2.67 (README: containers not supported); 13.11 (r0270): client 0.2.66 (Linux quiet mode); 13.11 (r0267): client 0.2.65 (git_head fact, push words); 12.11 (r0265): client 0.2.63 (short connect/reply timeouts, read budget, down mark, git_self); 12.11 (r0264): client 0.2.62 (TMPDIR words, honest HOOK_ERROR, K1 git config reads, try mark of the hook); 12.11 (r0263): client 0.2.61 (try mark, session words, --settings read, TMPDIR); 12.11: client 0.2.60 (quiet mode, switch lock); 11.11: client 0.2.59 (closed list, held claim); 03.11: client 0.2.57 (friction: notify, which); 0.2.56 (fresh sandbox fact: session id, settings digest, doubt; was 0.2.55)
+    def __init__(self, client, owner, tmp_path, monkeypatch, user, project=None, scrub=True, plat=None):
+        assert CLIENT_VERSION == "0.2.71"   # 13.11 (r0279): client 0.2.71 (shared /tmp is never a mandate target; Linux quiet mode gets the session birth time); 13.11 (r0274): client 0.2.70 (links on the configured witness; home in a temp dir is asked); 13.11 (r0273): client 0.2.69 (trial read waits: TRIAL_NOT_CLAIMED; audit in the home folder; undo-strict words); 13.11 (r0272): client 0.2.68 (pin of the approved call, PostToolUse check); 13.11 (r0271): client 0.2.67 (README: containers not supported); 13.11 (r0270): client 0.2.66 (Linux quiet mode); 13.11 (r0267): client 0.2.65 (git_head fact, push words); 12.11 (r0265): client 0.2.63 (short connect/reply timeouts, read budget, down mark, git_self); 12.11 (r0264): client 0.2.62 (TMPDIR words, honest HOOK_ERROR, K1 git config reads, try mark of the hook); 12.11 (r0263): client 0.2.61 (try mark, session words, --settings read, TMPDIR); 12.11: client 0.2.60 (quiet mode, switch lock); 11.11: client 0.2.59 (closed list, held claim); 03.11: client 0.2.57 (friction: notify, which); 0.2.56 (fresh sandbox fact: session id, settings digest, doubt; was 0.2.55)
         home = tmp_path / "home"
         (home / ".claude").mkdir(parents=True)
         (home / ".claude" / "settings.json").write_text(json.dumps(user))
@@ -156,6 +156,9 @@ class Hook:
         self.c, self.pins = client, str(tmp_path / "pins" / "w.json")
         # 0.2.88 / client 0.2.56: a strict fact needs a session (id + transcript born after the settings) and a readable command line
         monkeypatch.setattr(_sf, "ANCESTRY_OVERRIDE", ["/bin/sh -c deus-witness-hook", "claude", "-zsh"])
+        if plat is not None:
+            _as_platform(monkeypatch, plat)
+        _birth_clock(monkeypatch, tmp_path)
         self.restart()
 
     def restart(self):
@@ -175,6 +178,37 @@ class Hook:
         return o["permissionDecision"], o.get("permissionDecisionReason", "")
 
 
+def _as_platform(monkeypatch, plat):
+    """r0279 (Linux CI 13.11): the e2e tests below took the platform of the machine running them; on a Linux runner without bubblewrap
+    the hook rightly reported no strict sandbox and `pytest -q` was asked. They now name the client's machine: macOS (Seatbelt), or Linux
+    with Claude Code's sandbox installed (bubblewrap and socat on PATH, an architecture with Claude Code's seccomp filter)."""
+    monkeypatch.setattr(_sf, "os_kind", lambda platform=None: platform or plat)
+    if plat == "linux":
+        monkeypatch.setattr(_sf, "_which", lambda name: "/usr/bin/" + name if name in ("bwrap", "socat") else None)
+        import platform as _pl
+        monkeypatch.setattr(_pl, "machine", lambda: "x86_64")
+
+
+def _birth_clock(monkeypatch, tmp_path):
+    """r0279 (Linux CI 13.11): the strict fact needs the session's start = the transcript's BIRTH time. Python has no st_birthtime on Linux
+    and the client up to 0.2.70 read nothing else, so on Linux every session was "session start unknown" (not strict: fail closed). The
+    client from r0279 reads it through statx (sandbox_fact._linux_birth). An installed client that still cannot read a birth time on this
+    machine gets the transcript's mtime instead (the test writes the transcript once, so mtime = birth); a missing transcript stays None."""
+    probe = tmp_path / "birth-probe"
+    probe.write_text("x")
+    if _sf._session_start(str(probe)) is not None:
+        return
+
+    def start(transcript):
+        if not isinstance(transcript, str) or not os.path.isabs(transcript):
+            return None
+        try:
+            return os.stat(transcript).st_mtime
+        except OSError:
+            return None
+    monkeypatch.setattr(_sf, "_session_start", start)
+
+
 def _last(client):
     r = client.app.state.ctx.db.one("SELECT verdict, reason FROM actions ORDER BY created_at DESC, rowid DESC LIMIT 1")
     return r["verdict"], r["reason"]
@@ -186,17 +220,19 @@ def test_e2e_bypass_without_strict_allowlist_is_asked(client, owner, tmp_path, m
     assert d != "allow" and _last(client) == ASK, (d, why)
 
 
-def test_e2e_bypass_with_strict_allowlist_is_sandboxed(client, owner, tmp_path, monkeypatch):
-    h = Hook(client, owner, tmp_path, monkeypatch, user=STRICT_SETTINGS, project=PROJECT_STRICT)
+@pytest.mark.parametrize("plat", ["darwin", "linux"])
+def test_e2e_bypass_with_strict_allowlist_is_sandboxed(client, owner, tmp_path, monkeypatch, plat):
+    h = Hook(client, owner, tmp_path, monkeypatch, user=STRICT_SETTINGS, project=PROJECT_STRICT, plat=plat)
     d, why = h.run("pytest -q", "bypassPermissions")
     assert d == "allow" and _last(client) == OK_SB, (d, why)
     d, why = h.run("pytest -q", "plan")                           # not checked at L2: asked (r0263: auto is checked)
     assert d != "allow" and _last(client) == ASK, (d, why)
 
 
-def test_e2e_scrub_only_in_project_env_is_asked(client, owner, tmp_path, monkeypatch):
+@pytest.mark.parametrize("plat", ["darwin", "linux"])
+def test_e2e_scrub_only_in_project_env_is_asked(client, owner, tmp_path, monkeypatch, plat):
     proj = dict(PROJECT_STRICT, env={"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1"})
-    h = Hook(client, owner, tmp_path, monkeypatch, user=USER_LOCK, project=proj, scrub=False)
+    h = Hook(client, owner, tmp_path, monkeypatch, user=USER_LOCK, project=proj, scrub=False, plat=plat)
     d, why = h.run("pytest -q", "default")
     assert d != "allow" and _last(client) == ASK, (d, why)
     h.env.update(SCRUB_ENV)                                       # the same settings, Claude Code started with the scrub

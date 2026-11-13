@@ -17,3 +17,12 @@ export function coverageView(cov) {
     by.length ? h('div', {}, h('p', { class: 'hint', text: 'Actions through these channels are not witnessed:' }), h('ul', {}, ...by.map((b) => h('li', { class: 'mono', text: b })))) : '',
     h('p', { class: 'hint', text: 'Declared by the operator\'s proxy (deus-witness doctor), not verified by the witness. The evidence pack marks it operator-declared.' })];
 }
+
+// r0278 (L3 13.11 with the owner, find 5): an agent behind the Claude Code hook (its tool map maps Bash) has no MCP proxy to report
+// coverage: "Coverage unknown: the proxy has not reported (deus-witness-mcp 0.2)" said nothing to that person. No line for it.
+export function isHookAgent(a) {
+  const t = a && a.toolmap && typeof a.toolmap === 'object' ? a.toolmap.tools : null;
+  return !!(t && typeof t === 'object' && Object.prototype.hasOwnProperty.call(t, 'Bash'));
+}
+// one agent, behind the hook: the dashboard shows the simple first screen and folds the rest under "Advanced"
+export function simpleAccount(agents) { return Array.isArray(agents) && agents.length === 1 && isHookAgent(agents[0]); }

@@ -23,10 +23,11 @@ SERVER = os.path.normpath(os.path.join(HERE, ".."))
 MCP = os.path.normpath(os.path.join(HERE, "../../mcp"))
 sys.path.insert(0, MCP)
 from deus_witness.hook import mask as cmask  # noqa: E402
+from tests.helpers import time_scale  # noqa: E402
 
 OLD_ASSIGN = re.compile(r"(?i)([A-Za-z0-9_]*(?:PASSWORD|PASSWD|PASS|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|AUTH)[A-Za-z0-9_]*)(\s*[=:]\s*)"
                         r"(?!\[masked\])((?:Bearer|Basic|Token)\s+\S+|\S+)")
-LIMIT_MS = 50
+LIMIT_MS = 50 * time_scale()        # r0279: the bound of this machine (tests/helpers.time_scale; 53 ms on a GitHub runner)
 
 
 def _sub(rx, s):

@@ -146,7 +146,12 @@ def mandate_from_form(form, principal, agent, pin_source, now=None, mid=None):
     if d is not None:
         if not isinstance(d, dict):
             raise Err(422, "FORM_INVALID", "delete")
-        P["delete"] = {"targets": _strs(d.get("targets"), "targets"), "allow_irreversible": _bool(d.get("allow_irreversible", False), "allow_irreversible")}
+        # r0279 (Linux CI 13.11): a whole shared temp root ("/tmp/*": what a client on Linux without a TMPDIR of the person's put into
+        # its recommended form) is no target: a file there is asked once (r0261f), not written silently. Dropped here, so the draft the
+        # page shows and the passkeys sign is the mandate the witness keeps (signed = shown).
+        from app.hookjudge.mapping import shared_temp_target
+        P["delete"] = {"targets": [t for t in _strs(d.get("targets"), "targets") if not shared_temp_target(t)],
+                       "allow_irreversible": _bool(d.get("allow_irreversible", False), "allow_irreversible")}
     p = form.get("publish")
     if p is not None:
         if not isinstance(p, dict):

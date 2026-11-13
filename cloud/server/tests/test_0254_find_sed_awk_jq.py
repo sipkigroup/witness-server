@@ -210,6 +210,26 @@ def test_no_project_allowance_for_a_variant():
 NEEDS = all(shutil.which(x) for x in ("bash", "find", "sed", "awk")) and os.path.exists("/usr/bin/sed")
 
 
+def _gnu_sed() -> bool:
+    """r0279 (Linux CI): GNU sed takes `-i` with no suffix (`sed -i '' s/a/b/ f` reads '' as the script); BSD / macOS sed needs one."""
+    try:
+        return subprocess.run(["sed", "--version"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+SED_IN_PLACE = {"bsd": "sed -i '' 's/a/PWN/' a.txt", "gnu": "sed -i 's/a/PWN/' a.txt"}
+
+
+@pytest.mark.parametrize("flavour", sorted(SED_IN_PLACE))
+def test_both_in_place_sed_spellings_are_not_plain(flavour, tmp_path):
+    """Whatever sed this machine has, both spellings of an in-place edit are judged as writes (never a plain read)."""
+    base = os.path.realpath(str(tmp_path))
+    proj = _project(base)
+    c = classify(SED_IN_PLACE[flavour], proj, _env(base)["HOME"], project=proj)
+    assert not set(c.heads) <= set(DEFAULT_SAFE_COMMANDS) or c.danger, (flavour, c.heads)
+
+
 @pytest.mark.skipif(not NEEDS, reason="needs bash, find, sed, awk")
 @pytest.mark.parametrize("cmd", PLAIN)
 def test_plain_forms_with_the_real_utilities_change_nothing(cmd, tmp_path):
@@ -228,9 +248,11 @@ def test_plain_forms_with_the_real_utilities_change_nothing(cmd, tmp_path):
 @pytest.mark.parametrize("cmd,effect", [("find . -name a.txt -exec touch PWN \\;", "PWN"), ("find . \\( -name a.txt -o -exec touch PWN \\; \\)", "PWN"),
                                         ("awk 'BEGIN{system(\"touch PWN\")}'", "PWN"), ("awk -v c='touch PWN' 'BEGIN{system(c)}'", "PWN"),
                                         ("awk 'BEGIN{print \"x\" | \"touch PWN\"}'", "PWN"), ("awk 'BEGIN{print \"x\" > \"PWN\"}'", "PWN"),
-                                        ("sed -n 'w PWN' a.txt", "PWN"), ("sed -i '' 's/a/PWN/' a.txt", "a.txt"),
+                                        ("sed -n 'w PWN' a.txt", "PWN"), ("SED_IN_PLACE", "a.txt"),
                                         ("find . -name b.txt -delete", "-b.txt")])
 def test_risky_forms_really_act_on_this_machine(cmd, effect, tmp_path):
+    if cmd == "SED_IN_PLACE":                                    # r0279: the spelling of THIS machine's sed (GNU on Linux, BSD on macOS)
+        cmd = SED_IN_PLACE["gnu" if _gnu_sed() else "bsd"]
     base = os.path.realpath(str(tmp_path))
     proj = _project(base)
     r = subprocess.run(["bash", "-c", cmd], cwd=proj, env=_env(base), capture_output=True, text=True, timeout=60)

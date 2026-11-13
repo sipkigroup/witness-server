@@ -30,15 +30,14 @@
 
 <section id="box" class="card decision" hidden>
  <section id="qw" hidden>
-  <p id="qw_harm" class="harm"></p>
-  <div id="riskbar" class="riskbar" role="img" hidden><span class="segs"><i></i><i></i><i></i><i></i></span><b id="risk_word"></b></div>
+  <p id="qw_harmline" class="harm"><span id="qw_harm"></span> <span id="riskbar" class="riskbar" role="img" hidden><span class="segs"><i></i><i></i><i></i><i></i></span><b id="risk_word"></b></span></p>
   <p id="cmd_by" class="cmdby" hidden></p>
   <pre id="cmdline" class="cmdline" hidden></pre>
   <p id="cmd_voice" class="notice warn" role="note" hidden></p>
   <button id="qw_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_more">Details &#9656;</button>
  </section>
  <div id="qw_more" class="qwmore" hidden>
- <dl class="kv simple" id="qw_simple"><dt>Agent</dt><dd id="sx_who"></dd><dt>Target</dt><dd id="sx_where"></dd><dt>Action</dt><dd id="sx_act"></dd><dt>Rollback</dt><dd id="sx_undo"></dd><dt id="what_dt">Command</dt><dd id="what_dd"><pre id="what" class="what"></pre><div id="what_parts" hidden></div></dd></dl>
+ <dl class="kv simple" id="qw_cmd"><dt id="what_dt">Command</dt><dd id="what_dd"><pre id="what" class="what"></pre><div id="what_parts" hidden></div></dd></dl>
  <button id="tech_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_tech" hidden>More technical &#9656;</button>
  <div id="qw_tech" class="qwtech" hidden>
  <p id="boxlead" class="lead">Your rules do not clearly allow this, so you decide.</p>
@@ -81,6 +80,7 @@
  </section>
  </details>
  <p class="hint" id="later_why" hidden></p>
+ <dl class="kv simple" id="qw_simple"><dt>Agent</dt><dd id="sx_who"></dd><dt>Target</dt><dd id="sx_where"></dd><dt>Action</dt><dd id="sx_act"></dd><dt>Rollback</dt><dd id="sx_undo"></dd></dl>
  <details id="more" class="more"><summary>Technical details</summary>
  <p id="level" class="notice" hidden></p>
  <h3 class="small">The action</h3>

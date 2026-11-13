@@ -30,6 +30,27 @@
  <div class="row"><button id="pushon" class="btn" type="button" hidden>Enable notifications</button><button id="pushtest" class="btn ghost" type="button" hidden>Send a test</button><button id="pushoff" class="btn ghost" type="button" hidden>Turn off on this device</button></div>
 </section>
 
+
+
+
+
+
+
+<section class="card">
+ <h2>Activity</h2>
+ <div class="row"><label for="ff" class="inline">Agent</label><select id="ff" class="inline"><option value="">all agents</option></select></div>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Target</th><th>Verdict</th><th>Reason</th></tr></thead><tbody id="feed"></tbody></table></div>
+ <p><button id="more" class="btn ghost" type="button" hidden>Show more</button></p>
+</section>
+
+<section class="card">
+ <h2>Agents</h2>
+ <div id="agents"></div>
+</section>
+
+<!-- r0278 (L3 13.11 with the owner, find 5): a one-agent Claude Code account sees how it decides, notifications and activity first;
+     the rest is folded here (open by itself for any other account: app.js) -->
+<details id="advanced" class="advanced"><summary>Advanced: more channels, agents, budget, tool map, closed data, evidence</summary>
 <section class="card" id="chan-card">
  <h2>Other notification channels</h2>
  <p class="hint">For agents that work while you are away: get a message in Telegram, Slack or by e-mail when an agent waits for your approval. The message has only a link to the request (no agent, action or recipient); approving is still done on the approval page with your passkey. The token, webhook or address is stored encrypted and never shown again.</p>
@@ -42,9 +63,8 @@
  <div class="row"><button id="chanfind" class="btn ghost" type="button">Find my chat</button><button id="chanadd" class="btn" type="button">Add channel</button></div>
 </section>
 
-<section class="card">
- <h2>Agents</h2>
- <div id="agents"></div>
+<section class="card" id="newagent-card">
+ <h2>Add an agent</h2>
  <form id="newagent" class="row">
   <div><label for="an">New agent name</label><input id="an" maxlength="60" required placeholder="my-agent"></div>
   <div><label for="ap">Preset</label><select id="ap"><option value="demo">demo (mail, purchase, delete, publish)</option><option value="filesystem">filesystem (MCP file server)</option><option value="claude-code">claude-code (Claude Code hook: Bash, Edit, Write, WebFetch)</option><option value="openshell">openshell (NVIDIA OpenShell middleware: HTTP requests of a sandbox)</option><option value="empty">empty (everything denied)</option></select></div>
@@ -57,13 +77,6 @@
 <section class="card">
  <h2>Budget</h2>
  <div id="budget"><p class="hint">No active mandate yet.</p></div>
-</section>
-
-<section class="card">
- <h2>Activity</h2>
- <div class="row"><label for="ff" class="inline">Agent</label><select id="ff" class="inline"><option value="">all agents</option></select></div>
- <div class="tablewrap"><table class="stack"><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Target</th><th>Verdict</th><th>Reason</th></tr></thead><tbody id="feed"></tbody></table></div>
- <p><button id="more" class="btn ghost" type="button" hidden>Show more</button></p>
 </section>
 
 <section class="card">
@@ -89,6 +102,7 @@
  <div id="anchorbox"><p id="anchor"></p><details><summary id="anchorsum">More</summary><div id="anchormore"></div></details></div>
  <a class="btn" href="/api/export" download>Download evidence pack</a>
 </section>
+</details>
 </main>
 <script type="module" src="js/boot.js"></script>
 <script type="module" src="js/app.js"></script>

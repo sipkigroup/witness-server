@@ -1,4 +1,4 @@
-"""Hourly anchor job (ARHITEKTURA 6; 0.2 section 7: RFC 3161 as a second anchor). CLI: python -m app.jobs anchor-once | upgrade-once
+"""Hourly anchor job (ARHITEKTURA 6; 0.2 section 7: RFC 3161 as a second anchor). CLI: python -m app.jobs anchor-once | upgrade-once | tlog-stamp
 DW_TSA=on: after the OTS stamp the same batch root is time-stamped by every TSA of lib/tsa/providers.json with "take": true and
 "terms": "allowed" (never Sectigo / Apple / GlobalSign / Entrust: EXCLUDED)
 (DW_TSA_PROVIDERS = another providers file); replies go to /data/anchors/<batch>.tsr.<tsa>, the TSA root to /data/anchors/tsa-ca/<tsa>.pem.
@@ -240,6 +240,11 @@ def _anchor_once(ctx, now=None, tsa=None):
         rec["tee"] = tee.on_batch(ctx, bid, root)
     with open(os.path.join(ctx.anchor_dir, bid + ".json"), "w") as f:
         json.dump(rec, f)
+    try:
+        from app import tlog
+        tlog.sync(ctx)                                           # r0269: the batch becomes the next leaf of the public log
+    except Exception as e:  # noqa: BLE001  (the log is re-synced on the next run and on GET /checkpoint)
+        log("ERROR", "tlog sync failed: " + type(e).__name__)
     if status == "pending":
         print("batch %s: stamped calendars=%d" % (bid, calendars))
     elif status == "off":
@@ -323,10 +328,14 @@ def upgrade_once(ctx, now=None):
 def main(argv):
     from app.config import Config
     from app.context import Ctx
-    if len(argv) != 1 or argv[0] not in ("anchor-once", "upgrade-once"):
+    if len(argv) != 1 or argv[0] not in ("anchor-once", "upgrade-once", "tlog-stamp"):
         print(__doc__)
         return 64
     ctx = Ctx(Config.from_env())
+    if argv[0] == "tlog-stamp":                                  # r0269: stamp the log checkpoint NOW (and retry queued stamps)
+        from app import tlog
+        tlog.stamp_due(ctx, force=True)
+        return 0
     (anchor_once if argv[0] == "anchor-once" else upgrade_once)(ctx)
     return 0
 

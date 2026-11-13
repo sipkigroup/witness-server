@@ -270,6 +270,14 @@ def make_router(ctx):
             raise Err(400, "BAD_REQUEST", "real: true | false")
         return confirm_team(ctx, rid, real)
 
+    @r.get("/metrics")
+    def _metrics(req: Request):
+        """0.2.96: Prometheus text, counts only (app/uxstat.py); the same owner token as /internal/stats, 404 without one."""
+        from fastapi.responses import PlainTextResponse
+        from app import uxstat
+        _owner(req)
+        return PlainTextResponse(uxstat.metrics_text(ctx), media_type="text/plain; version=0.0.4")
+
     @r.get("/internal/stats")
     def _stats(req: Request):
         _owner(req)

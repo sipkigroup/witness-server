@@ -6,8 +6,11 @@ bound it, only containment at execution can. "Strict" = the OS keeps the process
 host. Every condition below must be KNOWN and true; anything missing, malformed or unknown -> not strict (fail closed, the owner is asked).
 
 Strict requires:
-  platform darwin (Seatbelt). Linux/WSL2 (bubblewrap): NOT in this prototype -- Unix sockets are blocked there only with the optional seccomp
-    filter, which the hook cannot see (docker.sock = way out, SSH_AUTH_SOCK = signing with the user's key);
+  platform darwin (Seatbelt) -- or, 13.11 (r0268, client r0268), linux / wsl2 (bubblewrap) with a COMPLETE `linux` fact (linux_why): bwrap
+    and socat on PATH, an architecture Claude Code ships its seccomp filter for (x86_64 / arm64: the filter that refuses socket(AF_UNIX),
+    i.e. docker.sock, ssh-agent, the D-Bus keyring -- L3 13.11 in a sandboxed command: "Seccomp: 2", socket(AF_UNIX) -> EPERM), and on
+    WSL2 Windows interop OFF (a .exe started from Linux runs outside the sandbox) and every Windows home /mnt shows with its key places in
+    denyRead. A fact without `linux` (a client before r0268, "wsl" of old clients, wsl1) is not strict, as before;
   every readable layer parsed (no "bad", no unread MDM plist);
   sandbox.enabled true, sandbox.failIfUnavailable true (no silent unsandboxed fallback), filesystem.disabled not true,
   no ignoreViolations, no weakening key (enableWeakerNestedSandbox, enableWeakerNetworkIsolation, allowAppleEvents);
@@ -72,6 +75,68 @@ CRED_SOURCES = (
     ".gem/credentials",                 # rubygems.org API key; read only by gem push / owner / yank
     "Library/Application Support/pypoetry/auth.toml",       # poetry's plaintext fallback when no keyring
 )
+# 13.11 (r0268): the same places on Linux / WSL2 (client sandbox_fact.CRED_SOURCES_LINUX, --setup-strict writes them): browsers' profiles
+# (Chrome / Chromium without a running keyring keep cookies in plain "peanuts" encryption: a server, WSL), Firefox (plain), the GNOME
+# keyring's and KDE wallet's files (the daemons themselves are reached over D-Bus = a Unix socket, which the seccomp filter refuses), pass,
+# keyrings.alt's plaintext file, editors' token stores, snap / flatpak copies, and the CLI files of CRED_SOURCES.
+CRED_SOURCES_LINUX = (".config/google-chrome", ".config/chromium", ".config/BraveSoftware", ".config/microsoft-edge", ".config/vivaldi",
+                      ".config/opera", ".mozilla", "snap/chromium", "snap/firefox", ".var/app", ".local/share/keyrings",
+                      ".local/share/kwalletd", ".password-store", ".local/share/python_keyring", ".config/Code/User/globalStorage",
+                      ".config/Cursor/User/globalStorage", ".config/hub", ".config/glab-cli", ".config/git/credentials", ".gcm",
+                      ".cargo/credentials", ".cargo/credentials.toml", ".gem/credentials", ".config/pypoetry/auth.toml")
+# 13.11 (r0268): in each Windows home WSL2 shows (/mnt/c/Users/<name>): AppData (browsers, Credential Manager's files, editors) and the CLI
+# key places. drvfs is case-insensitive: compared case-insensitively.
+WIN_SECRETS = ("AppData", ".ssh", ".aws", ".azure", ".kube", ".docker", ".config/gh", ".git-credentials", ".netrc", ".npmrc", ".pypirc",
+               ".gnupg", ".config/gcloud")
+LINUX_PLATFORMS = ("linux", "wsl2")
+SECCOMP_ARCH = frozenset({"x86_64", "amd64", "aarch64", "arm64"})
+_WIN_HOME = re.compile(r"/mnt/[a-z]/Users/[^/\x00]{1,128}", re.I)
+
+
+def linux_well_formed(lx) -> bool:
+    if not isinstance(lx, dict) or lx.get("kind") not in ("linux", "wsl2", "wsl1"):
+        return False
+    if not all(isinstance(lx.get(k), bool) for k in ("bwrap", "socat")):
+        return False
+    if not (isinstance(lx.get("arch"), str) and len(lx["arch"]) <= 32):
+        return False
+    if "interop" in lx and lx["interop"] is not None and not isinstance(lx["interop"], bool):
+        return False
+    return "win_homes" not in lx or _strs(lx["win_homes"], 8)
+
+
+def linux_why(f) -> list:
+    """13.11 (r0268): what keeps a linux / wsl2 fact from being strict ([] = the Linux part is complete). Fail closed on anything absent."""
+    lx = f.get("linux")
+    if not linux_well_formed(lx) or lx["kind"] != f["platform"]:
+        return ["platform %s: no complete Linux sandbox fact (bubblewrap, socat, architecture; a client before r0268)" % f["platform"][:32]]
+    why = []
+    if lx["bwrap"] is not True or lx["socat"] is not True:
+        why.append("Linux: bubblewrap or socat not installed (Claude Code's sandbox cannot run)")
+    if lx["arch"] not in SECCOMP_ARCH:
+        why.append("Linux: architecture %s has no seccomp filter from Claude Code (Unix sockets stay open)" % lx["arch"][:32])
+    if f["platform"] == "wsl2":
+        if lx.get("interop") is not False:
+            why.append("WSL2: Windows interop is on or unknown (a .exe runs outside the sandbox)")
+        hs = lx.get("win_homes")
+        if not isinstance(hs, list):
+            why.append("WSL2: the Windows home folders are not reported")
+        else:
+            for h in hs:
+                if not _WIN_HOME.fullmatch(h):
+                    why.append("WSL2: a Windows home folder not of the form /mnt/<drive>/Users/<name>")
+                    break
+                miss = [x for x in WIN_SECRETS if not _denied(posixpath.join(h, x), f["deny_read"], f["allow_read"], True, True)]
+                if miss:
+                    why.append("denyRead does not cover %s/%s" % (h[:80], miss[0]))
+                    break
+    return why
+
+
+def cred_sources(platform) -> tuple:
+    return CRED_SOURCES_LINUX if platform in LINUX_PLATFORMS else CRED_SOURCES
+
+
 # 11.11 (r0260): write hosts whose credentials are known to live ONLY in SECRETS, CRED_SOURCES, the hook's environment (env_tokens) or the
 # files the client reads (cred_files). Another write host (example.com, a company GitLab, huggingface.co, a wildcard): its credential may
 # be anywhere -> 87facd5 (every line that runs code is asked).
@@ -159,6 +224,8 @@ def well_formed(f) -> bool:
     if "env_tokens" in f and not _strs(f["env_tokens"], 64):
         return False                                  # 10.11 (r0260, Р-1011-сеть): optional (a client before it does not send it; a list
         #                                               of allowed domains is then not strict), never malformed
+    if "linux" in f and not linux_well_formed(f["linux"]):
+        return False                                  # 13.11 (r0268): optional (macOS has none), never malformed
     if "cred_files" in f and not _strs(f["cred_files"], 64):
         return False                                  # 11.11 (r0260): optional (a client before it: credentials not known closed)
     if "allow_git_config" in f and f["allow_git_config"] is not None and not isinstance(f["allow_git_config"], bool):
@@ -209,15 +276,16 @@ def _within(entry, path, ci=False):
     return ep.startswith(pp + "/")
 
 
-def _denied(path, deny, allow, ci=False):
+def _denied(path, deny, allow, ci=False, deny_ci=False):
     """A secret is protected only if denyRead covers it AND no allowRead re-opens it -- neither by covering the path itself with an entry at
     least as specific (L2 OTCHET-V3-L2: a more specific allowRead wins in Seatbelt), NOR by re-opening a file INSIDE a denied secret
     directory (RT-0.2.58: allowRead `~/.ssh/id_rsa` reads the key though denyRead covers `~/.ssh`). On darwin the compare is
     case-insensitive (APFS default: allowRead `~/.SSH` re-opens `~/.ssh`)."""
-    d = [e for e in deny if _covers(e, path)]        # 11.11 (r0260): a DENY entry counts only in the file system's own spelling --
+    d = [e for e in deny if _covers(e, path, deny_ci)]   # 11.11 (r0260): a DENY entry counts only in the file system's own spelling --
     #                                                   Seatbelt matches the path as the file system returns it (`~/library/keychains` is
     #                                                   not `~/Library/Keychains` for it; L2 check listed); an allowRead in any case still
-    #                                                   re-opens (fail closed both ways)
+    #                                                   re-opens (fail closed both ways). r0268: deny_ci for WSL2's drvfs
+    #                                                   (/mnt/c is case-insensitive: Windows itself reads ~/APPDATA as ~/AppData)
     if not d:
         return False
     best = max(len(e) for e in d)
@@ -237,9 +305,11 @@ def cred_closed(f, home):
     deny, allow = f.get("deny_read"), f.get("allow_read")
     if not (_strs(deny) and isinstance(allow, list)):
         return False, ["denyRead unknown"]
-    miss = [s for s in SECRETS + CRED_SOURCES if not _denied(posixpath.join(home, s), deny, allow, ci)]
+    miss = [s for s in SECRETS + cred_sources(f.get("platform")) if not _denied(posixpath.join(home, s), deny, allow, ci)]
     if miss:
         why.append("denyRead does not cover ~/" + ", ~/".join(miss[:4]) + (" ..." if len(miss) > 4 else ""))
+    if f.get("platform") in LINUX_PLATFORMS:          # r0268: the Linux part (bwrap, seccomp, WSL2 interop and Windows homes) complete
+        why += [w for w in linux_why(f) if w not in why]
     cf = f.get("cred_files")
     if cf is None:
         why.append("the client does not report credentials in config files")
@@ -273,8 +343,10 @@ def evaluate(f, heads, home, project=None):
     if not well_formed(f):
         return False, ["no sandbox fact or a malformed one"]
     why = []
-    if f["platform"] != "darwin":
-        why.append("platform %s: only macOS Seatbelt is accepted in this version" % f["platform"][:32])
+    if f["platform"] in LINUX_PLATFORMS:
+        why += linux_why(f)                           # 13.11 (r0268): bubblewrap + seccomp, a complete fact only
+    elif f["platform"] != "darwin":
+        why.append("platform %s: only macOS Seatbelt and Linux / WSL2 bubblewrap are accepted" % f["platform"][:32])
     bad = sorted(k for k, v in f["sources"].items() if v not in ("ok", "absent"))
     if bad:
         why.append("settings not readable: " + ", ".join(bad)[:200])

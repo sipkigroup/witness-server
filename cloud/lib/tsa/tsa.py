@@ -4,7 +4,12 @@ Dependencies: asn1crypto (MIT) for DER, cryptography (Apache-2.0 / BSD) for sign
 request(digest32, url) -> tsr bytes        SHA-256 imprint, random 64-bit nonce, certReq=true; the reply is checked for status, nonce, imprint
 verify(tsr, digest32, ca_bundle) -> {"ok": bool, "gen_time": int|None, "tsa": str|None, "reason": None|code}
   ca_bundle: list of certificates (DER or PEM bytes), or a path to a PEM/DER file or to a directory of them (trust anchors).
-  codes: TSA_MALFORMED, TSA_STATUS, TSA_IMPRINT, TSA_SIG, TSA_CHAIN, TSA_EKU, TSA_TIME, TSA_NONCE.
+  codes: TSA_MALFORMED, TSA_STATUS, TSA_IMPRINT, TSA_SIG, TSA_ESS, TSA_CHAIN, TSA_EKU, TSA_TIME, TSA_NONCE.
+r0269 (class of CVE-2026-33753 / CVE-2026-39984: the certificate that is checked is not the one that signed):
+  exactly ONE certificate of the token may match the signer id (two = TSA_MALFORMED); the signed ESS signingCertificate(V2) attribute
+  (RFC 3161 2.4.2, RFC 5816) is REQUIRED and its first hash must be the hash of that same certificate (TSA_ESS); every signed attribute
+  type appears once with one value; every certificate ABOVE the signer must be a CA (basicConstraints cA, keyCertSign when keyUsage
+  is present), so a leaf of the same root cannot mint a TSA certificate (TSA_CHAIN).
 Honest limits: no revocation check (offline: no CRL/OCSP); validity of the chain is judged at genTime, not now."""
 import glob
 import hashlib
@@ -126,6 +131,53 @@ def _name(c):
         return "?"
 
 
+def _is_ca(c):
+    try:
+        bc = c.extensions.get_extension_for_class(x509.BasicConstraints).value
+    except x509.ExtensionNotFound:
+        return False
+    if not bc.ca:
+        return False
+    try:
+        ku = c.extensions.get_extension_for_class(x509.KeyUsage).value
+        return bool(ku.key_cert_sign)
+    except x509.ExtensionNotFound:
+        return True
+
+
+ESS_HASH = {"sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha384": hashlib.sha384, "sha512": hashlib.sha512}
+
+
+def _ess_ok(got, signer):
+    """RFC 3161 2.4.2 / RFC 2634 5.4 / RFC 5816: the signed signingCertificate (SHA-1) or signingCertificateV2 (default SHA-256) names
+    the signer certificate by hash (+ issuerSerial when present). Exactly one of the two attributes."""
+    v1, v2 = got.get("signing_certificate"), got.get("signing_certificate_v2")
+    if (v1 is None) == (v2 is None):
+        return False
+    try:
+        if v1 is not None:
+            first = v1["certs"][0]
+            h = hashlib.sha1
+        else:
+            first = v2["certs"][0]
+            alg = first["hash_algorithm"]["algorithm"].native if first["hash_algorithm"].native is not None else "sha256"
+            h = ESS_HASH.get(alg)
+            if h is None:
+                return False
+        if first["cert_hash"].native != h(signer.dump()).digest():
+            return False
+        iss = first["issuer_serial"]
+        if iss.native is not None:
+            if iss["serial_number"].native != signer.serial_number:
+                return False
+            names = [g.chosen for g in iss["issuer"] if g.name == "directory_name"]
+            if not names or names[0] != signer.issuer:
+                return False
+        return True
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError):
+        return False
+
+
 def verify(tsr, digest32, ca_bundle):
     """Offline RFC 3161 check: status granted; TSTInfo imprint = SHA-256 digest32; signed attributes (content-type, message-digest);
     signature of the signer; signer cert has the (critical) timeStamping EKU; chain up to a certificate of ca_bundle;
@@ -153,21 +205,27 @@ def verify(tsr, digest32, ca_bundle):
         si = sis[0]
         certs = [c.chosen for c in (sd["certificates"] or []) if c.name == "certificate"]
         sid = si["sid"]
-        signer = None
+        matches = []
         for c in certs:
             if sid.name == "issuer_and_serial_number":
                 if c.issuer == sid.chosen["issuer"] and c.serial_number == sid.chosen["serial_number"].native:
-                    signer = c
+                    matches.append(c)
             elif c.key_identifier == sid.chosen.native:
-                signer = c
-        if signer is None:
+                matches.append(c)
+        if not matches:
             return fail("TSA_CHAIN")                 # certReq=true: the signer certificate must be in the token
+        if len(matches) != 1:
+            return fail("TSA_MALFORMED")             # r0269: two certificates answer to the signer id: which one signed is ambiguous
+        signer = matches[0]
         hname = si["digest_algorithm"]["algorithm"].native
         if hname not in HASHES:
             return fail("TSA_SIG")
         attrs = si["signed_attrs"]
         if not attrs:
             return fail("TSA_SIG")
+        types = [a["type"].native for a in attrs]
+        if len(set(types)) != len(types) or any(len(a["values"]) != 1 for a in attrs):
+            return fail("TSA_SIG")                   # r0269: CMS 11.1/11.2: one content-type, one message-digest, each with one value
         got = {a["type"].native: a["values"][0] for a in attrs}
         if got.get("content_type") is None or got["content_type"].native != "tst_info":
             return fail("TSA_SIG")
@@ -179,6 +237,8 @@ def verify(tsr, digest32, ca_bundle):
             _verify_sig(scert.public_key(), si["signature"].native, signed, si["signature_algorithm"].signature_algo, hname)
         except (InvalidSignature, ValueError, TypeError):
             return fail("TSA_SIG")
+        if not _ess_ok(got, signer):
+            return fail("TSA_ESS")
         out["tsa"] = _name(scert)
         try:
             eku = scert.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
@@ -196,6 +256,8 @@ def verify(tsr, digest32, ca_bundle):
             parent = None
             for p in pool:
                 if p.subject == cur.issuer and p.public_bytes(_DER) != cur.public_bytes(_DER):
+                    if not _is_ca(p):
+                        continue                     # r0269: an end-entity certificate never issues (a TSA leaf is not a CA)
                     try:
                         cur.verify_directly_issued_by(p)
                     except Exception:   # noqa: BLE001

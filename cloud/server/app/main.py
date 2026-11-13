@@ -443,6 +443,8 @@ def create_app(cfg=None):
     from app import node2feed
     if node2feed.attach(ctx):                                    # 0.2.27, DW_NODE2=on only: node 2 feed + public /v1/node2/*
         app.include_router(node2feed.make_router(ctx))
+    from app import tlog as _tlog
+    app.include_router(_tlog.make_router(ctx))                   # r0269: public log of anchor batches, C2SP checkpoint, daily stamp
     from app import demo_live
     if demo_live.enabled(ctx):                                   # 0.2.32, DW_DEMO_ACCOUNT set only: public feed + pack of the demo account
         app.include_router(demo_live.make_router(ctx))
@@ -582,6 +584,10 @@ def create_app(cfg=None):
                         await asyncio.to_thread(jobs.anchor_once, ctx)
                     except Exception as e:  # noqa
                         log("ERROR", "anchor job failed: " + type(e).__name__)
+                    try:
+                        await asyncio.to_thread(_tlog.stamp_due, ctx)          # r0269: daily stamp of the log checkpoint (+ retries of queued ones)
+                    except Exception as e:  # noqa
+                        log("ERROR", "tlog stamp job failed: " + type(e).__name__)
 
             async def upgrade_loop():
                 # 0.2.5 (R4-01): the upgrade of pending stamps (calendars + two block explorers, 30 s timeout each) is its OWN task: it must not stretch the anchor period
@@ -591,6 +597,10 @@ def create_app(cfg=None):
                         await asyncio.to_thread(jobs.upgrade_once, ctx)
                     except Exception as e:  # noqa
                         log("ERROR", "upgrade job failed: " + type(e).__name__)
+                    try:
+                        await asyncio.to_thread(_tlog.upgrade_stamps, ctx)
+                    except Exception as e:  # noqa
+                        log("ERROR", "tlog upgrade job failed: " + type(e).__name__)
                     await asyncio.sleep(int(os.environ.get("DW_UPGRADE_EVERY", "1800")))
             if cfg.anchor == "on":
                 app.state.jobs_upgrade = asyncio.create_task(upgrade_loop())

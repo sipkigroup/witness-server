@@ -1,4 +1,5 @@
 import { get, post, put, del } from './api.js';
+import { uxText } from './uxguard.js';
 import { h, $, clear, notice, mountNav, fmtTime, fmtMoney, copyButton, mcpConfig, until, safeId, failText } from './ui.js';
 import { coverageView } from './coverage.js';
 import { anchorText } from './anchors.js';
@@ -189,10 +190,23 @@ function patternRow(cls, vals) {
   return h('div', { class: 'dprow' }, h('label', { text: cls }), h('input', { 'data-cls': cls, value: (vals || []).join(', '), placeholder: 'comma-separated phrases' }));
 }
 
+// 0.2.96 ("approved without reading", server app/uxstat.py): the three numbers side by side and the warning when the alarm is on
+async function loadUx() {
+  let v;
+  try { v = await get('/api/ux-guard'); } catch (e) { return; }
+  const t = uxText(v);
+  if (!t) return;
+  $('#ux-card').hidden = false;
+  $('#uxline').textContent = t;
+  $('#uxwarn').hidden = !v.alarm;
+  $('#uxwarn').textContent = v.alarm ? (v.warning || '') : '';
+}
+
 async function main() {
   const me = await mountNav(true);
   if (!me) return;
   state.me = me;
+  loadUx();
   try { const org = await get('/api/org'); const t = anchorText((org.settings || {}).profile || 'smb'); $('#anchor').textContent = t.lead; clear($('#anchormore')).append(...t.more.map((x) => h('p', { class: 'hint', text: x }))); $('#anchorsum').textContent = t.moreTitle; } catch (e) { $('#anchorbox').hidden = true; }
   // 0.2.41: the key box is filled FIRST and never cleared by a list refresh; the button is locked during the request (a double submit made a second
   // agent / a 429 and the box was lost); an error is shown next to the button (#newerr), not at the top of the page

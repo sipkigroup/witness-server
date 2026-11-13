@@ -11,6 +11,7 @@ import { createCredential, explainError, supported, NO_PASSKEY_TEXT } from './we
 import { describeMandate } from './describe.js';
 import { inspectFields } from './honest.js';
 import { h, $, clear, notice, mountNav, fmtTime, kv, safeId } from './ui.js';
+import { mountOffer } from './pushoffer.js';
 
 const KEY = 'dw_trial_claim';             // 0.2.38: one claim
 const KEYS = 'dw_trial_claims';           // 0.2.39: the claims this browser holds, newest first (at most MAX_CLAIMS)
@@ -212,6 +213,7 @@ async function afterSigned(agentId, startedAt) {
   const t = await get('/api/trial').catch(() => null);
   if (t) $('#expiry').textContent = 'This account is yours and stays: free for one person, no expiry.';
   clear($('#next')).append(h('p', { class: 'hint', text: 'Looking for a call that still needs you…' }));
+  mountOffer(window, $('#pushoffer')).catch(() => {});     // 0.2.96: "Get questions on your phone" right after the passkey touch
   watchCalls(agentId, startedAt);
 }
 

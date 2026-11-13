@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS allowances(id TEXT PRIMARY KEY, account_id TEXT NOT N
   commands TEXT NOT NULL, project TEXT NOT NULL, nbf INTEGER NOT NULL, exp INTEGER NOT NULL, envelope BLOB, ledger_seq INTEGER,
   created_at INTEGER NOT NULL, created_by TEXT, from_rid TEXT, ended_at INTEGER, end_seq INTEGER);
 CREATE INDEX IF NOT EXISTS ix_allowances_acc ON allowances(account_id, created_at);
+-- 0.2.96 ("approved without reading"): one row per decision a person made on an approval page. read_ms = from the question shown to
+-- the button pressed (the page's own clock, capped by what the server saw between the first load and the decision); details = the
+-- person opened "Details"; kind once | forward ("from now on") | deny. No text of the call, no address: counts and times only.
+CREATE TABLE IF NOT EXISTS decision_ux(account_id TEXT NOT NULL, rid TEXT NOT NULL, t INTEGER NOT NULL, kind TEXT NOT NULL,
+  read_ms INTEGER, details INTEGER, PRIMARY KEY(account_id, rid));
+CREATE INDEX IF NOT EXISTS ix_decision_ux_t ON decision_ux(account_id, t);
 -- 0.2.13 (PROPOSAL-08): files that commands execute -- the version the owner confirmed ('ok') or a write the witness allowed ('dirty'), per agent
 CREATE TABLE IF NOT EXISTS exec_files(agent_id TEXT NOT NULL, path TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, rid TEXT, updated_at INTEGER,
   net TEXT,                              -- s7 (O2): what the witness saw of a judged write: network lines/hosts, never the text
@@ -166,3 +172,9 @@ CREATE TABLE IF NOT EXISTS run_context_policy(account_id TEXT PRIMARY KEY, polic
 CREATE TABLE IF NOT EXISTS sandbox_sessions(account_id TEXT NOT NULL, agent_id TEXT NOT NULL, session_id TEXT NOT NULL, sdig TEXT, fkey TEXT,
   changed INTEGER NOT NULL, t INTEGER NOT NULL, PRIMARY KEY(agent_id, session_id));
 CREATE INDEX IF NOT EXISTS ix_sandbox_sessions_t ON sandbox_sessions(agent_id, t);
+-- r0269: public log of anchor batches (app/tlog.py): leaves, signed C2SP checkpoints, daily external stamps of a checkpoint
+CREATE TABLE IF NOT EXISTS tlog_leaves(idx INTEGER PRIMARY KEY, batch_id TEXT UNIQUE NOT NULL, leaf BLOB NOT NULL, t INTEGER);
+CREATE TABLE IF NOT EXISTS tlog_checkpoints(size INTEGER PRIMARY KEY, root BLOB NOT NULL, note TEXT NOT NULL, t INTEGER);
+CREATE TABLE IF NOT EXISTS tlog_stamps(size INTEGER PRIMARY KEY, digest BLOB NOT NULL, t INTEGER, status TEXT, ots TEXT, tsa TEXT,
+  tries INTEGER DEFAULT 0, next_try INTEGER, last_err TEXT, done_t INTEGER);
+CREATE TABLE IF NOT EXISTS vocabs(digest TEXT PRIMARY KEY, json TEXT NOT NULL, t INTEGER);   -- r0269: reason vocabularies pinned by mandates (app/vocab.py)

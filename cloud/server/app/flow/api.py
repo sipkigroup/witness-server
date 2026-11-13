@@ -92,8 +92,13 @@ async def approvals_batch(req: Request):
         env = wa.b64u_dec(b["envelope_b64"])
     except Exception:
         raise Err(409, "WB_MALFORMED")
-    return await run_in_threadpool(batch.do_batch, ctx, acc, b.get("rids"), b.get("approved"), env, b.get("views"),   # pv2: per-item views
-                                   getattr(req.state, "user", None))
+    res = await run_in_threadpool(batch.do_batch, ctx, acc, b.get("rids"), b.get("approved"), env, b.get("views"),   # pv2: per-item views
+                                  getattr(req.state, "user", None))
+    from app import uxstat                      # 0.2.96: "approved without reading" counts a batch item as a decision too
+    for x in (res.get("results") or []) if isinstance(res, dict) else []:
+        if isinstance(x, dict) and x.get("verdict") in ("allow", "refused"):
+            uxstat.record(ctx, acc["id"], x.get("rid"), "once" if res.get("approved") is True else "deny", b)
+    return res
 
 
 @router.post("/v1/catalog")

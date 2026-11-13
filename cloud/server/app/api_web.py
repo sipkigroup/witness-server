@@ -16,7 +16,7 @@ import wa_profile as wa
 from svidetel_v4.schema import validate_mandate
 from app import actions as act
 from app.hookjudge import judge as hj
-from app import allowances, auth, keyalert, keys, org, repeat, waiting, wire, toolmap as tm
+from app import allowances, auth, keyalert, keys, org, repeat, uxstat, waiting, wire, toolmap as tm
 from app import delegation, levels, account_delete, stats, trial
 from app import signview, maskdep, qwords
 from app.context import Err, check_json, canon_rid
@@ -639,6 +639,7 @@ def make_router(ctx):
         rid = canon_rid(rid)
         acc = auth.session_account(ctx, req)
         out = _approval_answer(acc, rid, req.state.user)
+        uxstat.mark_shown(ctx, acc["id"], rid, out.get("status"))     # 0.2.96: "approved without reading" (app/uxstat.py)
         vh = _view_offer(acc, out)
         if vh is not None:
             out["view_sha256"] = vh.hex()      # pv2810: the page signs this hash (it computes it itself from the same answer)
@@ -905,6 +906,7 @@ def make_router(ctx):
         res = _file_changed(x["rid"], act.do_approve(ctx, acc, req.state.user, x["rid"], approved, env, b.get("repeat"), view_fn=vf))
         if live is not None and isinstance(res, dict) and res.get("verdict") == "allow" and not res.get("file_changed"):
             res = dict(res, agent_waiting=live)   # the page says "it runs now" (the hook gets the answer) or "when the agent repeats it"
+        uxstat.record(ctx, acc["id"], x["rid"], "once" if approved else "deny", b)
         return res
 
     def _file_changed(rid, res):
@@ -931,7 +933,9 @@ def make_router(ctx):
         except Exception:
             raise Err(409, "WA_MALFORMED")
         vf = _view_fn(acc, x["rid"], req.state.user, b)
-        return _file_changed(x["rid"], act.release(ctx, acc, req.state.user, x["rid"], rel, env, view_fn=vf))
+        res = _file_changed(x["rid"], act.release(ctx, acc, req.state.user, x["rid"], rel, env, view_fn=vf))
+        uxstat.record(ctx, acc["id"], x["rid"], "once" if rel else "deny", b)
+        return res
 
     # ---------------- 0.2.10: project allowances (PROPOSAL-07) ----------------
     @r.get("/api/allowances")
@@ -949,7 +953,15 @@ def make_router(ctx):
         except Exception:
             raise Err(409, "WA_MALFORMED")
         rid = canon_rid(b.get("rid"))
-        return allowances.create(ctx, acc, req.state.user, rid, env, view_fn=_view_fn(acc, rid, req.state.user, b))   # pv2
+        res = allowances.create(ctx, acc, req.state.user, rid, env, view_fn=_view_fn(acc, rid, req.state.user, b))   # pv2
+        uxstat.record(ctx, acc["id"], rid, "forward", b)
+        return res
+
+    @r.get("/api/ux-guard")
+    def ux_guard(req: Request):
+        """0.2.96: "approved without reading" of this account, last 7 days (app/uxstat.py)."""
+        acc = auth.session_account(ctx, req)
+        return uxstat.account_view(ctx, acc["id"])
 
     @r.post("/api/allowances/{aid}/revoke")
     async def allowances_revoke(aid: str, req: Request):

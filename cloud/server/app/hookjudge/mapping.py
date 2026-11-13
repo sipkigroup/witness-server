@@ -173,11 +173,20 @@ def map_event(ev: dict, home: str | None = None, env=None) -> list:
     ttok = _bp.TMPDIR_CTX.set(_bp.tmpdir_of(env if isinstance(env, dict) else {}, ti_.get("command")))   # 0.2.93 (r0263): $TMPDIR
     try:
         m = _map(ev, home, env)
+        gh_ = getattr(_fs.current(), "git_head", lambda: None)()
     finally:
         _bp.TMPDIR_CTX.reset(ttok)
         if tok is not None:
             _fs.reset_root(tok)
-    return m if isinstance(m, list) else [m]
+    m = m if isinstance(m, list) else [m]
+    if isinstance(gh_, str) and gh_:
+        # 0.2.96 (client 0.2.65): the git branch of the project (the hook reads .git/HEAD). A "from now on" of this project ends when the
+        # branch is another one (app/allowances.reset_stale). Absent (an older hook, no git, LocalFS without a test value): byte-equal
+        for x in m:
+            w_ = x.args.get(RESERVED) if isinstance(x.args, dict) else None
+            if isinstance(w_, dict) and w_.get("project") is not None:
+                w_["branch"] = gh_
+    return m
 
 
 def _map(ev, home, env=None):

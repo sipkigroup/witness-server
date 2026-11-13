@@ -6,12 +6,13 @@ import { sha256 } from './profile.js';
 
 export const TYP_ALLOWANCE = 'application/aar-allowance+cbor';
 export const DEFAULT_DAYS = 1;          // 0.2.51: one day by default (was 30): one question, then 24 h of quiet in this project
-export const MAX_DAYS = 90;
+export const MAX_DAYS = 30;          // r0271: the server's cap (allowances.MAX_DAYS); was a dead 90
 // shown next to the checkbox; the same sentence as server/app/allowances.py TRUST_TEXT (a test keeps them equal)
 export const TRUST_TEXT = "Allowing a command for this project means trusting the project's code: pytest, npm test, make, cargo test and go test run "
   + "the project's tests, conftest.py, plugins, scripts and build files, npm install and pip install -e . install the dependencies "
   + 'the project declares, and the agent can change those files. In practice the agent can then run code it wrote in this project '
-  + 'without asking you. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still '
+  + 'without asking you when Witness could read what it wrote and that text does not reach the network, your keys or files outside this '
+  + 'project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still '
   + 'asked every time, and so is anything outside this project.';
 
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -51,4 +52,5 @@ export function untilText(expS) {
   return new Date(expS * 1000).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-export const STATUS_TEXT = { active: 'active', revoked: 'revoked', expired: 'expired', mandate_ended: 'ended: the mandate was replaced or revoked' };
+export const STATUS_TEXT = { active: 'active', revoked: 'revoked', expired: 'expired', mandate_ended: 'ended: the mandate was replaced or revoked',
+  branch_changed: 'ended: the project switched to another git branch' };

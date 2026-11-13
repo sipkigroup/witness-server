@@ -27,6 +27,7 @@ MAX_PATH = 4096
 
 LOCAL_WHICH = None            # 0.2.89, TESTS ONLY: the `which` fact LocalFS reports ({name: realpath | None})
 LOCAL_GIT_SELF = None                                # 0.2.95: the SHA-256 of the person's git user.email (tests set it)
+LOCAL_GIT_HEAD = None                                # 0.2.96: the project's git branch as the hook reports it (tests set it)
 LOCAL_SANDBOX = None          # V3, TESTS ONLY: the sandbox fact LocalFS reports (a dict as the hook sends it)
 LOCAL_HARNESS = None          # 06.11, TESTS ONLY: the hook's K1 finding LocalFS reports (str) and whether the hook found it sandbox-held
 LOCAL_HARNESS_HELD = False
@@ -105,6 +106,9 @@ class LocalFS:
     def git_self(self):
         return LOCAL_GIT_SELF                            # 0.2.95: tests set it; None = no fact
 
+    def git_head(self):
+        return LOCAL_GIT_HEAD                            # 0.2.96: tests set it; None = no fact (no branch, no reset)
+
     def shadow(self, p):
         """0.2.90: tests / the fatigue harness: a shadow copy of `p` under the temp dir (what the hook does on the user's machine)."""
         import hashlib
@@ -156,6 +160,7 @@ class FactsFS:
         self.hzh = facts.get("harness_held") is True     # 06.11 (law 2): the hook found it only where the strict sandbox holds the place
         self.wh = facts.get("which") if isinstance(facts.get("which"), dict) else None     # 0.2.89: None = an older hook or no fact
         self.gself = facts.get("git_self") if isinstance(facts.get("git_self"), list) else None   # 0.2.95: SHA-256 of git user.email
+        self.ghead = facts.get("git_head") if isinstance(facts.get("git_head"), str) else None   # 0.2.96: the project's git branch
         self.refs = fs.get("gitref") if isinstance(fs.get("gitref"), dict) else None     # None: an older hook, which cannot answer
         self.same = fs.get("samefile") if isinstance(fs.get("samefile"), dict) else {}     # 0.2.73 (N13)
         self.arch = fs.get("archive") if isinstance(fs.get("archive"), dict) else None     # None: a hook older than 0.2.49 (never asked)
@@ -258,6 +263,9 @@ class FactsFS:
 
     def git_self(self):
         return self.gself
+
+    def git_head(self):
+        return self.ghead                                # 0.2.96 (client 0.2.65): the project's git branch; None = no fact
 
     def home(self):
         return self.h

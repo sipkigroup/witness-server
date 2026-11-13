@@ -1,5 +1,6 @@
 """Tool map (ARHITEKTURA 4.3): raw MCP call (tool, args) -> action of -04; presets; DLP; masking of args for the panel."""
 import collections
+import contextvars
 import copy
 import functools
 import hashlib
@@ -490,7 +491,33 @@ def decided_preview(args_sha256, masked_preview):
     return "%s%s %s" % (DECIDED_PREFIX, args_sha256 or "-", ex)
 
 
-def _args_digest(tool, args, salt=None, **kw):
+# r0269 (migration plan step 3): args_sha256 over RFC 8785 (JCS) with a domain prefix, rule "mr-args-2". The old rule (v1: Python
+# json.dumps with sort_keys, code-point order, repr numbers; salted form "dw-args1") stays the default, so every deployed client that
+# recomputes the hash keeps matching. A client opts in per request with the header X-DW-Args-V: 2 (api_agent sets ARGS_V for that
+# request); the action then carries the label `args_v: 2`, and a reader picks the rule by that label (absent = v1, old receipts).
+# Arguments JCS cannot encode (an integer beyond 2^53, a non-finite number) fall back to v1 WITHOUT the label: same rule on both sides.
+ARGS_V = contextvars.ContextVar("dw_args_v", default=1)
+ARGS_V2 = b"mr-args-2\0"
+
+
+def args_digest_v(tool, args, salt=None, v=None):
+    """-> (hex, rule version actually used: 1 or 2)."""
+    v = ARGS_V.get() if v is None else v
+    if v == 2:
+        from app.signview import jcs
+        try:
+            raw = ARGS_V2 + jcs([tool, args])
+        except (ValueError, TypeError, RecursionError):
+            raw = None
+        if raw is not None:
+            if salt is None:
+                return hashlib.sha256(raw).hexdigest(), 2
+            import hmac
+            return hmac.new(salt, raw, hashlib.sha256).hexdigest(), 2
+    return _args_digest_v1(tool, args, salt), 1
+
+
+def _args_digest_v1(tool, args, salt=None, **kw):
     """0.2.34: SHA-256 of the canonical [tool, args], or (salt given, DW_ARGS_SALT=on) HMAC-SHA-256(salt, "dw-args1\\0" + canonical)."""
     raw = json.dumps([tool, args], sort_keys=True, separators=(",", ":"), ensure_ascii=False, **kw).encode()
     if salt is None:
@@ -499,8 +526,30 @@ def _args_digest(tool, args, salt=None, **kw):
     return hmac.new(salt, b"dw-args1\0" + raw, hashlib.sha256).hexdigest()
 
 
+def _args_digest(tool, args, salt=None):
+    return args_digest_v(tool, args, salt)[0]
+
+
+def _bind_args(act, tool, args, salt):
+    h, v = args_digest_v(tool, args, salt)
+    act["args_sha256"] = h
+    if v == 2:
+        act["args_v"] = 2
+    return h
+
+
+def args_matches(action, tool, args, salt=None):
+    """Reader side: does `action.args_sha256` bind exactly (tool, args)? The rule is chosen by the action's own label."""
+    v = 2 if isinstance(action, dict) and action.get("args_v") == 2 else 1
+    h, used = args_digest_v(tool, args, salt, v=v)
+    return isinstance(action, dict) and used == v and action.get("args_sha256") == h
+
+
 def args_hash(tool, args, salt=None):
-    return _args_digest(tool, args, salt, default=str)
+    v = ARGS_V.get()
+    if v == 2:
+        return args_digest_v(tool, args, salt, v=2)[0]
+    return _args_digest_v1(tool, args, salt, default=str)
 
 
 def text_preview(toolmap, tool, args, literals):
@@ -625,7 +674,7 @@ def pass_action(agent_id, tool, args, literals, salt=None):
     """0.2.4 (draft-deus-aar-05 8.6): a call the signed map marks `pass` is an action of class `pass`: recipient = the tool identifier, data = the data classes
     detected in ANY string of the arguments, amount 0. The witness decides it (OK_PASS or DATA_FORBIDDEN) and writes a RECEIPT."""
     act = {"agent": agent_id, "class": "pass", "recipient": "tool:" + tool[:200], "amount": 0}
-    act["args_sha256"] = _args_digest(tool, args, salt)
+    _bind_args(act, tool, args, salt)
     text = " \n".join(string_leaves(_without_exec(args)))
     tags, hits = dlp_scan(text, literals)
     act["data"] = sorted(set(tags) | set(dlp_tags(text, literals)))
@@ -649,7 +698,7 @@ def build_action(agent_id, toolmap, tool, args, literals, pass_receipt=False, sa
     act = {"agent": agent_id, "class": t["class"]}
     # Bind the decision (and any later approval) to the EXACT request: hash of the tool name and all arguments.
     # request_hash (-04 5.7) covers every member of the action, so an approval for one email cannot authorise another.
-    act["args_sha256"] = _args_digest(tool, args, salt)
+    _bind_args(act, tool, args, salt)
     if "recipient" in t:
         act["recipient"] = recipient_values(t, args)[0]
     text = " \n".join(str(jpath(args, p)) for p in t.get("text", []) if jpath(args, p) is not None)

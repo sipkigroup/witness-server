@@ -46,8 +46,25 @@ class TestTSA:
     def root_pem(self):
         return self.root.public_bytes(serialization.Encoding.PEM)
 
-    def respond(self, query_der, gen_time=None, imprint=None):
-        """TimeStampResp DER for a TimeStampReq. imprint: override the hashed message (negative tests)."""
+    def issue(self, name, key=None, ca=False, eku=True, issuer=None):
+        """r0269 (attack tests): a certificate `name` issued by this root (or by issuer=(cert, key)), for `key` (new EC key if None).
+        -> (cert, key)."""
+        key = key or ec.generate_private_key(ec.SECP256R1())
+        icert, ikey = issuer or (self.root, self.root_key)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        b = (x509.CertificateBuilder().subject_name(_name(name)).issuer_name(icert.subject).public_key(key.public_key())
+             .serial_number(x509.random_serial_number()).not_valid_before(now - DAY).not_valid_after(now + 365 * DAY)
+             .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+        if eku:
+            b = b.add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.TIME_STAMPING]), critical=True)
+        return b.sign(ikey, hashes.SHA256()), key
+
+    def respond(self, query_der, gen_time=None, imprint=None, ess="v2", signer=None, extra_certs=(), certs=None, sid_cert=None,
+                dup_attr=False):
+        """TimeStampResp DER for a TimeStampReq. imprint: override the hashed message (negative tests).
+        r0269 attack knobs: ess "v2" | "v1" | "none" | "both" | a cryptography certificate whose hash is put in the ESS attribute;
+        signer=(cert, key) signs instead of the TSA key; extra_certs are appended to the token; certs replaces the certificate list;
+        sid_cert names the signer id; dup_attr repeats message-digest."""
         q = tsp.TimeStampReq.load(query_der)
         gt = gen_time or datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
         self.serial += 1
@@ -58,28 +75,41 @@ class TestTSA:
                            "serial_number": self.serial, "gen_time": gt, "nonce": q["nonce"].native,
                            "tsa": ax509.GeneralName({"directory_name": ax509.Name.load(self.cert.subject.public_bytes())})})
         econtent = tst.dump()
-        acert = ax509.Certificate.load(self.cert.public_bytes(serialization.Encoding.DER))
-        aroot = ax509.Certificate.load(self.root.public_bytes(serialization.Encoding.DER))
-        ess = tsp.SigningCertificateV2({"certs": [{"cert_hash": hashlib.sha256(acert.dump()).digest()}]})
-        attrs = cms.CMSAttributes([
-            cms.CMSAttribute({"type": "content_type", "values": ["tst_info"]}),
-            cms.CMSAttribute({"type": "message_digest", "values": [hashlib.sha256(econtent).digest()]}),
-            cms.CMSAttribute({"type": "signing_certificate_v2", "values": [ess]})])
+        der = lambda c: ax509.Certificate.load(c.public_bytes(serialization.Encoding.DER))  # noqa: E731
+        scert, skey = signer or (self.cert, self.key)
+        acert = der(scert)
+        aroot = der(self.root)
+        sidc = der(sid_cert) if sid_cert is not None else acert
+        ess_c = der(ess) if isinstance(ess, x509.Certificate) else acert
+        a = [cms.CMSAttribute({"type": "content_type", "values": ["tst_info"]}),
+             cms.CMSAttribute({"type": "message_digest", "values": [hashlib.sha256(econtent).digest()]})]
+        if dup_attr:
+            a.append(cms.CMSAttribute({"type": "message_digest", "values": [hashlib.sha256(econtent).digest()]}))
+        if ess in ("v1", "both"):
+            a.append(cms.CMSAttribute({"type": "signing_certificate", "values": [
+                tsp.SigningCertificate({"certs": [{"cert_hash": hashlib.sha1(ess_c.dump()).digest()}]})]}))
+        if ess not in ("v1", "none"):
+            a.append(cms.CMSAttribute({"type": "signing_certificate_v2", "values": [
+                tsp.SigningCertificateV2({"certs": [{"cert_hash": hashlib.sha256(ess_c.dump()).digest()}]})]}))
+        attrs = cms.CMSAttributes(a)
         data = attrs.dump()
-        if self.kind == "rsa":
-            sig = self.key.sign(data, padding.PKCS1v15(), hashes.SHA256())
+        if isinstance(skey, rsa.RSAPrivateKey):
+            sig = skey.sign(data, padding.PKCS1v15(), hashes.SHA256())
             salg = "sha256_rsa"
         else:
-            sig = self.key.sign(data, ec.ECDSA(hashes.SHA256()))
+            sig = skey.sign(data, ec.ECDSA(hashes.SHA256()))
             salg = "sha256_ecdsa"
         si = cms.SignerInfo({"version": "v1",
                              "sid": cms.SignerIdentifier({"issuer_and_serial_number": cms.IssuerAndSerialNumber(
-                                 {"issuer": acert.issuer, "serial_number": acert.serial_number})}),
+                                 {"issuer": sidc.issuer, "serial_number": sidc.serial_number})}),
                              "digest_algorithm": algos.DigestAlgorithm({"algorithm": "sha256"}),
                              "signed_attrs": attrs,
                              "signature_algorithm": algos.SignedDigestAlgorithm({"algorithm": salg}),
                              "signature": sig})
-        certs = [acert, aroot] if q["cert_req"].native else []
+        if certs is not None:
+            certs = [der(c) for c in certs]
+        else:
+            certs = ([acert, aroot] if q["cert_req"].native else []) + [der(c) for c in extra_certs]
         sd = cms.SignedData({"version": "v3", "digest_algorithms": [algos.DigestAlgorithm({"algorithm": "sha256"})],
                              "encap_content_info": {"content_type": "tst_info", "content": core.ParsableOctetString(econtent)},
                              "certificates": certs, "signer_infos": [si]})

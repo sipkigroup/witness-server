@@ -216,6 +216,8 @@ class DB:
                                     ("actions", "line_lead", "TEXT"),    # 04.11 (L3): rid of the question that stands for this one (one tool call = one question)
                                     ("actions", "deny_key", "TEXT"),     # 05.11 (RT hole 1): normalized key of a dangerous shell line, to keep a refused line refused in the window
                                     ("sandbox_sessions", "strict", "INTEGER"),   # r0261c (д): the session had a strict Bash fact
+                                    ("allowances", "branch", "TEXT"), ("allowances", "end_reason", "TEXT"),   # 0.2.96: "from now on" ends on a branch change
+                                    ("actions", "shown_at", "INTEGER"),  # 0.2.96: the first time a person's page loaded this question ("approved unread")
                                     ("actions", "reconcile", "TEXT")):   # rel 28.10: "ledger:<outcome>" brought in line on start / "manual:<why>" left for a person
                 cols = {r["name"] for r in self.c.execute("PRAGMA table_info(%s)" % table)}
                 if col not in cols:

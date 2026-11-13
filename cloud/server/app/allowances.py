@@ -35,7 +35,18 @@ from app.registry_wa import looks_like_envelope
 
 TYP = getattr(wa, "TYP_ALLOWANCE", "application/aar-allowance+cbor")
 DEFAULT_DAYS = 1                # 0.2.51: the approval page preselects 1 day (was 30) and offers "Allow for 24 h" first
-DAYS = (1, 7, 30, 90)
+# 0.2.96 (plan 13.11 p.2, permission laundering, arXiv 2610.22987): "from now on" is narrow and does not pile up.
+#  - the term is a ceiling: at most MAX_DAYS (the core still accepts 90; this witness signs no longer than 30 days). A rule also ends
+#    earlier: revoked (one tap), the mandate ended, or the project's git branch changed (reset_stale);
+#  - it never reaches past the project it was signed for (the core matches `project` byte-exact) nor past the branch it was given on;
+#  - at most MAX_PER_PROJECT live rules per agent and project. Why 20: a project's own toolbox that may be allowed at all is short
+#    (test runner, linter, type checker, build, git add / commit: 5-10 identifiers, up to 8 per rule), plus a few narrow amendments
+#    (a host, a folder, gh reads); the friction stand with "from now on" on every eligible question (TR_VPRED) stays well under it per
+#    project. More than 20 live rules in ONE project is the shape of laundering (many narrow rules that add up to a wide one), so the
+#    21st is refused: revoke one first. A fixed number is a Goodhart risk on its own; the guard is that each rule is still exact.
+DAYS = (1, 7, 30)
+MAX_DAYS = 30
+MAX_PER_PROJECT = 20
 NBF_SKEW_S = 600
 ID_RE = re.compile(r"al_[A-Z2-7]{26}")
 
@@ -43,7 +54,8 @@ ID_RE = re.compile(r"al_[A-Z2-7]{26}")
 TRUST_TEXT = ("Allowing a command for this project means trusting the project's code: pytest, npm test, make, cargo test and go test run "
               "the project's tests, conftest.py, plugins, scripts and build files, npm install and pip install -e . install the dependencies "
               "the project declares, and the agent can change those files. In practice the agent can then run code it wrote in this project "
-              "without asking you. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
+              "without asking you when Witness could read what it wrote and that text does not reach the network, your keys or files outside this "
+              "project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
               "asked every time, and so is anything outside this project.")
 
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "busybox", "csh", "tcsh", "pwsh", "powershell", "cmd"}
@@ -179,7 +191,41 @@ def project_meta(args):
         return None
     if not (isinstance(out, list) and all(isinstance(x, str) for x in out)) or not isinstance(heads, list):
         return None
-    return {"project": p, "outside": out[:64], "heads": [h for h in heads if isinstance(h, str)][:64]}
+    r = {"project": p, "outside": out[:64], "heads": [h for h in heads if isinstance(h, str)][:64]}
+    br = w.get("branch")
+    if isinstance(br, str) and 0 < len(br) <= 256:
+        r["branch"] = br                                 # 0.2.96: the project's git branch (client 0.2.65); absent = no git / older hook
+    return r
+
+
+def live_count(ctx, acc_id, agent_id, project, now=None):
+    """0.2.96: live "from now on" rules of this agent in this project (not ended, not expired)."""
+    now = _now() if now is None else now
+    return ctx.db.one("SELECT COUNT(*) AS n FROM allowances WHERE account_id=? AND agent_id=? AND project=? AND ended_at IS NULL AND exp>=?",
+                      (acc_id, agent_id, project, now))["n"]
+
+
+def reset_stale(ctx, acc_id, agent_id, L, meta, now):
+    """0.2.96: the call reports the project's git branch (or none) and a live rule of this agent and project was given on ANOTHER branch
+    -> that rule ends (ledger ALLOWANCE_END, cause "revoked"; allowances.end_reason = "branch"), before any cover step reads the ledger.
+    A rule is never carried to another branch: the files a `pytest` or a `make` runs are the branch's files. Called under hub.lock.
+    -> the ids ended. Another project's rules are not touched: they never apply here (the core matches the project byte-exact)."""
+    if meta is None:
+        return []
+    cur = meta.get("branch")
+    out = []
+    for g in ctx.db.q("SELECT id, branch FROM allowances WHERE account_id=? AND agent_id=? AND project=? AND ended_at IS NULL AND exp>=?",
+                      (acc_id, agent_id, meta["project"], now)):
+        if (g["branch"] or None) == (cur or None):
+            continue
+        try:
+            res = L.end_allowance(g["id"], "revoked")
+        except Exception:  # noqa: BLE001  an unknown id in the ledger (never expected): mark it ended here, it covers nothing
+            res = {"result": "reject", "reason": "ALLOWANCE_UNKNOWN"}
+        ctx.db.x("UPDATE allowances SET ended_at=?, end_seq=?, end_reason='branch' WHERE id=? AND ended_at IS NULL",
+                 (_now(), res.get("seq"), g["id"]))
+        out.append(g["id"])
+    return out
 
 
 def team(ctx, account_id):
@@ -209,7 +255,7 @@ def offer(ctx, acc, x):
     """What the approval page may offer for the pending action row x: {eligible, why_not, commands, project, t, days, default_days,
     max_days, typ, text}. Built from the row and the ledger; the owner's device builds and signs the payload itself."""
     out = {"eligible": False, "why_not": None, "commands": [], "project": None, "t": _now(), "days": list(DAYS), "default_days": DEFAULT_DAYS,
-           "max_days": ALLOWANCE_MAX_S // 86400, "typ": TYP, "text": TRUST_TEXT}
+           "max_days": min(MAX_DAYS, ALLOWANCE_MAX_S // 86400), "typ": TYP, "text": TRUST_TEXT, "max_per_project": MAX_PER_PROJECT}
     try:
         a = json.loads(x["action_json"]) if x["action_json"] else None
         meta = json.loads(x["cmd_meta"]) if x["cmd_meta"] else None
@@ -239,7 +285,7 @@ def offer(ctx, acc, x):
     if x["reason"] != "ESCALATE_COMMAND":
         out["why_not"] = "this question is not about an unlisted command (%s)" % x["reason"]
         return out
-    if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"]:
+    if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"] and not _written_clean(x, meta):
         out["why_not"] = "it runs a file the agent wrote (shown on this page): approve once"     # r25 (s8 P2)
         return out
     if team(ctx, acc["id"]):
@@ -275,7 +321,32 @@ def offer(ctx, acc, x):
         out["why_not"] = "nothing in this line can be allowed for a project" if not want else "too many different commands in one line"
         return out
     out.update(eligible=True, commands=want, project=meta["project"], mandate_id=m["id"])
+    return _narrow(ctx, acc, x, meta, out)
+
+
+def _narrow(ctx, acc, x, meta, out):
+    """0.2.96: the branch the rule is bound to (shown on the page) and the per-project limit."""
+    out["branch"] = meta.get("branch")
+    n = live_count(ctx, acc["id"], x["agent_id"], meta["project"])
+    out["live_in_project"] = n
+    if n >= MAX_PER_PROJECT:
+        out.update(eligible=False, why_not="this project already has %d \"from now on\" rules (the most a project may have): revoke one under "
+                   "Settings -> Allowances, or approve this once" % n)
     return out
+
+
+def _written_clean(x, meta):
+    """r0271 (ISPYTANIE-0266 Н1): every written file this page shows is one a "from now on" rule for the project covers later
+    (actions.clean_in_project: the witness read the whole text, no gate, no script findings, inside the project) -> the rule is offered:
+    it would not be held after the next clean write either. Anything else (or unreadable) -> False (approve once, as before)."""
+    from app.actions import clean_in_project
+    try:
+        wr = json.loads(x["exec_json"]).get("written_run")
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if not isinstance(wr, list) or not wr or not isinstance(meta, dict):
+        return False
+    return all(isinstance(w, dict) and clean_in_project(w, w.get("file"), meta.get("project")) for w in wr)
 
 
 def _amend_offer(ctx, acc, x, meta, ids, out):
@@ -296,7 +367,7 @@ def _amend_offer(ctx, acc, x, meta, ids, out):
         out["why_not"] = "nothing in this call can be allowed from now on"
         return out
     out.update(eligible=True, commands=list(ids), project=meta["project"], mandate_id=m["id"], text=amend.TEXT, kind="amendment")
-    return out
+    return _narrow(ctx, acc, x, meta, out)
 
 
 def create(ctx, acc, user_id, rid, env, view_fn=None):
@@ -340,6 +411,8 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
             raise Err(409, "ALLOWANCE_MISMATCH", "the view the permission signs is not the view this request claims; reload the page")
         if not now - NBF_SKEW_S <= g["nbf"] <= now + 5:          # the core counts it from nbf: no allowance that starts "later"
             raise Err(409, "ALLOWANCE_MALFORMED", "nbf must be the time of signing")
+        if g["exp"] - g["nbf"] > MAX_DAYS * 86400:               # 0.2.96: the term is a ceiling of 30 days on this witness
+            raise Err(409, "ALLOWANCE_TOO_LONG", "\"from now on\" lasts at most %d days; sign a shorter term" % MAX_DAYS)
         if ctx.db.one("SELECT 1 AS k FROM allowances WHERE id=?", (g["id"],)):
             raise Err(409, "ALLOWANCE_ID_TAKEN")
         org.check_sign_counts(ctx, env, "allowance", acc["id"])      # 0.2.20 (the counter is read only where the passkey's key signed it)
@@ -349,13 +422,14 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
             raise Err(409, res["reason"])
         with ctx.db.tx():
             ctx.db.x("INSERT INTO allowances(id,account_id,agent_id,mandate_id,commands,project,nbf,exp,envelope,ledger_seq,created_at,created_by,from_rid,"
-                     "view_sha256) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     "view_sha256,branch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (g["id"], acc["id"], x["agent_id"], m["id"], json.dumps(g["commands"]), g["project"], g["nbf"], g["exp"], env, res["seq"],
-                      now, user_id, rid, g["view"].hex() if "view" in g else None))
+                      now, user_id, rid, g["view"].hex() if "view" in g else None, o.get("branch")))
             # the pending request is answered by the allowance (status `covered`: it leaves every queue; a waiting hook sends the call again,
             # an older hook answers "ask" as for any unanswered question and the agent's next call runs under the allowance)
             ctx.db.x("UPDATE actions SET covered_by=?, status='covered', updated_at=? WHERE rid=? AND status='pending_approval'", (g["id"], now, rid))
-    return {"allowance_id": g["id"], "commands": g["commands"], "project": g["project"], "exp": g["exp"], "ledger_seq": res["seq"]}
+    return {"allowance_id": g["id"], "commands": g["commands"], "project": g["project"], "exp": g["exp"], "ledger_seq": res["seq"],
+            "branch": o.get("branch")}
 
 
 def revoke(ctx, acc, aid):
@@ -371,14 +445,14 @@ def revoke(ctx, acc, aid):
         if res["result"] != "accept" and res.get("reason") != "ALLOWANCE_ENDED":
             raise Err(409, res["reason"])
         t = _now()
-        ctx.db.x("UPDATE allowances SET ended_at=?, end_seq=? WHERE id=?", (t, res.get("seq"), aid))
+        ctx.db.x("UPDATE allowances SET ended_at=?, end_seq=?, end_reason='revoked' WHERE id=?", (t, res.get("seq"), aid))
     return {"allowance_id": aid, "status": "revoked", "ended_at": t}
 
 
 def status_of(ctx, g, now=None):
     now = _now() if now is None else now
     if g["ended_at"] is not None:
-        return "revoked"
+        return "branch_changed" if "end_reason" in g.keys() and g["end_reason"] == "branch" else "revoked"
     m = ctx.db.one("SELECT status FROM mandates WHERE id=?", (g["mandate_id"],))
     if m is None or m["status"] != "active":
         return "mandate_ended"
@@ -397,7 +471,7 @@ def listing(ctx, acc):
         out.append({"id": g["id"], "agent_id": g["agent_id"], "agent": names.get(g["agent_id"], ""), "mandate_id": g["mandate_id"],
                     "commands": json.loads(g["commands"]), "project": g["project"], "nbf": g["nbf"], "exp": g["exp"],
                     "created_at": g["created_at"], "from_rid": g["from_rid"], "ended_at": g["ended_at"], "status": status_of(ctx, g, now),
-                    "uses": use["n"], "last_used": use["last"], "ledger_seq": g["ledger_seq"]})
+                    "uses": use["n"], "last_used": use["last"], "ledger_seq": g["ledger_seq"], "branch": g["branch"]})
     return out
 
 

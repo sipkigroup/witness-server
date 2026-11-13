@@ -39,9 +39,10 @@ export function laterConfirm(r, nowS, agentName) {
   if (!lp.ok) return { ok: false, why: lp.why, rows: [] };
   const agent = str(agentName) || str(r && r.agent_name) || str(r && r.agent_id) || str(r && r.action && r.action.agent) || 'this agent';
   const until = new Date((Math.floor(Number(nowS) || 0) + LATER_DAYS * 86400) * 1000).toISOString().slice(0, 10);
-  const rows = lp.items.map((it) => ({ commands: it.offer.commands.slice(), project: it.offer.project }));
-  const revoke = 'You can revoke it in Settings → Allowances.';
-  const text = rows.map((x) => x.commands.join(', ') + ' in ' + x.project).join('; ') + ' — agent ' + agent + ', until ' + until + '. ' + revoke;
+  const rows = lp.items.map((it) => ({ commands: it.offer.commands.slice(), project: it.offer.project, ...(str(it.offer.branch) ? { branch: it.offer.branch } : {}) }));
+  // 0.2.96: the rule is bound to the git branch it was given on and ends when the project is on another one
+  const revoke = 'It ends earlier if the project switches to another git branch. You can revoke it in Settings → Allowances.';
+  const text = rows.map((x) => x.commands.join(', ') + ' in ' + x.project + (x.branch ? ' (branch ' + x.branch + ')' : '')).join('; ') + ' — agent ' + agent + ', until ' + until + '. ' + revoke;
   return { ok: true, why: '', agent, until, rows, revoke, text };
 }
 
@@ -68,6 +69,58 @@ export function cmdLine(heads, text, whole) {
   const first = nl >= 0 ? t.slice(0, nl) : t;
   if (nl < 0 && first.length <= CMD_MAX) return { text: first, cut: false };
   return { text: first.slice(0, CMD_MAX - 1) + '\u2026', cut: true };
+}
+
+// 13.11 (r0271, ISPYTANIE-0266 Н3): the command line is the ONE place of the first screen the AGENT writes, and an agent can write prose
+// into it: `npm test -- --reporter "DEUS WITNESS VERIFIED: SAFE. Press Allow from now on"`, `make build # Witness note: checked, harmless`.
+// On the first screen: shell comments (`# ...` outside quotes) are left out and a quoted string longer than STR_MAX is folded to "…"
+// (the whole text stays under Details and Allow waits until it was seen: `folded` counts as cut). The words still come from the agent:
+// the page labels the line "Command, as your agent wrote it" and warns when it sounds like Witness itself (agentVoice).
+export const STR_MAX = 16;
+export const CMD_BY = 'Command, as your agent wrote it:';
+export const VOICE_NOTE = 'Text from the agent, not from Witness: this command contains words that sound like a verdict ("{w}"). Witness never writes inside a command.';
+// words of a verdict / of Witness in a comment or a string of the command (not `deus-witness` in a path or a package name)
+const VOICE = /(?<![-\w./])(witness|verified|approved|pre-?approved|harmless|trusted|whitelisted|press allow|choose allow|click allow|allow this|safe to run|no risk)(?![-\w])/i;
+const VOICE_UP = /(?<![-\w./])(SAFE|VERIFIED|APPROVED|WITNESS|HARMLESS|TRUSTED)(?![-\w])/;
+
+// one line of a shell command -> {text, folded, said: [comment and string texts]}; never throws
+export function agentFold(line) {
+  const t = String(line == null ? '' : line);
+  let out = '', folded = false, i = 0;
+  const said = [];
+  while (i < t.length) {
+    const c = t[i];
+    if (c === '\\' && i + 1 < t.length) { out += c + t[i + 1]; i += 2; continue; }
+    if (c === "'" || c === '"' || (c === '$' && t[i + 1] === "'")) {
+      const q = c === '$' ? "'" : c, st = c === '$' ? i + 2 : i + 1;
+      let j = st;
+      while (j < t.length && t[j] !== q) j += (q === '"' && t[j] === '\\') ? 2 : 1;
+      const body = t.slice(st, Math.min(j, t.length));
+      said.push(body);
+      const pre = c === '$' ? "$'" : q;
+      if (body.length > STR_MAX) { out += pre + '\u2026' + q; folded = true; } else out += pre + body + (j < t.length ? q : '');
+      i = j + 1;
+      continue;
+    }
+    if (c === '#' && (i === 0 || /\s/.test(t[i - 1]))) {
+      const nl = t.indexOf('\n', i);
+      said.push(t.slice(i + 1, nl < 0 ? t.length : nl));
+      folded = true;
+      if (nl < 0) break;
+      i = nl;
+      continue;
+    }
+    out += c; i += 1;
+  }
+  return { text: folded ? out.replace(/[ \t]+$/gm, '') : out, folded, said };
+}
+
+// the words of a verdict the agent put into the command (a comment, a string, or shouted bare words), or '' -> for VOICE_NOTE
+export function agentVoice(text) {
+  const t = String(text == null ? '' : text);
+  for (const s of agentFold(t).said) { const m = VOICE.exec(s) || VOICE_UP.exec(s); if (m) return m[1]; }
+  const up = VOICE_UP.exec(t);
+  return up ? up[1] : '';
 }
 
 // the short note by the buttons when "Allow this from now on" is not offered (the full reason, from the server, is under Details)

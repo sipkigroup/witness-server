@@ -102,6 +102,16 @@ Time-stamps (RFC 3161, second anchor)
     verifies it offline against anchors/tsa-ca/<tsa>.pem. A TSA is a TRUSTED third party (unlike Bitcoin): compare the root
     certificates with the ones the TSA publishes, or pass --tsa-ca=<dir> with roots you trust. No revocation check (offline).
     These stamps are NOT qualified time stamps (eIDAS): they show when the TSA saw the root, as far as you trust that TSA.
+Public log of batches (r0269; checker lines "tlog ...")
+  - tlog/checkpoint.note is a C2SP tlog-checkpoint (signed note) of the witness's public, append-only list of ALL anchor batches;
+    tlog/vkey is its verifier key (compare it with https://<service>/tlog/vkey). tlog/inclusion/<batch>.json proves that each batch
+    of this pack is leaf <index> of that list (RFC 9162 inclusion proof).
+  - The point: the witness cannot show you one batch history and somebody else another. Compare tlog/checkpoint.note with what
+    https://<service>/checkpoint (or a monitor, or a co-signing witness) shows: the same size with another root = proven fork;
+    a larger size must come with a consistency proof (/tlog/proof/consistency). verify/tlogcheck.py does both offline.
+  - tlog/stamps/<size>.note + .ots / .tsr.<tsa>: the daily external stamp of the log checkpoint covering the batch (OpenTimestamps
+    and/or an RFC 3161 TSA over SHA-256 of the checkpoint text). A batch newer than the last stamp says "time: queued": its time
+    rests on the witness's clock until the next daily stamp.
 
 What it does NOT prove
   - that the witness key in manifest.json is the real service key: compare kid_hex/pub_hex with https://<service>/v1/witness;
@@ -325,6 +335,19 @@ def build_pack(ctx, account_id):
         if nf:
             files.update(nf)
             files.update(node2feed.verify_files())
+    from app import vocab                      # r0269: every reason vocabulary a mandate's tool map document pins
+    vd = []
+    for k, v in list(files.items()):
+        if k.startswith("toolmaps/") and k.endswith(".cbor"):
+            try:
+                d = cbor2.loads(v)
+                if isinstance(d, dict) and isinstance(d.get("vocab"), str):
+                    vd.append(d["vocab"])
+            except Exception:  # noqa: BLE001
+                pass
+    files.update(vocab.pack_files(db, vd))
+    from app import tlog                       # r0269: the public log of batches: checkpoint, inclusion of each batch, stamps of the log
+    files.update(tlog.pack_files(ctx, bids))
     # registry: own record + the hash chain (other tenants' rows are reduced to seq/prev/hash). 0.2.2: this account's key changes
     # ("keys:<id>": passkey added / removed) and policy rows ("org:<id>") carry their text as `row_json` (a 0.2.1 checker ignores it)
     log = []
@@ -408,7 +431,8 @@ def verify_files():
              "verify/registry_wq.py": _read(REGISTRY_WQ),
              "verify/tsa.py": _read(TSA_PY),
              "verify/mandate_check.py": _read(os.path.join(SERVER, "packtools", "mandate_check.py")),     # 0.2.83: verdict lines, shown objects
-             "verify/run_context.py": _read(os.path.join(SERVER, "packtools", "run_context.py"))}         # 0.2.85: runs/<id>.cose
+             "verify/run_context.py": _read(os.path.join(SERVER, "packtools", "run_context.py")),         # 0.2.85: runs/<id>.cose
+             "verify/tlogcheck.py": _read(os.path.join(SERVER, "packtools", "tlogcheck.py"))}             # r0269: tlog/ (C2SP checkpoint, proofs)
     for m in CORE_MODULES:
         files["verify/svidetel_v4/%s.py" % m] = _read(os.path.join(_paths.CORE_DIR, "svidetel_v4", m + ".py"))
     return files

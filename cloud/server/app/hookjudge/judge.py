@@ -194,6 +194,9 @@ def _facts(body) -> dict:
     gs = f.get("git_self")                           # 0.2.95 (client 0.2.63): SHA-256 of the person's own git user.email (datarule.own_addresses)
     if isinstance(gs, list) and 0 < len(gs) <= 4 and all(isinstance(x, str) and re.fullmatch(r"[0-9a-f]{64}", x) for x in gs):
         out["git_self"] = list(gs)                   # malformed or absent = no fact: an address in the line is judged as before
+    gh = f.get("git_head")                           # 0.2.96 (client 0.2.65): the project's git branch (.git/HEAD), ends a "from now on"
+    if isinstance(gh, str) and 0 < len(gh) <= 256 and gh.isprintable():     # of the project on another branch (allowances.reset_stale)
+        out["git_head"] = gh                         # malformed or absent = no fact: nothing ends
     hz = f.get("harness")                            # 0.2.91 (client 0.2.59, friction 04.11): what the hook's own lock K1 finds in this call (a
     if isinstance(hz, str) and 0 < len(hz) <= 4096:  # path or word of the agent's harness): the call is ASKED (agent-config), so the owner can
         out["harness"] = hz                          # approve it; before, the line was allowed here and the hook refused it with no button
@@ -417,7 +420,7 @@ def refused_text(ctx, agent, tool, res):
             "asked again after that" % (t, tool, (x["recipient"] or "-")[:160], ": " + shown if shown else "", until))
 
 
-LATEST_CLIENT = "0.2.63"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
+LATEST_CLIENT = "0.2.69"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
 
 
 def notify_view(ctx, agent) -> dict:

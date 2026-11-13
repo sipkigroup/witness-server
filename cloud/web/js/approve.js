@@ -1,3 +1,5 @@
+import { mountOffer } from './pushoffer.js';
+import { uxReport } from './uxguard.js';
 import { get, post } from './api.js';
 import { bytesToHex } from './cde.js';
 import { challenge, approvalPayload, TYP_APPROVAL } from './profile.js';
@@ -15,7 +17,7 @@ import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash } from './signview.js';
 import { askOf, dangerText, protectedTarget, reasonWords, GENERIC_DANGER } from './ask.js';
-import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS } from './qwords.js';
+import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult } from './line.js';
 import { gateNeeded, actKey, refusedRecently, REFUSED_MS } from './gate.js';
 
@@ -322,16 +324,37 @@ function done(head, text, refused = false) {
     markRefused(agentOfThis, keyOfThis);
     $('#donetext').after(freezeRow(agentOfThis, 'donefreeze', 'Did not expect this call? Freeze stops this agent now: nothing it asks runs until you unfreeze it.'));
   }
+  if (!refused) mountOffer(window, $('#pushoffer')).catch(() => {});     // 0.2.96: "Get questions on your phone" after the passkey touch
   if (!fromTrial) { watchNext(); return; }
   const a = document.createElement('a'); a.href = 'trial.html'; a.textContent = 'Back to your trial page';
   $('#donetext').append(' Going back to your trial page, which shows your agent\'s next call by itself… ', a);
   setTimeout(() => { location.href = 'trial.html'; }, BACK_TO_TRIAL_MS);
 }
 
+// 0.2.96 ("approved without reading", server app/uxstat.py): when the question was on screen, when the person first pressed a decision
+// button (before the passkey prompt) and whether THEY opened Details (a click by the page itself does not count). Sent with the decision.
+export const UX = { t0: 0, at: 0, details: false };
+export const DECIDE_BTNS = ['yes', 'no', 'allow24', 'rel', 'rej', 'lc_ok', 'bgo'];
+export function withUx(body) { return Object.assign({}, body, { ux: uxNow() }); }
+const uxNow = () => uxReport(UX, (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+const pnow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', (ev) => {
+    if (!ev.isTrusted || !ev.target || !ev.target.closest) return;
+    const sm = ev.target.closest('summary');
+    if (sm && sm.parentElement && !sm.parentElement.open && sm.parentElement.id !== 'more_opts') UX.details = true;   // a fold of the details opened by the person
+    const b = ev.target.closest('button');
+    if (!b) return;
+    if (DECIDE_BTNS.includes(b.id) && !UX.at) UX.at = pnow();
+    if ((b.id === 'qw_btn' || b.id === 'tech_btn') && b.getAttribute('aria-expanded') === 'true') UX.details = true;
+  }, true);
+}
+
 async function single(me) {
   if (!/^r_[A-Z2-7]+$/.test(rid)) { notice(msg, 'err', 'No approval request in this link.'); return; }
   markOpened(rid);
   const r = await get('/api/approvals/' + encodeURIComponent(rid));
+  UX.t0 = pnow();
   agentOfThis = r.agent_id || (r.action && r.action.agent) || null;
   keyOfThis = actKey(r);
   get('/api/agents').then((l) => { const a = (Array.isArray(l) ? l : []).find((z) => z && z.id === agentOfThis); if (a && typeof a.name === 'string' && a.name) agentNameOfThis = a.name; }).catch(() => {});
@@ -435,12 +458,22 @@ async function single(me) {
     const lf0 = hv && rk && rk.level === 'low' ? lineFull(r) : null;
     const whole = lf0 && !lf0.cut && !lf0.items.some((c) => c.fold) ? inspectFields([], lf0.all.map((c, i) => ['Command ' + (i + 1), c])).rows.map(([, v]) => v) : null;
     const cmd = cmdLine(hv, askIns.rows[0][1], whole);
-    $('#cmdline').textContent = cmd.text; $('#cmdline').hidden = !cmd.text;
+    // 13.11 (r0271, ISPYTANIE-0266 Н3): the agent's prose stays off the first screen: comments and long strings fold (the whole text is
+    // under Details, Allow waits for it), the line is labelled as the agent's, and words of a verdict get a warning. The signed view is
+    // the server's members (text_preview, line_full ...), unchanged: Details shows them whole.
+    const fl = (!hv || cmd.lines) ? cmd.text.split('\n').map(agentFold) : [];
+    const folded = fl.some((f) => f.folded);
+    const shown = folded ? fl.map((f) => f.text).join('\n') : cmd.text;
+    $('#cmdline').textContent = shown; $('#cmdline').hidden = !shown;
     $('#cmdline').classList.toggle('lines', !!cmd.lines);
-    cmdCut = cmd.cut; autoOpened = false; manyCmds = !!hv && !cmd.lines;
+    const isCmd = /^Bash/.test(String(r.tool || ''));
+    $('#cmd_by').textContent = CMD_BY; $('#cmd_by').hidden = !shown || !isCmd;
+    const vw = isCmd ? agentVoice([askIns.rows[0][1] || '', ...(whole || [])].join('\n')) : '';
+    $('#cmd_voice').textContent = vw ? VOICE_NOTE.replace('{w}', vw) : ''; $('#cmd_voice').hidden = !vw;
+    cmdCut = cmd.cut || folded; autoOpened = false; manyCmds = !!hv && !cmd.lines;
     cmdWhole = !!cmd.lines;
     // 05.11 (outside UX review): the whole command is already on the first screen: Details does not repeat it
-    const dup = !cmd.cut && !hv && cmd.text === (askIns.rows[0][1] || '');
+    const dup = !cmd.cut && !folded && !hv && cmd.text === (askIns.rows[0][1] || '');
     $('#what_dt').hidden = dup; $('#what_dd').hidden = dup;
     $('#what_parts').hidden = true; $('#what').hidden = false; $('#what_dt').textContent = 'Command';
   }
@@ -750,7 +783,7 @@ async function single(me) {
     $('#hexp').textContent = bytesToHex(payload);
     $('#hexc').textContent = bytesToHex(await challenge(TYP_ALLOWANCE, payload));
     const envelope_b64 = await signPayload(TYP_ALLOWANCE, payload, me);
-    const res = await post('/api/allowances', sv.view ? { rid, envelope_b64, view_sha256: sv.hex } : { rid, envelope_b64 });
+    const res = await post('/api/allowances', withUx(sv.view ? { rid, envelope_b64, view_sha256: sv.hex } : { rid, envelope_b64 }));
     done('Allowed in this project', res.commands.join(', ') + ' now runs without a question in ' + res.project + ' until ' + untilText(res.exp)
       + '. The agent repeats the call. Every receipt it lets through names this permission; revoke it on Project permissions.');
   };
@@ -770,7 +803,7 @@ async function single(me) {
       if (!lead && hex !== it.hex) throw Object.assign(new Error('This page and the witness disagree on what a part of this call shows.'), { code: 'VIEW_CHANGED' });
       const payload = await allowancePayload(it.offer, it.mandate, LATER_DAYS, it.offer.t + (Date.now() - got) / 1000, newAllowanceId(), view);
       const envelope_b64 = await signPayload(TYP_ALLOWANCE, payload, me);
-      try { await post('/api/allowances', { rid: it.rid, envelope_b64, view_sha256: hex }); } catch (e) {
+      try { await post('/api/allowances', withUx({ rid: it.rid, envelope_b64, view_sha256: hex })); } catch (e) {
         throw Object.assign(new Error((n ? n + ' of ' + rows.length + ' parts were allowed from now on; the call does not run until every part is covered. ' : '') + 'A part could not be allowed from now on (' + failText(e) + '). You can still allow it once.'), { shown: true });
       }
       n++;
@@ -824,7 +857,7 @@ async function single(me) {
     $('#hexp').textContent = items.map(bytesToHex).join('\n');
     $('#hexc').textContent = bytesToHex(await wbChallenge(items));
     const envelope_b64 = await signBatch(items, me);
-    const res = await post('/api/approvals/' + encodeURIComponent(rid), sv.view ? { approved: true, envelope_b64, repeat: { rids: plan.rids }, view_sha256: sv.hex } : { approved: true, envelope_b64, repeat: { rids: plan.rids } });
+    const res = await post('/api/approvals/' + encodeURIComponent(rid), withUx(sv.view ? { approved: true, envelope_b64, repeat: { rids: plan.rids }, view_sha256: sv.hex } : { approved: true, envelope_b64, repeat: { rids: plan.rids } }));
     if (late) {
       done('Approved for the next runs', 'The same call of this agent with exactly these arguments runs ' + (res.repeat.uses === 1 ? '1 time' : res.repeat.uses + ' times')
         + ' in its next runs until ' + untilTime(res.repeat.exp) + ' without asking you. Every receipt it lets through names your signature; revoke it on Permissions.');
@@ -843,7 +876,7 @@ async function single(me) {
   const refuseLead = async () => {
     await show(false);
     const envelope_b64 = await signPayload(TYP_APPROVAL, prepared[false], me);
-    const res = await post('/api/approvals/' + encodeURIComponent(rid), sv.view ? { approved: false, envelope_b64, view_sha256: sv.hex } : { approved: false, envelope_b64 });
+    const res = await post('/api/approvals/' + encodeURIComponent(rid), withUx(sv.view ? { approved: false, envelope_b64, view_sha256: sv.hex } : { approved: false, envelope_b64 }));
     done('Refused', 'The agent was refused' + (res.verdict === 'refused' ? '' : ' (' + res.verdict + ')') + '. Nothing was executed.', true);
   };
   const decideLine = async (approved) => {
@@ -858,7 +891,7 @@ async function single(me) {
     const envelope_b64 = await signBatch(items, me);
     const body = { rids: rows.map((x) => x.rid), approved, envelope_b64, views: rows.map((x) => x.hex) };
     let res;
-    try { res = await post('/api/approvals/batch', body); } catch (e) {
+    try { res = await post('/api/approvals/batch', withUx(body)); } catch (e) {
       if (!approved && e.code !== 'NOT_DEFERRED' && !isClone(e)) { await refuseLead(); return; }    // a refusal always goes through
       throw e;
     }
@@ -879,7 +912,7 @@ async function single(me) {
       if (Array.isArray(r.line_group) && r.line_group.length) { await decideLine(approved); return; }
       await show(approved);
       const envelope_b64 = await signPayload(TYP_APPROVAL, prepared[approved], me);
-      const res = await post('/api/approvals/' + encodeURIComponent(rid), sv.view ? { approved, envelope_b64, view_sha256: sv.hex } : { approved, envelope_b64 });
+      const res = await post('/api/approvals/' + encodeURIComponent(rid), withUx(sv.view ? { approved, envelope_b64, view_sha256: sv.hex } : { approved, envelope_b64 }));
       if (res.status === 'collecting') {
         // team policy needs more than one signature: the server keeps ours in a signature request
         done('Signature 1 collected', 'This action needs ' + (res.need || 2) + ' signatures (' + (res.have || 1) + ' so far). The other signers see it on their Approvals and Team pages.');

@@ -32,7 +32,9 @@
  <section id="qw" hidden>
   <p id="qw_harm" class="harm"></p>
   <div id="riskbar" class="riskbar" role="img" hidden><span class="segs"><i></i><i></i><i></i><i></i></span><b id="risk_word"></b></div>
+  <p id="cmd_by" class="cmdby" hidden></p>
   <pre id="cmdline" class="cmdline" hidden></pre>
+  <p id="cmd_voice" class="notice warn" role="note" hidden></p>
   <button id="qw_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_more">Details &#9656;</button>
  </section>
  <div id="qw_more" class="qwmore" hidden>
@@ -56,8 +58,8 @@
   <label class="check"><input type="checkbox" id="allow_cb"> <strong id="allow_label">Allow this command in this project</strong></label>
   <p class="hint" id="allow_note"></p>
   <div id="allow_more" hidden>
-   <p><label for="allow_days">For</label> <select id="allow_days"><option value="1" selected>1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></p>
-   <p class="hint">Only these exact commands, only in this folder (and its sub-folders), only for this agent and its current mandate. The approve button then signs this permission
+   <p><label for="allow_days">For</label> <select id="allow_days"><option value="1" selected>1 day</option><option value="7">7 days</option><option value="30">30 days</option></select></p>
+   <p class="hint">Only these exact commands, only in this folder (and its sub-folders), only on its current git branch, only for this agent and its current mandate; at most 30 days. The approve button then signs this permission
    (one passkey prompt) instead of approving just this request; the agent repeats the call. It is recorded in your ledger, shown in every receipt it lets through,
    listed on <a href="allowances.html">Project permissions</a> and revoked there in one click.</p>
   </div>
@@ -110,7 +112,7 @@
   <div class="row"><button id="lc_ok" class="btn big" type="button">Confirm with passkey</button><button id="lc_back" class="btn big" type="button">Back</button></div></section>
  <div class="row stickybar" id="release" hidden><button id="rel" class="btn big" type="button">Release</button><button id="rej" class="btn danger big" type="button">Reject</button></div>
 </section>
-<section id="done" class="card" hidden><h2 id="donehead"></h2><p id="donetext"></p><p><a class="btn" href="approve.html">Back to approvals</a></p></section>
+<section id="done" class="card" hidden><h2 id="donehead"></h2><p id="donetext"></p><div id="pushoffer"></div><p><a class="btn" href="approve.html">Back to approvals</a></p></section>
 </main>
 <script type="module" src="js/boot.js"></script>
 <script type="module" src="js/approve.js"></script>

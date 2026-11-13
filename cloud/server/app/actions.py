@@ -1108,6 +1108,25 @@ def extract_dir_recipient(tool, args, v):
     return v + "/" if os.path.normpath(v) in {os.path.normpath(x) for x in xd} else v
 
 
+def clean_in_project(mark, path, project):
+    """r0271 (Н1): a written-run mark (written_run_info value) the owner's "from now on" rule covers: the witness read the whole text when
+    it was written (no gate, not unseen / opaque), no script findings, not a directory marked whole, the path inside `project`."""
+    if not isinstance(mark, dict) or not isinstance(path, str) or not isinstance(project, str) or not project.startswith("/"):
+        return False
+    if mark.get("g") or mark.get("dir") or mark.get("sf"):
+        return False
+    pr = os.path.normpath(project).rstrip("/") + "/"
+    p_ = os.path.normpath(path)
+    # the paths are the hook's (resolved on the agent's machine, as the rule's project is): compared as text, never resolved here
+    return p_.startswith(pr) and "/.git/" not in p_[len(pr) - 1:] + "/"
+
+
+def allowance_keeps(ctx, agent_id, wrf, project, t0):
+    """r0271 (Н1): the written files that still hold a run the owner's "from now on" rule for `project` allowed (see clean_in_project)."""
+    wi = written_run_info(ctx, agent_id, t0 - 60 * (getattr(ctx.cfg, "written_lookback_min", None) or WRITTEN_LOOKBACK_MIN))
+    return [f for f in wrf if not clean_in_project(wi.get(f), f, project)]
+
+
 def _unseen_risky(ctx, agent_id, since):
     """-> (all risky marks {path: info}, the paths among them whose write no page the owner signed has shown): written_run_files."""
     src = {}
@@ -1558,6 +1577,19 @@ def refresh(ctx, rid):
     return x
 
 
+def _anchor_of(ctx, account_id, proof):
+    """r0269: time status of a receipt (app/tlog.receipt_anchor) from the account checkpoint its inclusion proof sits under."""
+    from app import tlog
+    from svidetel_v4 import cose
+    seq = None
+    try:
+        if proof and proof.get("checkpoint_b64"):
+            seq = cose.loads(cose.parse1(wa.b64u_dec(proof["checkpoint_b64"]))[2])["seq"]
+    except Exception:  # noqa: BLE001  (an unreadable proof: no time claim, "queued")
+        seq = None
+    return tlog.receipt_anchor(ctx, account_id, seq)
+
+
 def to_result(ctx, x):
     verdict = x["verdict"]
     if x["status"] == "expired" and verdict == "allow":
@@ -1570,6 +1602,7 @@ def to_result(ctx, x):
     if x["verdict"] == "allow" and x["aar"] is not None:
         r["aar_b64"] = wa.b64u(bytes(x["aar"]))
         r["proof"] = json.loads(x["proof_json"]) if x["proof_json"] else None
+        r["anchor"] = _anchor_of(ctx, x["account_id"], r["proof"])   # r0269: "queued" until a stamped log checkpoint covers it (unsigned info)
     if x["promise"]:
         r["promise_b64"] = wa.b64u(bytes(x["promise"]))          # 0.2.4: for every decision that has a ledger entry, not only allow (draft-deus-aar-05 9.5)
     if x["status"] in ("pending_approval", "held"):
@@ -1613,7 +1646,9 @@ def gateway_doc(ctx, account_id, toolmap):
     """0.2.4 (draft-deus-aar-05 8.6): the tool map DOCUMENT that the mandate signature binds. The tool map of the spec is "a CBOR map in CDE, its members are a matter
     of the gateway": here {v, tools: the agent tool map, patterns: sorted sha256 of the protected literals, advisor: mode}. `toolmap_sha256` of the signed mandate
     is SHA-256 over its CDE bytes, so the tool map, the protected literals (R3-06) and the advisor mode (R3-06) are inside the signature."""
-    return {"v": GATEWAY_V, "tools": toolmap, "patterns": pattern_items(ctx, account_id), "advisor": org.settings(ctx, account_id)["advisor"]}
+    from app import vocab                           # r0269: the reason vocabulary (mr-vocab-1, JCS SHA-256) is pinned by the same signature
+    return {"v": GATEWAY_V, "tools": toolmap, "patterns": pattern_items(ctx, account_id), "advisor": org.settings(ctx, account_id)["advisor"],
+            "vocab": vocab.remember(ctx.db, now())}
 
 
 def gateway_bytes(doc):
@@ -2061,6 +2096,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             row["line_text"] = lt_
         if meta is not None and (m is None or al.team(ctx, acc)):
             meta = None                                         # no mandate / a team account: allowances do not apply
+        if m is not None and L is not None and not al.team(ctx, acc):
+            al.reset_stale(ctx, acc, agent["id"], L, al.project_meta(args), tnow)   # 0.2.96: "from now on" ends on another git branch
         base, used = act, []
         # 06.11 (r0260): the owner's amendments ("from now on" for a KIND of act: a host + method, a folder outside the project, the agent's
         # memory, `gh <sub>` reads) apply to every part of a shell line and to a write outside the project (app/amend.py)
@@ -2262,12 +2299,26 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 # 11.11 (r0261, closed list): G3 (a secret named in the text) is closed by the strict fact's denyRead; held only a text that
                 # writes a place another program runs later OUTSIDE the sandbox (С3): G4 (rc files, LaunchAgents ...) or a place of the
                 # list inside the project (.envrc, .husky/, CI files ...: strict_policy.later_text; execguard's gates do not name them)
+                # 13.11 (r0271, ISPYTANIE-0266 Н1): tried and measured -- holding also a READ text that reaches G1 / G2 / G3 here put
+                # 8 more questions on the dev corpus (2 days: after one write of a security test that names key paths, every later run
+                # of the day was held) and 6 on the harmless probes the kernel contains (src/tool.py, run.sh, npm run nuke: EPERM /
+                # refused connection); G2 + G3 alone: the same 8 on dev. The kernel holds those; kept as before: only what runs later
+                # OUTSIDE the sandbox (G4, later_text) holds a run in quiet mode.
                 wrf = [f for f in wrf if f in unseen_ and ((wg_.get(f) or {}).get("g") == "G4"
                                                            or strict_policy.later_text((wg_.get(f) or {}).get("text")))]
             else:
                 wrf = [f for f in wrf if f in unseen_ and (wg_.get(f) or {}).get("g") not in (None, "unseen", "opaque", "G1", "G2")]
             if wrf:
                 sbx_code = False
+        elif wrf and dv == "allow" and dwhy == "OK_ALLOWANCE" and isinstance(act.get("project"), str):
+            # 13.11 (r0271, ISPYTANIE-0266 Н1): outside the strict sandbox a "from now on" rule (pytest, npm test, make, mypy ...) the owner
+            # signed for THIS project says "the agent can then run code it wrote in this project without asking you" (TRUST_TEXT). The
+            # 0.2.90 rule (every code-like file the agent wrote is risky) held every such run after any write: the rule never took a
+            # question off. Now, under the rule, a written file still holds the run only when its stored mark shows something the owner
+            # did not trust: a text the witness could not read or parse, a text that reaches a gate (network, secrets, persistence, a
+            # write / delete outside the project), findings of a script (publish, push ...), a directory marked whole, or a path outside
+            # the rule's project. A clean text the witness READ inside the project runs under the rule, as the signed text promises.
+            wrf = allowance_keeps(ctx, agent["id"], wrf, act["project"], t0)
         if wrf:
             if gate is None and (dv == "allow" or rp is not None) and not sbx_code:
                 gate = ("hold", "ESCALATE_WRITTEN_RUN")      # 28.10: runs a file the agent wrote unseen / with network code (the owner releases it)

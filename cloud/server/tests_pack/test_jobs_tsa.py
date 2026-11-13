@@ -36,8 +36,8 @@ def test_tsa_failure_does_not_fail_the_batch(client, owner, app, providers, tsas
 
 
 def test_repo_providers_are_not_taken_until_terms_checked(client, owner, app, capsys, monkeypatch):
-    """lib/tsa/providers.json (P0-3, 19.10.2026): FreeTSA take=true/allowed but its root is not in the repository yet -> skipped;
-    DigiCert off (terms unconfirmed); Sectigo / Apple / GlobalSign not listed at all. DW_TSA=on asks nobody, says why."""
+    """lib/tsa/providers.json (P0-3, 19.10.2026; r0269: FreeTSA root added): FreeTSA take=true/allowed with its root -> taken;
+    DigiCert off (terms unconfirmed); Sectigo / Apple / GlobalSign not listed at all."""
     monkeypatch.delenv("DW_TSA_PROVIDERS", raising=False)
     doc = json.load(open(os.path.join(jobs.TSA_DIR, "providers.json")))
     by = {p["name"]: p for p in doc["providers"]}
@@ -47,14 +47,23 @@ def test_repo_providers_are_not_taken_until_terms_checked(client, owner, app, ca
     assert not any(jobs._excluded(p) for p in doc["providers"])
     for p in doc["providers"]:                                    # never sold as qualified / eIDAS
         assert not any(w in json.dumps(p).lower().replace("not qualified", "") for w in ("qualified", "eidas", "legally"))
-    if not os.path.isfile(os.path.join(jobs.TSA_DIR, by["freetsa"]["ca"])):
-        assert jobs.tsa_providers() == []
-        assert "tsa freetsa skipped: root ca/freetsa.pem missing" in capsys.readouterr().out
+    # r0269: the FreeTSA root is in the repository (file SHA-256 published on freetsa.org; the web.archive.org copy agrees), terms quoted
+    # in USLOVIYA.md (commercial use allowed, 1 request/s per IP): FreeTSA is the one provider taken. No live request here: the request
+    # function is replaced, the run must say that freetsa was asked and failed, and the batch stands.
+    import hashlib
+    ca = os.path.join(jobs.TSA_DIR, by["freetsa"]["ca"])
+    assert hashlib.sha256(open(ca, "rb").read()).hexdigest() == "2151b61137ffa86bf664691ba67e7da0b19f98c758e3d228d5d8ebf27e044438"
+    assert [p["name"] for p in jobs.tsa_providers()] == ["freetsa"]
+    T = jobs._tsa_mod()
+
+    def offline(*a, **k):
+        raise OSError("no network in tests")
+    monkeypatch.setattr(T, "request", offline)
     monkeypatch.setenv("DW_TSA", "on")
     scenario(client, owner)
     bid = jobs.anchor_once(app.state.ctx)
     out = capsys.readouterr().out
-    assert "batch %s: tsa=0 ok (no TSA with take=true and no DW_TSA_URL: see lib/tsa/USLOVIYA.md)" % bid in out, out
+    assert "batch %s: tsa=0 ok failed=freetsa" % bid in out, out
 
 
 def test_tsa_off_by_default(client, owner, app, providers, capsys, monkeypatch):

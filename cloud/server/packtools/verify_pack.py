@@ -17,6 +17,10 @@ counts the checkpoints under a stamped batch; `anchors: NONE` = the history is v
 is INVALID). `registry: anchored through row S`. Lines `trust: ...` before RESULT list what was not proven.
 0.2.12 (R7-04): `registry: owner tags ok` -- every row of this account in the second registry chain carries its text (a hidden own row,
 e.g. a key removal cut down to seq/prev/hash, is INVALID); a pack from before 0.2.12 says `owner tags: not in this pack`.
+r0269 (only when the pack has tlog/): `tlog checkpoint: <origin> size N ...` (C2SP signed note of the public log of batches, witness key);
+`tlog <batch>: leaf i of N OK; time: no later than TSA <name> genTime ... | OpenTimestamps ...` or `time: queued` (no stamped log checkpoint
+yet); --checkpoint=<note> (one you fetched yourself from /checkpoint or a monitor): same size + other root = `FORK PROVEN` (INVALID);
+another size: --consistency=<json of /tlog/proof/consistency> checks that both are one history (verify/tlogcheck.py, strict Ed25519).
 0.2.27 (node 2, only when the pack has node2/): `node2: COVERED through seq S ...` | `node2: NOT COVERED (...)` | `node2: ALARM (...)` (INVALID).
 Flags: --node2-genesis=<hex> (SHA-256 of the first co-signature), --node2-pin=<file> (default: node2-pin.json next to the pack folder; written
 after a good chain), --no-node2-pin-write, --node2-expect=<json file> {policy_sha256, measurement} of the published node 2 build,
@@ -48,7 +52,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 _FLAGS_BOOL = ["--offline", "--require-anchors", "--require-tee", "--require-node2", "--use-pack-code", "--no-node2-pin-write",
               "--require-views"]
 _FLAGS_VAL = ["--witness-kid", "--owner-kid", "--tsa-ca", "--tee-expect", "--tee-intel-root", "--tee-collateral", "--tee-now",
-              "--node2-amd-ark", "--node2-expect", "--node2-genesis", "--node2-pin"]
+              "--node2-amd-ark", "--node2-expect", "--node2-genesis", "--node2-pin", "--checkpoint", "--consistency"]
 
 
 def main(argv):
@@ -493,6 +497,10 @@ def _main(argv):
     for line, bad in _tsa_lines(root, tsa_ca):
         print(line)
         ok &= not bad
+    # 5a. r0269: the public log of batches (tlog/): C2SP checkpoint, inclusion of each batch, daily external stamp, split view
+    for line, bad in _tlog_lines(root, wk.pub, tsa_ca, argv):
+        print(line)
+        ok &= not bad
     # 6. 0.2.27: node 2 (independent co-signer of the journal heads, AMD SEV-SNP); only when the pack has node2/
     for line, bad in _node2_lines(root, cps, argv, trust):
         print(line)
@@ -774,6 +782,24 @@ def _toolmaps(root, entries):
             have.add(name)
     missing = bound - have
     out.append(("toolmaps: %d mandate(s) bind a tool map, %d document(s) present%s" % (len(bound), len(have & bound), (", %d MISSING" % len(missing)) if missing else ""), False))
+    # r0269: a tool map document may pin the reason vocabulary (member "vocab" = SHA-256 of vocab/<digest>.json in RFC 8785 form)
+    pinned = set()
+    for p in files:
+        try:
+            import cbor2
+            d = cbor2.loads(_rb(p))
+            if isinstance(d, dict) and isinstance(d.get("vocab"), str) and os.path.basename(p)[:-5] in bound:
+                pinned.add(d["vocab"])
+        except Exception:  # noqa: BLE001
+            continue
+    vfiles = {os.path.basename(p)[:-5]: p for p in glob.glob(os.path.join(root, "vocab", "*.json"))}
+    if pinned or vfiles:
+        vbad = [h for h, p in vfiles.items() if hashlib.sha256(_rb(p)).hexdigest() != h]
+        for h in vbad:
+            out.append(("vocab: MISMATCH %s.json (the bytes do not hash to the name)" % h, True))
+        miss = pinned - set(vfiles)
+        out.append(("vocab: %d reason vocabular%s pinned by signed mandates, %d present%s" % (len(pinned), "y" if len(pinned) == 1 else "ies",
+                    len(pinned & set(vfiles)), (", %d MISSING" % len(miss)) if miss else ""), False))
     return out
 
 
@@ -1272,6 +1298,106 @@ def _tsa_lines(root, tsa_ca):
         else:
             out.append(("tsa %s: OK (%s)" % (b, ", ".join(names)), False))
     return out
+
+
+def _tlog_lines(root, wpub, tsa_ca, argv):
+    """r0269: tlog/ of the pack. Nothing when the pack has no tlog/ (made before r0269). Bad = INVALID; "queued" time is not bad."""
+    d = os.path.join(root, "tlog")
+    ext = next((a.split("=", 1)[1] for a in argv if a.startswith("--checkpoint=")), None)
+    if not os.path.isdir(d):
+        return [("tlog: --checkpoint given but the pack has no tlog/ (made before r0269)", True)] if ext else []
+    try:
+        import tlogcheck as TC
+    except ImportError:
+        return [("tlog: not checked (tlogcheck.py not found next to the checker)", True)]
+    out = []
+    try:
+        vk = TC.parse_vkey(_rb(os.path.join(d, "vkey")).decode())
+        if vk["pub"] != bytes(wpub) or vk["alg"] != TC.ALG_ED25519:
+            return [("tlog: MISMATCH (tlog/vkey is not the witness key of manifest.json)", True)]
+        cp = TC.open_checkpoint(_rb(os.path.join(d, "checkpoint.note")), [vk])
+    except (OSError, ValueError) as e:
+        return [("tlog checkpoint: INVALID (%s)" % e, True)]
+    out.append(("tlog checkpoint: %s size %d root %s (log signature OK; compare with https://<service>/checkpoint)"
+                % (cp["origin"], cp["size"], cp["root"].hex()[:16]), False))
+    try:
+        import tsa
+    except ImportError:
+        tsa = None
+    for p in sorted(glob.glob(os.path.join(d, "inclusion", "*.json"))):
+        bid = os.path.basename(p)[:-5]
+        try:
+            doc = _read_json(p)
+            lbid, lroot = TC.parse_batch_leaf(TC.b64d(doc["leaf_b64"]))
+            arec = _read_json(os.path.join(root, "anchors", bid + ".json"))
+            if lbid != bid or lroot.hex() != arec["root"]:
+                out.append(("tlog %s: MISMATCH (the log leaf names another batch or root)" % bid, True))
+                continue
+            lh = TC.leaf_hash(TC.b64d(doc["leaf_b64"]))
+            if doc["size"] != cp["size"] or not TC.verify_inclusion(lh, doc["index"], doc["size"], [TC.b64d(x) for x in doc["path"]], cp["root"]):
+                out.append(("tlog %s: INVALID inclusion proof (leaf %s of %s)" % (bid, doc.get("index"), doc.get("size")), True))
+                continue
+            st = doc.get("stamp")
+            if not st:
+                out.append(("tlog %s: leaf %d of %d OK; time: queued (no stamped log checkpoint covers it yet: witness clock only)"
+                            % (bid, doc["index"], cp["size"]), False))
+                continue
+            sz = st["size"]
+            sn = TC.open_checkpoint(_rb(os.path.join(d, "stamps", "%d.note" % sz)), [vk], origin=cp["origin"])
+            if sn["size"] != sz or not TC.verify_inclusion(lh, doc["index"], sz, [TC.b64d(x) for x in st["path"]], sn["root"]) \
+                    or not TC.verify_consistency(sz, cp["size"], sn["root"], cp["root"], [TC.b64d(x) for x in st["consistency"]]):
+                out.append(("tlog %s: INVALID stamped checkpoint %d (inclusion or consistency with the latest fails)" % (bid, sz), True))
+                continue
+            dg = TC.stamp_digest(sn["text"])
+            times, errs = [], []
+            for tp in sorted(glob.glob(os.path.join(d, "stamps", "%d.tsr.*" % sz))):
+                name = tp.partition(".tsr.")[2]
+                ca = os.path.join(os.path.abspath(tsa_ca) if tsa_ca else os.path.join(d, "stamps", "tsa-ca"), name + ".pem")
+                if tsa is None or not os.path.isfile(ca):
+                    errs.append("%s: not checked (%s)" % (name, "no tsa.py" if tsa is None else "no root certificate"))
+                    continue
+                r = tsa.verify(_rb(tp), dg, ca)
+                if r["ok"]:
+                    times.append("TSA %s genTime %s" % (name, _iso(r["gen_time"])))
+                else:
+                    out.append(("tlog %s: MISMATCH (TSA %s over checkpoint %d: %s)" % (bid, name, sz, r["reason"]), True))
+            op = os.path.join(d, "stamps", "%d.ots" % sz)
+            if os.path.exists(op):
+                times.append("OpenTimestamps " + _ots(op, dg.hex(), True))
+            out.append(("tlog %s: leaf %d of %d OK; time: no later than %s (checkpoint %d)%s"
+                        % (bid, doc["index"], cp["size"], "; ".join(times) or "nothing verifiable", sz,
+                           (" [" + "; ".join(errs) + "]") if errs else ""), "MISMATCH" in " ".join(times)))
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            out.append(("tlog %s: INVALID (%s)" % (bid, type(e).__name__ if not str(e) else e), True))
+    if ext:
+        try:
+            other = TC.open_checkpoint(_rb(ext), [vk])
+        except (OSError, ValueError) as e:
+            return out + [("tlog external checkpoint: INVALID (%s)" % e, True)]
+        if TC.fork(cp, other):
+            out.append(("tlog: FORK PROVEN (split view): size %d has two signed roots %s / %s" % (cp["size"], cp["root"].hex()[:16], other["root"].hex()[:16]), True))
+        elif other["origin"] != cp["origin"]:
+            out.append(("tlog external checkpoint: another log (%s)" % other["origin"], True))
+        elif other["size"] == cp["size"]:
+            out.append(("tlog external checkpoint: same size %d, same root: one view" % cp["size"], False))
+        else:
+            cf = next((a.split("=", 1)[1] for a in argv if a.startswith("--consistency=")), None)
+            a, b = (cp, other) if cp["size"] < other["size"] else (other, cp)
+            if cf is None:
+                out.append(("tlog external checkpoint: size %d vs %d: consistency NOT checked (pass --consistency=<json from "
+                            "/tlog/proof/consistency?old=%d&new=%d>)" % (cp["size"], other["size"], a["size"], b["size"]), False))
+            else:
+                pr = _read_json(cf)
+                good = pr.get("old") == a["size"] and pr.get("new") == b["size"] and \
+                    TC.verify_consistency(a["size"], b["size"], a["root"], b["root"], [TC.b64d(x) for x in pr.get("path", [])])
+                out.append(("tlog external checkpoint: %d -> %d %s" % (a["size"], b["size"], "consistent: one view" if good
+                            else "NOT consistent: FORK or a bad proof"), not good))
+    return out
+
+
+def _iso(t):
+    import datetime
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 _last = ""

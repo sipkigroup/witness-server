@@ -63,7 +63,7 @@ def make_router(ctx):
         a = agent_of(req, "read:", 1)                     # 0.2.49: reads count in their own window
         mode = getattr(ctx.cfg, "args_salt", "off")
         s = await run_in_threadpool(erase.account_salt, ctx, a["account_id"]) if mode != "off" else None
-        return {"alg": "dw-args1", "mode": mode, "salt": wa.b64u(s) if s is not None else None}
+        return {"alg": "dw-args1", "alg2": "mr-args-2", "mode": mode, "salt": wa.b64u(s) if s is not None else None}
 
     @r.post("/v1/actions")
     async def action_post(req: Request):
@@ -73,7 +73,13 @@ def make_router(ctx):
         args = {} if args is None else args
         if not isinstance(tool, str) or not tool or not isinstance(args, dict):
             raise Err(400, "BAD_REQUEST", "tool (string) and args (object) required")
-        return await run_in_threadpool(act.do_action, ctx, a, tool, args, salt_capable(req))
+        # r0269: X-DW-Args-V: 2 = the client hashes [tool, args] with RFC 8785 (rule mr-args-2, toolmap.args_digest_v); the action
+        # says so (`args_v: 2`). Absent = the old rule, what every deployed client checks.
+        tok = act.tm.ARGS_V.set(2 if req.headers.get("x-dw-args-v") == "2" else 1)
+        try:
+            return await run_in_threadpool(act.do_action, ctx, a, tool, args, salt_capable(req))
+        finally:
+            act.tm.ARGS_V.reset(tok)
 
     @r.post("/v1/trial/retire")
     async def trial_retire(req: Request):

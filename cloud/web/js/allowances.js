@@ -8,7 +8,7 @@ import { STATUS_TEXT as REPEAT_STATUS, untilTime } from './repeat.js';
 const msg = $('#msg');
 
 export function rowCells(x) {
-  const shown = inspectFields([['Commands', x.commands.join(', ')], ['Project', x.project], ['Agent', x.agent || x.agent_id]], []).rows.map((r) => r[1]);
+  const shown = inspectFields([['Commands', x.commands.join(', ')], ['Project', x.project + (x.branch ? ' (branch ' + x.branch + ')' : '')], ['Agent', x.agent || x.agent_id]], []).rows.map((r) => r[1]);
   return [shown[0], shown[1], shown[2], untilText(x.exp), x.uses ? x.uses + ' times, last ' + fmtTime(x.last_used) : 'not yet', STATUS_TEXT[x.status] || x.status];
 }
 

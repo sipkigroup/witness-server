@@ -48,6 +48,29 @@ Another port: put `DW_PORT=18080` and `DW_PUBLIC_URL=http://localhost:18080` int
 On a server you reach over SSH: `ssh -L 8787:127.0.0.1:8787 yourhost` and use `http://localhost:8787` on your laptop
 (passkeys accept `localhost` without HTTPS; the port must be the same on both sides).
 
+Run `try` yourself in a terminal: it shows the claim link only to a terminal (never to an agent's output), and without one
+it withdraws the trial and saves nothing.
+
+### Without Docker (a try-out on your laptop)
+
+Python 3.12 and the same hash-locked dependencies as the image; the witness reads the same variables the compose file sets.
+Keep `secrets/` private and out of the repository.
+
+```sh
+python3.12 -m venv .venv && . .venv/bin/activate
+pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock
+mkdir -p data secrets && chmod 700 secrets
+python3 -c 'import secrets as s; open("secrets/witness_ed25519","w").write(s.token_hex(32)+"\n"); open("secrets/key_pepper","w").write(s.token_hex(32))'
+chmod 400 secrets/*
+export DW_DATA_DIR=$PWD/data DW_WITNESS_KEY_FILE=$PWD/secrets/witness_ed25519 DW_KEY_PEPPER_FILE=$PWD/secrets/key_pepper \
+       DW_RP_ID=localhost DW_ORIGIN=http://localhost:8787 DW_ISS=http://localhost:8787 DW_SECURE_COOKIE=0 DW_TRIAL=on DW_ANCHOR=off
+(cd cloud/server && python -m app.main --host 127.0.0.1 --port 8787)
+```
+
+Anchor batches (and so the public log behind `GET /checkpoint`) are made every 30 minutes; to make one now, with the same
+variables: `(cd cloud/server && python -m app.jobs anchor-once)`. This is not a production setup: no process supervisor,
+no log rotation, and the keys are ordinary files in your working directory.
+
 ## 2. Your domain with HTTPS
 
 The kit has Caddy (`Caddyfile`, profile `https`): it gets a Let's Encrypt certificate for your name automatically.
@@ -165,4 +188,4 @@ Some tests run the published client (`deus-witness`, pinned in `requirements-tes
 * TEE mode (`DW_TEE=on`) and node 2 (`DW_NODE2=on`) are in the code but not covered by this kit.
 * Draft specification, not yet submitted to the IETF; early 0.x software; not reviewed by outside parties.
 
-Security reports: see `SECURITY` in https://github.com/sipkigroup/witness.
+Security reports: see `SECURITY.md` (e-mail, not public issues). Contributing: `CONTRIBUTING.md`.

@@ -62,10 +62,15 @@ FORM_MAX = 16 * 1024
 FREE_TEXT = "Free for one person. If this ever changes, existing accounts stay free on the limits in force at that time, and we announce it at least 30 days in advance."
 KEEP_TEXT = ("A quick start account without a passkey is erased after %d days if your hook never calls; an account in use is kept: it is "
              "erased only after %d days with no call from your hook and no sign-in, and with a passkey you get a push 14 days before.")
-SENT = ["the tool name and its full input of every call the hook sees (shell commands, file paths, URLs; the text written by Write/Edit is "
-        "kept only as a short masked preview while a call waits)", "the working directory and the project directory",
-        "answers to the witness' questions about paths of that call (does it exist, where does a link point) and SHA-256 fingerprints of the "
-        "project files a command executes", "nothing else from this machine; no e-mail, no name"]
+# r0303 (PRAVDA-TEKSTOV-1411): the short form of docs/data.md of the client (the one full list). Before, the last line said nothing else left the machine,
+# which was not true (home and temp paths, the session id, sandbox settings and the names of .env files and token variables go too).
+SENT = ["the tool name and the full input of every call the hook sees (shell commands, file paths, URLs, the text written by Write/Edit)",
+        "the working, project, home and temp directory paths (so your user name) and the Claude Code session id",
+        "answers to the witness' questions about paths of that call (does it exist, where does a link point), SHA-256 hashes of the "
+        "project files a command executes, and masked values of git settings that start programs",
+        "for shell commands: a summary of your Claude Code sandbox settings, your permission mode, and the names (never the values) of "
+        ".env files and token-like environment variables",
+        "not your conversation (prompts and replies). Full list: https://github.com/sipkigroup/witness/blob/main/docs/data.md"]
 
 
 def now():

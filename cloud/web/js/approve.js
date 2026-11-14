@@ -194,7 +194,11 @@ function reloadButton(el) {
 // r0283b: a path as the person knows it -- the project folder and the path inside it ("proekt/hello.py"); anything else as it is
 export function projectOf(r) {
   const m = /"project":\s*("(?:[^"\\]|\\.)*")/.exec(String((r && r.args_preview) || ''));
-  try { const p = m ? JSON.parse(m[1]) : null; return typeof p === 'string' && p.startsWith('/') && p.length > 1 ? p.replace(/\/+$/, '') : null; } catch (e) { return null; }
+  let p = null;
+  try { p = m ? JSON.parse(m[1]) : null; } catch (e) { p = null; }
+  // r0300 (U28): the preview may be cut before "project" (an `eval` line): the server's whole project folder (api_web, not signed)
+  if (!(typeof p === 'string' && p.startsWith('/') && p.length > 1) && r && typeof r.project === 'string') p = r.project;
+  return typeof p === 'string' && p.startsWith('/') && p.length > 1 ? p.replace(/\/+$/, '') : null;
 }
 export function knownPath(p, prj) {
   const s = String(p || '');
@@ -660,19 +664,25 @@ async function single(me) {
   fill($('#acttech'), tech);
   fill($('#man'), mRows.map(([k], i) => [k, ins.rows[aRows.length + i][1]]));
   const tShown = ins.rows[aRows.length + mRows.length][1], aShown = ins.rows[aRows.length + mRows.length + 1][1], xShown = ins.rows[aRows.length + mRows.length + 2][1];
+  // r0300 (U28, r0299 find): the files the agent wrote, as the person knows them (proekt/hello.py); the absolute path only under Technical details
+  const wrunFiles = (r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : []).map((f) => knownPath(f, projectOf(r)));      // r0283b: as the person knows it
+  {
+    const techBox = $('#more_paths');
+    const fulls = (r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : []).map(String).filter((f, i) => f.startsWith('/') && f !== wrunFiles[i]);
+    if (techBox) for (const f of fulls) { const p = document.createElement('p'); const b = document.createElement('strong'); b.textContent = 'Written by the agent, full path: '; p.append(b, f); techBox.append(p); }
+  }
   const adv = r.reason === 'ESCALATE_SECRET_SEEN'
     ? 'Held: this agent read a secret in the last minutes (a credential file or a token in its own call). The mandate allows this call, but it can carry data out or run code the agent wrote, so you decide.'
     : r.reason === 'ESCALATE_USER_CONTENT_HOST'
     ? 'Held: this request carries data (a query string or an upload) to a site where anyone can publish or read what is sent (GitHub, gists, pastebins, webhooks), or goes to a request catcher or tunnel. The mandate allows the domain, but this is a way to send data out, so you decide.'
     : r.reason === 'ESCALATE_WRITTEN_RUN'
-    ? 'Held (ESCALATE_WRITTEN_RUN): this command runs code, and this agent wrote earlier a file that this code can run or load (an import, a source, a call)' + (r.written_run && r.written_run.files && r.written_run.files.length ? ' (' + r.written_run.files.join(', ') + ')' : '') + '. The witness could not read what the agent put into it (a shell write, a copy, a download), or what it read talks to the network or builds the code it runs. Look at the file before you release it.'
+    ? 'Held (ESCALATE_WRITTEN_RUN): this command runs code, and this agent wrote earlier a file that this code can run or load (an import, a source, a call)' + (wrunFiles.length ? ' (' + wrunFiles.join(', ') + ')' : '') + '. The witness could not read what the agent put into it (a shell write, a copy, a download), or what it read talks to the network or builds the code it runs. Look at the file before you release it.'
     : r.reason === 'ESCALATE_NET_UNSEEN'
     ? 'Held: this command runs a network program, but the destination is not in the line (it comes from a file or a variable). The witness cannot tell where the data goes, so you decide.'
     : r.reason === 'ESCALATE_SECRET_COPY'
     ? 'Held: this file is a copy this agent made earlier of a secret (a credential file). The mandate allows reading the file, but reading the copy reads the secret, so you decide.'
     : advisoryText(r) || (held ? 'Held by the data advisor (' + (r.reason || 'ADVISORY_HOLD') + '): the mandate allows this action, but the advisor flagged its text. A hint, not a decision.' : '');
   // r25 (s8 P2, P3): a question of the mandate or a secret hold that ALSO runs a file the agent wrote: both reasons are said
-  const wrunFiles = (r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : []).map((f) => knownPath(f, projectOf(r)));      // r0283b: as the person knows it
   if (r.written_run && Array.isArray(r.written_run.files) && r.written_run.files.length) {
     const nm = knownPath(String(r.written_run.files[0]), projectOf(r)).split('/').pop();
     gateWhatText = r.written_run.files.length > 1 ? 'the files your agent wrote' : nm + ', which your agent wrote';
@@ -701,7 +711,7 @@ async function single(me) {
       const h = document.createElement('p'); h.className = 'hint';
       // N14 0.2.73: a git line (stash pop / restore) brought back what the agent had put into git; the witness saw that text written
       const gx = Array.isArray(w.git_texts) ? w.git_texts.filter((g) => g && typeof g.text === 'string' && g.text) : [];
-      h.textContent = (w.by === 'shell' ? 'The agent\'s shell command that wrote ' + (w.file || 'the file')
+      h.textContent = (w.by === 'shell' ? 'The agent\'s shell command that wrote ' + (w.file ? knownPath(w.file, projectOf(r)) : 'the file')
           + (gx.length ? ' (a git line: it brings back what the agent had put into git; the text the agent last wrote there is shown below)' : ' (if it copies or downloads, the content itself is not shown and approving runs it blind)')
         : 'Written by the agent (' + (w.by || 'a write') + ') into ' + (w.file ? knownPath(w.file, projectOf(r)) : 'the file')) + ':';
       at.after(h); at = h;
@@ -722,7 +732,7 @@ async function single(me) {
       }
       for (const g of gx) {
         const gh = document.createElement('p'); gh.className = 'hint';
-        gh.textContent = 'Last written by the agent into ' + (g.file || 'the file') + ' before that git line (as the witness saw it; git may bring back this text or an older one):';
+        gh.textContent = 'Last written by the agent into ' + (g.file ? knownPath(g.file, projectOf(r)) : 'the file') + ' before that git line (as the witness saw it; git may bring back this text or an older one):';
         at.after(gh); at = gh;
         const gi = inspectFields([], [['Written', g.text]]);
         const pre = document.createElement('pre'); pre.className = 'netcode'; pre.textContent = gi.rows[0][1]; gh.after(pre); at = pre;

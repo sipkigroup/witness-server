@@ -3333,13 +3333,16 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                 _merge(c, classify(ch, here, home, _depth + 1, project, _budget=c.budget))
         if name == "alias" and _set_alias(args):
             continue                                       # 0.2.90: `alias ll='ls -la'`: known for the rest of the line
+        new_link = None
         if name == "ln" and fr is not None and any(a.startswith("-") and "s" in a[1:] for a in args):
             ops_ = [a for a in args if not a.startswith("-")]
             if len(ops_) == 2 and all(_lit_ok(o) for o in ops_):      # 0.2.90 (Н4): remember `ln -s TARGET LINK` for the paths after it
                 e_t, e_l = _expand(ops_[0], here, home), _expand(ops_[1], here, home)
                 if e_t is not None and e_l is not None:
                     tgt = e_t if os.path.isabs(e_t) or e_t.startswith("~") else os.path.join(os.path.dirname(_abspath(e_l, here, home)), e_t)
-                    fr["links"][os.path.normpath(_abspath(e_l, here, home))] = os.path.normpath(_abspath(tgt, here, home))
+                    # r0300: kept aside until `ln` itself is judged: `ln -s /tmp/evil ~/.bashrc` writes ~/.bashrc (the link), not
+                    # /tmp/evil (before r0300 the link was followed by its own command: "write /tmp/evil", no persist, a question)
+                    new_link = (os.path.normpath(_abspath(e_l, here, home)), os.path.normpath(_abspath(tgt, here, home)))
         if name in EVALISH or (name in ("mapfile", "readarray") and any(a.startswith("-") and "C" in a for a in args)):
             c.opaque = True                                # 0.2.12 (R7-02): what the rest of the line means (its directory, its commands)
             c.add("opaque", "%s: the rest of the line cannot be judged" % name)     # is not known after eval / source / alias / trap ...
@@ -3382,6 +3385,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
         if not via_xargs and _grep_data(name, args, line):
             c.rm_data += len(RAW_RM.findall(" ".join(_unmask(a) for a in args)))
         _one(name, args, here, home, c, via_xargs, _depth, project, lw_plain=lw_plain, nonfile=nonfile)
+        if new_link is not None:
+            fr["links"][new_link[0]] = new_link[1]           # the paths AFTER `ln -s` follow the new link (0.2.90, QA G)
     if raw_rm and c.rm_plain and len(RAW_RM.findall(line)) == len(RM_R_WORD.findall(line)) <= c.rm_plain:
         raw_rm = None                             # 0.2.89: every `rm -r..` of the line is a plain delete inside the project, judged above
     if raw_rm and not any(d.startswith("rm-rf") for d in c.danger) and c.rm_judged + c.rm_data < len(RAW_RM.findall(line)):
@@ -4869,6 +4874,9 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         dest = t or ops[-1]
         if ":" not in dest or name not in ("rsync", "scp"):
             _write_target(dest, cwd, home, c, c.writes)
+            if not (name == "install" and ("d" in short or "--directory" in long_)):
+                tree = name == "mv" or bool(set(short) & {"r", "R", "a"}) or bool({"--recursive", "--archive"} & set(long_))
+                _into_persist(name, [o for o in ops if o != dest] if t else ops[:-1], dest, bool(t), cwd, home, c, tree=tree)
         if name == "mv":
             for p in ops[:-1]:
                 _write_target(p, cwd, home, c, c.writes)    # moving a file away changes the source path too
@@ -4890,6 +4898,48 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         return
     if name in ("psql", "mysql", "sqlite3", "mongo", "mongosh", "redis-cli") and any(a.upper() in ("FLUSHALL", "FLUSHDB") for a in args):
         c.add("sql-drop", " ".join(args)[:DETAIL_MAX])
+
+
+# r0300: names that start programs only in the HOME folder (a shell reads ~/.zshrc, git ~/.gitconfig, Claude Code ~/.claude.json).
+# A copy into another folder (`cp ~/.bashrc /tmp/`, a backup) is not taken as a write to an autostart place by _into_persist.
+HOME_ONLY_NAME = re.compile(r"^\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc|bash_profile|bash_login|bash_logout|profile|login|cshrc|tcshrc|kshrc|"
+                            r"mkshrc|xinitrc|xprofile|xsession|pam_environment|hushlogin|gitconfig|claude\.json)$", re.I)
+
+
+def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False):
+    """r0300 (Н4): `cp a.service ~/.config/systemd/user/`, `cp .bashrc ~`, `cp settings.json ~/.claude/`, `ln -s /tmp/e ~/.config/autostart/`:
+    into a DIRECTORY the file lands as DIR/<its name>. When that path is a place that starts programs by itself (PERSIST_PATH) and the
+    directory itself is not one, it is the same write as naming the file: `persist` (refused), not a question about the directory.
+    The destination is a directory when: -t / --target-directory, a trailing '/', more than one source, it is the home folder, every
+    name in it is an autostart place (LaunchAgents, systemd/user, autostart, conf.d, cron.d ...), or the file system says so (isdir is
+    asked only when the landing path would be persist). Remote sources / destinations (`host:path`) are not ours to judge here."""
+    if not srcs or ":" in dest and name in ("rsync", "scp") or (cwd == LOST_CWD and not dest.startswith("/") and not _known_without_cwd(dest, cwd, home)):
+        return
+    e = _expand(dest, cwd, home)
+    if e is None or re.search(r"[*?[]", e):
+        return
+    d = _abspath(e, cwd, home)
+    if is_persist_path(d):
+        return                                      # the directory itself is refused already (`cp a ~/Library/LaunchAgents/`)
+    every = is_persist_path(d.rstrip("/") + "/x")   # a directory whose every entry starts programs (systemd/user, autostart, cron.d ...)
+    for s_ in srcs:
+        if ":" in s_ and name in ("rsync", "scp"):
+            base = os.path.basename(s_.split(":", 1)[1].rstrip("/")) or "x"
+        else:
+            base = os.path.basename(s_.rstrip("/"))
+        if not base or base in (".", ".."):
+            if every:
+                c.add("persist", d.rstrip("/") + "/")
+            continue
+        cand = os.path.join(d, base)
+        whole = tree and is_persist_path(cand + "/x")  # `cp -R autostart ~/.config/`: a whole folder lands as an autostart folder
+        if not (is_persist_path(cand) or every or whole):
+            continue
+        if HOME_ONLY_NAME.match(base) and d != home and not every:
+            continue                                # `cp ~/.bashrc /tmp/`, `cp ~/.gitconfig backup/`: a copy OF the place, read only
+        dir_dest = by_t or dest.endswith("/") or len(srcs) > 1 or d == home or every or _fs.current().isdir(d)
+        if dir_dest:
+            c.add("persist", cand if is_persist_path(cand) else cand + "/")
 
 
 # 0.2.51: short options that take a value (the rest of the cluster or the next word), per command; long options are matched by getopt prefix

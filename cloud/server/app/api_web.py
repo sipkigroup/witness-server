@@ -716,6 +716,9 @@ def make_router(ctx):
         out = {"rid": rid, "status": x["status"], "action": json.loads(x["action_json"]), "mandate": mand, "expires": x["expires"],
                "tool": x["tool"], "args_preview": qwords.visible(x["args_preview"]), "text_preview": qwords.visible(x["text_preview"] or "", True),
                "preview_note": "Shown by the witness page, not signed. What your passkey signs is the action above, including args_sha256 (a hash of the tool name and ALL arguments)."}
+        prj_ = qwords._project_of(x)
+        if prj_:                        # r0300 (U28): the project folder, whole: args_preview may be cut before it (an `eval` line's long
+            out["project"] = prj_       # danger list); the page names a file as the person knows it (proekt/hello.py). Not signed (not in the view)
         if x["status"] in ("pending_approval", "held") or (x["status"] == "expired" and x["verdict"] == "defer"):
             out.update(qwords.words(x))     # 05.11 (owner rule): what / harm / details in plain words, built here from the reason code and parsed fields; signed with the view
         try:                            # 0.2.77b (red team R2-7): why this call is asked again / why the old approval did not run

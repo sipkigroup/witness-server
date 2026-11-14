@@ -59,6 +59,13 @@ R75_AUTO = {   # (name, strict) -> verdict under the profile, where it differs f
     ("d14 Write.outside note -> no; cp over note", False): "ASK",   # step 1 was quiet (copy): no No, so no mark; the cp is still asked
     ("d15 Write.outside note -> no; Edit note", False): "QUIET",    # step 1 quiet (copy), step 2 the same kind of write (copy)
     ("d15 Write.outside note -> no; Edit note", True): "QUIET",
+    # r0300: `ln -s ~/.aws src/cfg2` writes the LINK src/cfg2 (in the project), not ~/.aws. Before r0300 the parser followed the link the
+    # command itself makes and refused "a write to ~/.aws" (RESOURCE, this home is outside temp); now the link is made, and the read
+    # through it is the read of the credential it names: refused as a direct read is (b7), asked in the strict sandbox (b6). Stricter
+    # than before, never quieter; nobody said No (the asserts below).
+    ("b6 ln -s ssh dir; Read link/config", True): "ASK",
+    ("b7 ln -s aws dir -> yes; Read link/credentials", False): "DENY",
+    ("b7 ln -s aws dir -> yes; Read link/credentials", True): "DENY",
 }
 
 

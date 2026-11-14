@@ -211,8 +211,10 @@ def is_agent_config_path(p: str) -> bool:
 # Secrets: file names / directories whose CONTENT is a credential. Matched on path segments, not on substrings of words.
 SECRET_NAME = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|\.envrc|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|\.?credentials(\.json)?|"
                          r"\.vault-token|\.terraformrc|credentials\.tfrc\.json|\.s3cfg|\.boto|\.my\.cnf|\.authinfo(\.gpg)?|rclone\.conf|\.(zsh|bash)_history|[\w.-]+\.ovpn|"   # RT-0.2.55 (+history/ovpn by Deus): common plaintext cred files missing before
-                         r"id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|ssh_host_[\w-]+_key|[\w.-]+\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|p8)|secrets?\.(ya?ml|json|toml|env))$", re.I)
-SECRET_DIR = re.compile(r"(^|/)(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.config/(gcloud|gh|op|hub|doctl|fly|rclone|containers|sops|deus-witness)|\.azure|Library/Keychains)(/|$)", re.I)   # RT-0.2.55: more ~/.config service cred dirs
+                         r"id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|ssh_host_[\w-]+_key|[\w.-]+\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|p8)|secrets?\.(ya?ml|json|toml|env)|"
+                         r"Login Data|Cookies|Web Data|logins\.json|key4\.db|cookies\.sqlite|Cookies\.binarycookies|[\w .-]*passwords[\w .-]*\.csv|[\w.-]+\.1pux|"   # r0293: browser stores, password exports
+                         r"(bitwarden|lastpass|1password|keepass|dashlane|nordpass)[\w .-]*\.(csv|json|xml|txt))$", re.I)
+SECRET_DIR = re.compile(r"(^|/)(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.config/(gcloud|gh|op|hub|doctl|fly|rclone|containers|sops|deus-witness)|\.azure|Library/Keychains|Library/(Mail|Messages|Cookies)|\.thunderbird|Library/Thunderbird|[\w .-]+\.mbox)(/|$)", re.I)   # RT-0.2.55: more ~/.config service cred dirs
 SECRET_DIR_ITSELF = re.compile(r"(^|/)(\.ssh|\.aws|\.gnupg|\.kube|\.docker|\.config/(gcloud|gh|op|hub|doctl|fly|rclone|containers|sops)|\.azure)$", re.I)   # 0.2.91
 SECRET_ENV = re.compile(r"\$\{?(\w*(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE_KEY|ACCESS_KEY)\w*)\}?", re.I)
 # 0.2.90 (gate G4 "persistence / watchdog", FABLE-NOL 03.11 p.2.1): places whose text runs at the next login / shell / session or switches

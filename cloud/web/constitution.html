@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/app.css"><link rel="manifest" href="/manifest.webmanifest"><title>Constitution - Deus Witness</title>
+<meta name="description" content="The laws Deus Witness keeps no matter the setting or the price, each with the test that checks it in the open source code."></head>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness&trade;</a><nav id="nav" aria-label="Main"></nav></header>
+<main class="wrap">
+<p><a href="/index.html">&larr; Home</a></p>
+<section class="card" id="constitution">
+ <h1>Constitution</h1>
+ <p class="hint">Version 1 (2026-11-13).</p>
+ <p><strong>We do not try to catch every attack. We make an irreversible action without a person impossible by construction:</strong> an action the rules you signed do not allow is refused or waits for your passkey, and if nobody answers, or Deus Witness cannot be reached, it does not run. This holds for the actions that go through Deus Witness; it does not see what an agent does outside it.
+  <br><span class="hint">Check: <code class="check">server/tests/test_0282_irreversibility_gate.py::test_a_exits_stay_asked</code>, <code class="check">server/tests/test_0282_irreversibility_gate.py::test_a_delete_outside_project_and_disk</code>, <code class="check">server/tests/test_hookjudge_hook.py::test_errors_fail_closed</code></span></p>
+ <p>These laws hold whatever the setting or the price. We list only laws the code keeps today, and next to each one the test that checks it. Paths are inside <code>cloud/</code> of the open server, <a href="https://github.com/sipkigroup/witness-server">github.com/sipkigroup/witness-server</a> (AGPL-3.0): run the test yourself.</p>
+
+ <h2>The main laws</h2>
+ <ol>
+  <li class="law main"><strong>Only a person gives rights. An agent never widens its own.</strong> No call an agent can make changes its rules, its &ldquo;from now on&rdquo; permissions, who confirms it, the team or any key, and no call of an agent approves anything: approval is a person's passkey signature.
+   <br><span class="hint">Check: <code class="check">server/tests/test_1311_r0292_constitution.py::test_agent_routes_cannot_widen_rights</code>, <code class="check">server/tests/test_0237_no_self_approve.py::test_0237_1_agent_cannot_approve_pending</code>, <code class="check">server/tests/test_0237_no_self_approve.py::test_0237_3_agent_cannot_sign_or_change_mandate</code></span></li>
+  <li class="law main"><strong>Signed = shown.</strong> You sign exactly the text you saw. The server builds that text from a fixed vocabulary, not the agent, and the signature covers it; an edited text fails the check.
+   <br><span class="hint">Check: <code class="check">server/tests/test_kontrakt_konstant.py::test_signed_view_keys_and_version</code>, <code class="check">server/tests/test_0283_shown_views.py::test_0283_an_edited_shown_object_is_invalid</code></span></li>
+  <li class="law main"><strong>Stopping is easier than allowing.</strong> Revoking an agent's rules takes one signature of any signer, in every version of a team's rules; an outside checker rejects rules that ask for more. Anyone in a team, a Viewer too, can freeze an agent with one passkey touch; only an Owner unfreezes it.
+   <br><span class="hint">Check: <code class="check">contract/v02/test_v02.py::test_revocation_rule_must_be_any_one</code>, <code class="check">server/tests/test_1311_r0292_viewer_freeze.py::test_viewer_may_freeze_and_it_is_journaled</code>, <code class="check">server/tests/test_1311_r0292_viewer_freeze.py::test_viewer_cannot_unfreeze_or_revoke</code></span></li>
+  <li class="law main"><strong>Silence is a no.</strong> A question nobody answers expires as a refusal. If Deus Witness cannot be reached, the action does not run.
+   <br><span class="hint">Check: <code class="check">server/tests/test_hookjudge_hook.py::test_deny_reasons</code>, <code class="check">server/tests/test_hookjudge_hook.py::test_errors_fail_closed</code></span></li>
+  <li class="law main"><strong>The past is not rewritten.</strong> Every decision goes into a signed, hash-chained journal. The witness refuses to sign a rewritten history, and the offline checker catches one.
+   <br><span class="hint">Check: <code class="check">server/tests_pack/test_tlog_server_0269.py::test_the_witness_refuses_to_sign_a_rewritten_log</code>, <code class="check">server/tests_pack/test_tlogcheck_0269.py::test_substituted_root_and_rewritten_history</code></span></li>
+  <li class="law main"><strong>Safety features are never behind a paywall.</strong> Freezing, revoking, recovery codes, exporting your evidence pack, deleting your account and checking a pack work on every account, free ones included.
+   <br><span class="hint">Check: <code class="check">server/tests/test_1311_r0292_constitution.py::test_safety_features_have_no_paywall</code></span></li>
+ </ol>
+
+ <h2>More laws</h2>
+ <ol start="7">
+  <li class="law"><strong>Some actions are refused without a question.</strong> Reading private keys and token stores, switching off the guard (git hooks), adding something that starts by itself, wiping your home folder, running a downloaded script or a remote shell, hidden characters in a command, force-pushing over history.
+   <br><span class="hint">Check: <code class="check">server/tests/test_0611_konstituciya.py::test_n_server_refuses_silently</code></span></li>
+  <li class="law"><strong>Changing a team's rules is harder than using them.</strong> When the rules ask for two or more signatures, one owner alone cannot lower them or remove a member; a change needs the current signers, or waits 72 hours, and any member can cancel it.
+   <br><span class="hint">Check: <code class="check">server/tests/test_0237_team_kvorum.py::test_a_owner_alone_cannot_lower_threshold_or_drop_member</code>, <code class="check">server/tests/test_0237_team_kvorum.py::test_c2_member_cancels_scheduled_change</code></span></li>
+  <li class="law"><strong>Nobody confirms their own agent.</strong> In a team, once an agent is assigned to the person who runs it, its questions are confirmed by other members, never by that person.
+   <br><span class="hint">Check: <code class="check">server/tests/test_0213.py::test_delegated_agent_is_confirmed_by_others_never_by_its_operator</code>, <code class="check">server/tests/test_0237_no_self_approve.py::test_0237_11_team_operator_cannot_approve_own_agent</code></span></li>
+  <li class="law"><strong>Trust has an end.</strong> &ldquo;Allow from now on&rdquo; lasts at most 30 days.
+   <br><span class="hint">Check: <code class="check">server/tests/test_kontrakt_konstant.py::test_from_now_on_days</code></span></li>
+  <li class="law"><strong>Your data is yours.</strong> You export your evidence pack and delete your account without asking us.
+   <br><span class="hint">Check: <code class="check">server/tests/test_0224_critique.py::test_0224_b_export_still_verifies</code>, <code class="check">server/tests/test_0223_delete_account.py::test_success_erases_and_nobody_can_come_back</code></span></li>
+  <li class="law"><strong>If we are gone, the server is open and your receipts keep checking.</strong> The server is open source (witness-server, AGPL-3.0) and runs on your own machine with <code>docker compose up</code>; evidence packs are checked offline, without us.
+   <br><span class="hint">Check: <code class="check">server/tests_pack/test_solo_pack.py::test_4_solo_pack_valid_without_org_lines</code>, <code class="check">selfhost/e2e_check.py</code></span></li>
+ </ol>
+
+ <h2>How this page changes</h2>
+ <p class="law-rule">Any weakening comes only as a new version, announced in advance, never retroactively. Each version keeps its number and date, and a law leaves this page only together with its test.
+  <br><span class="hint">Check: <code class="check">server/tests/test_1311_r0292_constitution.py::test_constitution_page_is_versioned_and_every_law_has_a_check</code></span></p>
+ <p class="hint">Limits, said plainly: Deus Witness sees only the actions routed through it; its pages are served by us, so registering a key trusts our site. See <a href="/terms.html">Terms</a> and <a href="/privacy.html">Privacy</a>.</p>
+</section>
+</main>
+<footer>Deus Witness preview. Draft specification, not yet submitted to the IETF, not a standard. <a href="/constitution.html">Constitution</a> &middot; <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>
+</body></html>

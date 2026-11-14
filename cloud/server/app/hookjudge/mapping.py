@@ -509,6 +509,22 @@ def _glob_hits_secret(g: str) -> bool:
     return False
 
 
+def _grep_cred_place(path, cwd, home) -> bool:
+    """r0293: a Grep root that is the home, a folder above it, or a place in it where credentials live (bashparse._quiet_root says no);
+    never the project (cwd) or a folder inside it."""
+    from .bashparse import _quiet_root, canon_path
+    try:
+        rp = _fs.current().realpath                    # the hook's facts (the user's machine), not the server's disk
+        q, h, c = canon_path(rp(path)), canon_path(rp(home) if home else "").rstrip("/"), canon_path(rp(cwd or "/"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    if not h or q == c or q.startswith(c.rstrip("/") + "/"):
+        return False
+    if q == h or h.startswith(q.rstrip("/") + "/"):
+        return True                                    # the home itself or above it: the walk reaches ~/Library
+    return q.startswith(h + "/") and not _quiet_root(q, home)
+
+
 def _grep(inp, args, cwd, home):
     """0.2.12 (R7-06): Grep prints the lines it finds: grepping a credential file (`pattern: "."`, path .env) is reading it. A path or a glob
     that names one -> Grep.secret (asked, like Read.secret / `cat .env`); a search of a directory is `Grep` (pass): ripgrep skips hidden and
@@ -522,6 +538,11 @@ def _grep(inp, args, cwd, home):
         danger.append("secrets:" + path)
     if g and _glob_hits_secret(g):
         danger.append("secrets:%s/%s" % (path, g))
+    if not danger and _grep_cred_place(path, cwd, home):
+        # r0293 (key hunt in archives, Binance 2026 / Artex): the same walk as `grep -r PATTERN ~/Library` (bashparse: a recursive read
+        # outside the project where credentials live = DANGER). One effect, one judgment, whatever the tool: ripgrep skips hidden folders
+        # but walks ~/Library (Mail, Application Support, Cookies). A folder outside the home (/usr, /opt: libraries) stays a pass.
+        danger.append("secrets:%s (a search of a place where passwords and keys are kept)" % path)
     args[RESERVED] = {"path": path, "danger": danger} if danger else {"path": path}
     return Mapped("Grep.secret" if danger else "Grep", args, "Grep credential file" if danger else "Grep")
 

@@ -23,19 +23,31 @@
 </section>
 
 <section class="card">
- <h2>Members</h2>
- <div class="tablewrap"><table class="stack"><thead><tr><th>Label</th><th>Roles</th><th>Status</th><th>Key</th><th></th></tr></thead><tbody id="members"></tbody></table></div>
- <p class="hint">Roles: owner (policy, members, agents, tool maps), budget signer (mandates and approvals with money), access signer (messages, files, deletes, publishing), observer (read only, evidence pack; signs nothing and is not in the policy). A new member stays "pending" until a policy version lists them.</p>
+ <h2>People</h2>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Key</th><th></th></tr></thead><tbody id="members"></tbody></table></div>
+ <ul class="hint" id="rolehelp">
+  <li><strong>Owner</strong>: changes the team's rules, people and agents; the only one who unfreezes an agent.</li>
+  <li><strong>Approver</strong>: answers agents' questions in their area, money (purchases) or access (messages, files, deletes, publishing).</li>
+  <li><strong>Viewer</strong>: sees the journal and the evidence pack, signs nothing, and can freeze an agent (an owner unfreezes it).</li>
+ </ul>
+ <p class="hint">A new person stays "pending" until a new version of the team's rules lists them.</p>
+</section>
+
+<section class="card" id="agents-card">
+ <h2>Agents</h2>
+ <p class="hint">Agents are not people in the team: nobody invites them and they sign nothing. Each one acts only within the rules a person signed. Anyone in the team can freeze one on the <a href="app.html">Dashboard</a>.</p>
+ <div id="teamagents"></div>
 </section>
 
 <section class="card" id="invite-card" hidden>
- <h2>Invite a member</h2>
+ <h2>Invite a person</h2>
  <p class="hint">The link works once, for 24 hours. Creating it asks for your passkey again.</p>
+ <div id="inv2owner" class="notice warn" hidden></div>
  <div class="roles" id="invroles">
-  <label><input type="checkbox" value="budget" checked>budget signer</label>
-  <label><input type="checkbox" value="access">access signer</label>
-  <label><input type="checkbox" value="owner">owner</label>
-  <label><input type="checkbox" value="observer">observer (read only)</label>
+  <label><input type="checkbox" value="owner">Owner</label>
+  <label><input type="checkbox" value="budget" checked>Approver: money</label>
+  <label><input type="checkbox" value="access">Approver: access</label>
+  <label><input type="checkbox" value="observer">Viewer (signs nothing, can freeze an agent)</label>
  </div>
  <p><button id="invite" class="btn" type="button">Create invite link</button></p>
  <div id="invout" class="notice warn" hidden></div>
@@ -44,19 +56,19 @@
 <section class="card" id="edit-card" hidden>
  <h2 id="edit-head">Change the policy</h2>
  <p class="hint" id="edit-hint">You prepare a draft; it takes effect when the signers that the current policy names have signed it.</p>
- <h3>Members in the policy</h3>
+ <h3>People in the rules</h3>
  <div id="pmembers"></div>
  <h3>Rules</h3>
  <div class="grid2">
   <div><label for="r_over">Purchases over (dollars) need more signatures</label><input id="r_over" class="num" inputmode="decimal" value="500"></div>
-  <div><label for="r_overk">Budget signatures needed above that amount</label><input id="r_overk" class="num" type="number" min="1" max="16" value="2"></div>
+  <div><label for="r_overk">Money approvers needed above that amount</label><input id="r_overk" class="num" type="number" min="1" max="16" value="2"></div>
  </div>
  <div class="grid2">
-  <div><label for="r_acck">Access signatures for mandates with messages, files, deletes, publishing</label><input id="r_acck" class="num" type="number" min="1" max="16" value="1"></div>
+  <div><label for="r_acck">Access approvers needed for rules with messages, files, deletes, publishing</label><input id="r_acck" class="num" type="number" min="1" max="16" value="1"></div>
   <div><label for="r_polk">Owner signatures to change the policy</label><input id="r_polk" class="num" type="number" min="1" max="16" value="1"></div>
-  <div><label for="r_reck">Other members who replace someone's lost key (0 = off, at least 2)</label><input id="r_reck" class="num" type="number" min="0" max="15" value="0"><span class="hint">Without it, a member who loses the phone can only be put back by a policy change (the owner's rule). If the owner loses theirs and there is no second owner, nobody can.</span></div>
+  <div><label for="r_reck">Other members who replace someone's lost key (0 = off, at least 2)</label><input id="r_reck" class="num" type="number" min="0" max="15" value="0"><span class="hint">Without it, a member who loses the phone can only be put back by a policy change (the owner's rule). If the owner loses theirs and there is no second owner, nobody can: make a second owner.</span></div>
  </div>
- <p class="hint">Purchases at or under the amount need one budget signature; held purchases over it need the same number of budget signatures to approve. Revoking a mandate always needs one signature of any signer: stopping is easy, allowing is hard.</p>
+ <p class="hint">Purchases at or under the amount need one money approver; held purchases over it need the same number of money approvers to approve. Revoking a mandate always needs one signature of any signer: stopping is easy, allowing is hard.</p>
  <div id="pwords"></div>
  <div id="editmsg" class="notice" hidden></div>
  <p><button id="draft" class="btn big" type="button">Prepare draft and sign</button></p>

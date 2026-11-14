@@ -235,6 +235,10 @@ def key_in_policy(ctx, req, acc):
     if m is None or m["kid"] is None:
         return True
     c = _session_cred(ctx, req)
+    if not any(r in org.SIGNERS for r in m["roles"]):
+        # r0292: a Viewer (observer) is never in the policy; the key that counts for it is the one it joined with (members.kid), so its
+        # one passkey right -- freezing an agent -- works, and a key added later by a recovery code does not get it (the R4-09 rule)
+        return c is not None and bytes(c["kid"]) == m["kid"]
     return c is not None and bytes(c["kid"]) in {mm["kid"] for mm in org.current_policy(ctx, acc["id"])[0]["members"]}
 
 

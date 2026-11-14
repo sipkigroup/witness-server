@@ -1,6 +1,6 @@
 import { get, post, put, del } from './api.js';
 import { levelError } from './levels.js';
-import { policyFromJson, describePolicy, rulesFromForm, formFromRules, checkDraft, needsText } from './policy.js';
+import { policyFromJson, describePolicy, rulesFromForm, formFromRules, checkDraft, needsText, roleWords } from './policy.js';
 import { anchorText } from './anchors.js';
 import { h, $, clear, notice, mountNav, dollarsToCents, kv, short, safeId, failText, copyButton } from './ui.js';
 
@@ -8,6 +8,9 @@ const msg = $('#msg');
 const S = { me: null, org: null, orgs: [], myRoles: [], policy: null };
 const isOwner = () => S.myRoles.includes('owner');
 const ROLE_SET = ['owner', 'budget', 'access'];
+// r0292 (owner 13.11, p.4): words on screen; the internal names stay in the signed policy
+const ROLE_LABEL = { owner: 'Owner', budget: 'Approver: money', access: 'Approver: access' };
+const isViewer = (m) => m.roles.length > 0 && m.roles.every((r) => r === 'observer');
 
 function renderAnchors(profile) {
   const t = anchorText(profile);
@@ -27,8 +30,8 @@ function renderMembers() {
   const body = clear($('#members'));
   for (const m of S.org.members) {
     body.append(h('tr', {},
-      h('td', { 'data-l': 'Label', text: m.label || m.user_id }),
-      h('td', { 'data-l': 'Roles', text: m.roles.join(', ') }),
+      h('td', { 'data-l': 'Name', text: m.label || m.user_id }),
+      h('td', { 'data-l': 'Role', text: roleWords(m.roles) }),
       h('td', { 'data-l': 'Status' }, h('span', { class: 'pill ' + (m.status === 'active' ? 'allow' : m.status === 'pending' ? 'defer' : 'deny'), text: m.status })),
       h('td', { 'data-l': 'Key', class: 'mono', text: short(m.kid) }),
       h('td', {}, canReplace(m) ? h('button', { class: 'btn ghost', type: 'button', onclick: () => replaceKey(m) }, 'Lost passkey: replace key') : '')));
@@ -37,7 +40,7 @@ function renderMembers() {
 
 // 0.2.2: a member lost the passkey the policy names. Opens the policy request that swaps ONLY that key for the person's new one;
 // the other members sign it (rule "recovery"). The person must have added a new passkey first (recovery code or another device).
-const canReplace = (m) => S.policy && m.status === 'active' && !(m.roles.length === 1 && m.roles[0] === 'observer') && S.myRoles.some((r) => ROLE_SET.includes(r));
+const canReplace = (m) => S.policy && m.status === 'active' && !isViewer(m) && S.myRoles.some((r) => ROLE_SET.includes(r));
 async function replaceKey(m) {
   if (!confirm('Replace the key of ' + (m.label || 'this member') + '? Do this only after you have spoken to them (call, in person): '
     + 'whoever holds a new passkey on their account will sign for them in this team.')) return;
@@ -66,7 +69,7 @@ async function renderSigRequests() {
 function editorMembers() {
   // who can be in the policy: members with a key that are not observers or removed
   const byKid = new Map((S.policy ? S.policy.members : []).map((m) => [Array.from(m.kid).map((x) => x.toString(16).padStart(2, '0')).join(''), m]));
-  return S.org.members.filter((m) => m.status !== 'removed' && !(m.roles.length === 1 && m.roles[0] === 'observer')).map((m) => {
+  return S.org.members.filter((m) => m.status !== 'removed' && !isViewer(m)).map((m) => {
     const inPol = byKid.get(m.kid);
     return { user_id: m.user_id, kid: m.kid, label: (inPol && inPol.label) || m.label || '', roles: inPol ? [...inPol.roles] : m.roles.filter((r) => ROLE_SET.includes(r)), inPolicy: !!inPol || m.status === 'pending', status: m.status };
   });
@@ -87,7 +90,7 @@ function renderEditor() {
     const row = h('div', { class: 'member', 'data-uid': m.user_id },
       h('div', {}, h('label', {}, h('input', { type: 'checkbox', class: 'inpol', checked: m.inPolicy }), 'in policy'),
         h('input', { class: 'lab', value: m.label, maxlength: '32', 'aria-label': 'Label' }), h('span', { class: 'hint mono', text: short(m.kid) + (m.status === 'pending' ? ' (pending)' : '') })),
-      h('div', { class: 'roles' }, ...ROLE_SET.map((r) => h('label', {}, h('input', { type: 'checkbox', class: 'role', value: r, checked: m.roles.includes(r) }), r))));
+      h('div', { class: 'roles' }, ...ROLE_SET.map((r) => h('label', {}, h('input', { type: 'checkbox', class: 'role', value: r, checked: m.roles.includes(r) }), ROLE_LABEL[r]))));
     box.append(row);
   }
   const f = formFromRules(S.policy.rules);
@@ -120,6 +123,8 @@ function preview() {
   const box = clear($('#pwords'));
   if (P.length) { notice($('#editmsg'), 'err', P.map((p) => p.text).join(' ')); $('#draft').disabled = true; return; }
   notice($('#editmsg'), 'ok', ''); $('#draft').disabled = false;
+  // r0292 (owner 13.11, p.6): two or more people sign, one owner -> say it (not a block): one lost or stolen phone decides for everyone
+  if (d.members.length >= 2 && d.members.filter((m) => m.roles.includes('owner')).length === 1) box.append(h('p', { class: 'notice warn', text: SECOND_OWNER_WHY + ' Tick "Owner" for a second person.' }));
   const pseudo = { ver: S.policy ? S.policy.ver + 1 : 1, prev: S.policy ? new Uint8Array(32) : null, members: d.members, rules: d.rules };
   box.append(h('h3', { text: 'The draft in words' }), kv(describePolicy(pseudo)));
 }
@@ -137,16 +142,35 @@ async function sendDraft() {
 }
 
 // ---- invites ----
+// r0292 (owner 13.11, p.6): the first person who will sign with the owner -> suggest a second owner (ticked by default); a team of two:
+// both owners, and each keeps recovery codes. Tied to the second signer, not to payment.
+const SECOND_OWNER_WHY = 'With one owner, one lost or stolen phone decides for the whole team.';
+function signersBesidesMe() {
+  return S.org.members.filter((m) => m.user_id !== myUid() && m.status !== 'removed' && m.roles.some((r) => ROLE_SET.includes(r))).length;
+}
+function renderInviteWizard() {
+  const box = $('#inv2owner');
+  if (!isOwner() || signersBesidesMe() > 0) { box.hidden = true; return; }
+  for (const i of document.querySelectorAll('#invroles input')) i.checked = ['owner', 'budget', 'access'].includes(i.value);
+  clear(box); box.hidden = false;
+  box.append(h('p', {}, h('strong', { text: 'Make them a second owner? ' }), SECOND_OWNER_WHY + ' "Owner" is ticked for this first person; untick it if they should only approve.'),
+    h('p', { text: 'In a team of two, make both of you owners, and each of you saves your own recovery codes: ' }, h('a', { href: 'recovery-codes.html', text: 'Recovery codes' }), '.'));
+}
+function viewerOnly(ev) {          // a Viewer has no other role: ticking it clears the others, ticking another clears it
+  const t = ev.target;
+  if (!t.checked) return;
+  for (const i of document.querySelectorAll('#invroles input')) if (i !== t && (t.value === 'observer' || i.value === 'observer')) i.checked = false;
+}
 async function invite() {
   const roles = [...document.querySelectorAll('#invroles input:checked')].map((i) => i.value);
   const out = $('#invout');
   if (!roles.length) { notice(out, 'err', 'Choose at least one role.'); return; }
-  if (roles.includes('observer') && roles.length > 1) { notice(out, 'err', 'An observer has no other role: it signs nothing.'); return; }
+  if (roles.includes('observer') && roles.length > 1) { notice(out, 'err', 'A Viewer has no other role: a Viewer signs nothing.'); return; }
   try {
     const r = await post('/api/org/invites', { roles });
     clear(out); out.hidden = false; out.className = 'notice warn';
     out.append(h('strong', { text: 'Invite link (shown once, works once for 24 hours):' }), h('pre', { text: r.url }), copyButton(() => r.url, 'Copy link'),
-      h('p', { text: 'Send it to the person yourself. They create their own passkey; then add them to a new policy version below.' }));
+      h('p', { text: 'Send it to the person yourself. They create their own passkey; then add them to a new version of the rules below.' + (roles.includes('owner') ? ' Remind them to save their recovery codes.' : '') }));
   } catch (e) { notice(out, 'err', failText(e)); }
 }
 
@@ -217,12 +241,22 @@ async function endDelegation() {
   catch (e) { notice($('#delegmsg'), 'err', failText(e)); }
 }
 
+// r0292 (owner 13.11, p.4): agents are their own section, not rows among people
+async function renderAgents() {
+  let agents = [];
+  try { agents = await get('/api/agents'); } catch (e) { agents = []; }
+  const box = clear($('#teamagents'));
+  if (!agents.length) { box.append(h('p', { class: 'hint', text: 'No agents yet.' })); return; }
+  box.append(h('ul', {}, ...agents.map((a) => h('li', {}, h('strong', { text: a.name }), ' ',
+    h('span', { class: 'pill ' + (a.frozen_at ? 'deny' : a.active_mandate_id ? 'allow' : 'defer'), text: a.frozen_at ? 'frozen' : a.active_mandate_id ? 'rules active' : 'no rules' })))));
+}
+
 async function renderOrgs() {
   try { S.orgs = await get('/api/orgs'); } catch (e) { S.orgs = []; }
   const cur = S.orgs.find((o) => o.current);
   S.myRoles = cur ? cur.roles : [];
   $('#orgs-card').hidden = S.orgs.length < 2;
-  clear($('#orgsel')).append(...S.orgs.map((o) => h('option', { value: o.account_id, selected: o.current }, (o.name || o.account_id) + ' (' + o.roles.join(', ') + ')')));
+  clear($('#orgsel')).append(...S.orgs.map((o) => h('option', { value: o.account_id, selected: o.current }, (o.name || o.account_id) + ' (' + roleWords(o.roles) + ')')));
 }
 
 async function main() {
@@ -234,12 +268,14 @@ async function main() {
   if (!S.myRoles.length) { const m = S.org.members.find((x) => x.user_id === myUid()); S.myRoles = m ? m.roles : []; }
   $('#orgname').textContent = S.org.principal || '';
   $('#invite-card').hidden = !isOwner();
-  renderPolicy(); renderMembers(); renderEditor(); renderSettings();
+  renderPolicy(); renderMembers(); renderEditor(); renderSettings(); renderInviteWizard();
+  await renderAgents();
   await renderSigRequests();
   await renderDelegation();
   $('#d_save').addEventListener('click', saveDelegation);
   $('#d_end').addEventListener('click', endDelegation);
   $('#invite').addEventListener('click', invite);
+  $('#invroles').addEventListener('change', viewerOnly);
   $('#draft').addEventListener('click', sendDraft);
   $('#setsave').addEventListener('click', saveSettings);
   $('#orgswitch').addEventListener('click', async () => { try { await post('/api/orgs/switch', { account_id: $('#orgsel').value }); location.reload(); } catch (e) { notice(msg, 'err', failText(e)); } });

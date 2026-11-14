@@ -3,7 +3,7 @@ import { get, post } from './api.js';
 import { bytesToHex } from './cde.js';
 import { signBatch, signPayload } from './sign.js';
 import { batchItems, wbChallenge, mixedReason } from './wb.js';
-import { policyFromJson, releasePayload, TYP_RELEASE } from './policy.js';
+import { policyFromJson, releasePayload, TYP_RELEASE, roleWords } from './policy.js';
 import { roleOf, isEscalated, forMe, quorumOf, groupItems, acceptGroup, clip4k, diffTokens, differingFields, waitingFirst } from './queue.js';
 import { describeAction } from './describe.js';
 import { reveal, inspectFields } from './honest.js';
@@ -50,7 +50,7 @@ function itemRow(x) {
 function renderQueue() {
   const vis = Q.all ? Q.items : Q.items.filter((x) => forMe(x, Q.roles, Q.org.settings, now()));
   $('#t_mine').className = 'btn' + (Q.all ? ' ghost' : ''); $('#t_all').className = 'btn' + (Q.all ? '' : ' ghost');
-  $('#qhint').textContent = Q.all ? 'Everything waiting in this organisation.' : 'Money actions go to budget signers, other actions to access signers; owners also see what was not decided in time (escalation). Your roles: ' + (Q.roles.join(', ') || 'none') + '.';
+  $('#qhint').textContent = Q.all ? 'Everything waiting in this organisation.' : 'Money actions go to money approvers, other actions to access approvers; owners also see what was not decided in time (escalation). Your role: ' + (Q.roles.length ? roleWords(Q.roles) : 'none') + '.';
   const byRid = new Map(vis.map((x) => [x.rid, x]));
   const groups = Q.groups.map((g) => acceptGroup(g, byRid, Q.policy)).filter(Boolean);
   const inGroup = new Set(groups.flatMap((g) => g.rids));

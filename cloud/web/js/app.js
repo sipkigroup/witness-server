@@ -42,8 +42,11 @@ export const DISABLE_HELP = 'Disable switches this agent\'s key off for good; it
 // 0.2.25: freeze / unfreeze on the agent card (the server asks for a fresh passkey touch; api.js requests it and retries)
 function frozenNote(a) { const t = frozenText(a); return t ? h('p', { class: 'notice warn', text: t }) : ''; }
 
+// r0292 (owner 13.11, p.5): anyone in a team (a Viewer too) freezes; only an owner unfreezes. /api/me carries the person's roles.
+const iAmOwner = () => !(state.me && Array.isArray(state.me.roles)) || state.me.roles.includes('owner');
+
 async function freeze(a, btn) {
-  if (!confirm('Freeze "' + a.name + '"? Everything it waits for is refused and its new calls are refused until you unfreeze it. Your passkey confirms it.')) return;
+  if (!confirm('Freeze "' + a.name + '"? Everything it waits for is refused and its new calls are refused until ' + (iAmOwner() ? 'you unfreeze it' : 'an owner unfreezes it') + '. Your passkey confirms it.')) return;
   btn.disabled = true;
   try { const x = await post('/api/agents/' + encodeURIComponent(a.id) + '/freeze'); notice(msg, 'warn', 'Agent frozen. Requests cancelled: ' + x.cancelled + '.'); await refreshAll(); }
   catch (e) { notice(msg, 'err', e.code ? failText(e) : explainError(e)); btn.disabled = false; }
@@ -81,7 +84,7 @@ async function loadAgents() {
         m ? h('button', { class: 'btn danger', type: 'button', onclick: (ev) => revoke(a, ev.target) }, 'Revoke rules') : '',
         cat && cat.catalog_sha256 && safeId(a.id) ? h('a', { class: 'btn ghost', href: 'catalog.html?agent=' + encodeURIComponent(a.id) }, 'Tool catalog') : '',
         a.frozen_at
-          ? h('button', { class: 'btn', type: 'button', onclick: (ev) => unfreeze(a, ev.target) }, 'Unfreeze')
+          ? (iAmOwner() ? h('button', { class: 'btn', type: 'button', onclick: (ev) => unfreeze(a, ev.target) }, 'Unfreeze') : h('span', { class: 'hint', text: 'Only an owner can unfreeze it.' }))
           : h('button', { class: 'btn ghost', type: 'button', onclick: (ev) => freeze(a, ev.target) }, 'Freeze')),
       h('p', { class: 'hint btnhelp', text: AGENT_BUTTONS_HELP }),
       // r0283 (#30, decision 6): the one action that cannot be undone is folded under "More", looks unlike Revoke, and asks for the agent's

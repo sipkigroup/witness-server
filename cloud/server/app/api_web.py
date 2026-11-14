@@ -436,11 +436,12 @@ def make_router(ctx):
     @r.post("/api/agents/{aid}/freeze")
     def agent_freeze(aid: str, req: Request):
         """0.2.24 (critique T2): freeze an agent: cancel everything it waits for and deny its new calls. Any active signer with a fresh
-        passkey touch (step-up): stopping is the safe direction. Unfreezing is the owner's (below)."""
-        acc = auth.session_account(ctx, req, True)              # "write": an ACTIVE signing member
+        passkey touch (step-up): stopping is the safe direction. Unfreezing is the owner's (below).
+        r0292 (owner 13.11, p.5): a Viewer (observer) may freeze too -- "anyone may stop"; a non-owner's freezes are rate-limited."""
+        acc = auth.session_account(ctx, req, True, "freeze")    # any ACTIVE member, the Viewer included (org.RIGHTS["freeze"])
         own_agent(acc, aid)
         auth.require_stepup(ctx, req, acc)
-        return act.freeze(ctx, acc, req.state.user, aid)
+        return act.freeze(ctx, acc, req.state.user, aid, limited="owner" not in req.state.member["roles"])
 
     @r.post("/api/agents/{aid}/unfreeze")
     def agent_unfreeze(aid: str, req: Request):

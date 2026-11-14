@@ -27,7 +27,7 @@ async function load() {
   const f = digestFigures(d);
   clear($('#stats')).append(...[['W', f.W], ['H', f.H], ['F', f.F], ['A100', f.A100], ['F100', f.F100]].map(([k, v]) => h('div', { class: 'stat' }, h('b', { text: String(v) }), k)));
   const pr = d.pending_by_role || {};
-  clear($('#pending')).append(h('dt', { text: 'budget signers' }), h('dd', { text: String(pr.budget || 0) }), h('dt', { text: 'access signers' }), h('dd', { text: String(pr.access || 0) }),
+  clear($('#pending')).append(h('dt', { text: 'money approvers' }), h('dd', { text: String(pr.budget || 0) }), h('dt', { text: 'access approvers' }), h('dd', { text: String(pr.access || 0) }),
     ...(pr.escalated != null ? [h('dt', { text: 'escalated to owners' }), h('dd', { text: String(pr.escalated) })] : []));
   const sg = d.suggestions || [];
   clear($('#sugg')).append(...(sg.length ? sg.map(suggestion) : [h('p', { class: 'hint', text: 'No suggestions in this period.' })]));

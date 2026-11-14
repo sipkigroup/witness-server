@@ -164,22 +164,31 @@ export function holders(policy, role) {
   return policy.members.filter((m) => role === 'any' || m.roles.includes(role));
 }
 
-const ROLE_WORD = { owner: 'owner', budget: 'budget signer', access: 'access signer', any: 'signer' };
+// r0292 (owner 13.11, p.4): the words people see. Internal role names (owner / budget / access / observer) stay in the signed policy;
+// on screen: Owner, Approver (money), Approver (access), Viewer. An agent is not a role: it signs nothing (team.html "Agents").
+const ROLE_WORD = { owner: ['owner', 'owners'], budget: ['money approver', 'money approvers'], access: ['access approver', 'access approvers'], any: ['signer', 'signers'] };
+const roleWord = (role, n) => (ROLE_WORD[role] || [role, role + 's'])[n === 1 ? 0 : 1];
+export function roleWords(roles) {
+  const rs = roles || [];
+  if (rs.length && rs.every((r) => r === 'observer')) return 'Viewer';
+  const ap = [rs.includes('budget') ? 'money' : '', rs.includes('access') ? 'access' : ''].filter(Boolean);
+  return [rs.includes('owner') ? 'Owner' : '', ap.length ? 'Approver (' + ap.join(', ') + ')' : ''].filter(Boolean).join(' + ') || '-';
+}
 const names = (ms) => ms.map((m) => m.label || bytesToHex(m.kid).slice(0, 8)).sort((a, b) => a.localeCompare(b)).join(', '); // stable for people, not kid order
 function need(policy, role, k) {
   const hs = holders(policy, role);
-  return k + ' of ' + hs.length + ' ' + ROLE_WORD[role] + (hs.length === 1 ? '' : 's') + ': ' + names(hs);
+  return k + ' of ' + hs.length + ' ' + roleWord(role, hs.length) + ': ' + names(hs);
 }
 function tierText(policy, t, what, cur) {
   const head = t.if === 'money' ? what.money : t.if === 'money_over' ? what.over + ' ' + fmtMoney(t.amount, cur) : what.access;
   return head + ' - ' + (t.k === 1 ? 'signature' : 'signatures') + ' ' + need(policy, t.role, t.k);
 }
 
-// The current policy in words: [[label, text]] (e.g. "Purchases over 500.00 USD - signatures 2 of 3 budget signers: Anna, Boris, Vera").
+// The current policy in words: [[label, text]] (e.g. "Purchases over 500.00 USD - signatures 2 of 3 money approvers: Anna, Boris, Vera").
 export function describePolicy(policy, cur = 'USD') {
   const r = policy.rules, L = [];
   L.push(['Version', String(policy.ver) + (policy.prev ? ' (follows version ' + (policy.ver - 1) + ')' : ' (first)')]);
-  L.push(['Members', policy.members.map((m) => (m.label || '?') + ' (' + m.roles.join(', ') + ')').join('; ')]);
+  L.push(['Members', policy.members.map((m) => (m.label || '?') + ' (' + roleWords(m.roles) + ')').join('; ')]);
   const M = { money: 'Mandates with purchases', over: 'Mandates with purchases over', access: 'Mandates with messages, files, deletes or publishing' };
   const A = { money: 'Approving a held purchase', over: 'Approving a held purchase over', access: 'Approving any other held action' };
   if (!r.mandate.length) L.push(['Mandates', 'no extra rule: one signature of any member']);
@@ -200,10 +209,10 @@ export function describePolicy(policy, cur = 'USD') {
   return L;
 }
 
-// [[role,k]] -> "2 budget signers + 1 access signer"
+// [[role,k]] -> "2 money approvers + 1 access approver"
 export function needsText(needs) {
   if (!needs.length) return 'one signature';
-  return needs.map(([r, k]) => k + ' ' + ROLE_WORD[r] + (k === 1 ? '' : 's')).join(' + ');
+  return needs.map(([r, k]) => k + ' ' + roleWord(r, k)).join(' + ');
 }
 
 // Revocation payload (-04 6.7): {v:"deus-aar-0.1", t:"revocation", mandate: SHA-256(CDE(mandate))}.

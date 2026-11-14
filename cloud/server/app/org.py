@@ -27,7 +27,7 @@ GENESIS_RULES = {"policy": {"role": "owner", "k": 1}, "mandate": [], "approval":
                  "ceiling": {"role": "owner", "k": 1}}
 REVOCATION_RULE = {"role": "any", "k": 1}           # 0 p.3: stopping is easy -- any one signer, in every version
 
-# The ONE table of rights (2.7). action -> (roles that may, member statuses that may). The observer may only read.
+# The ONE table of rights (2.7). action -> (roles that may, member statuses that may). The observer may only read -- and freeze (r0292).
 # "sign": the signature itself is then judged against the policy (a pending / removed member gets WQ_NOT_MEMBER, not a silent 403).
 RIGHTS = {
     "read":    (ROLES, ("active", "pending")),
@@ -36,6 +36,9 @@ RIGHTS = {
     "mandate": (SIGNERS, ("active",)),
     "sign":    (SIGNERS, ("active", "pending", "removed")),
     "owner":   (("owner",), ("active",)),
+    # r0292 (owner 13.11, p.5): "anyone may stop" -- a Viewer (observer) may FREEZE an agent, nothing else; unfreezing is "owner".
+    # The rate of a non-owner's freezes is limited (actions.FREEZE_RATE_N per FREEZE_RATE_S); every freeze is journaled with by_user.
+    "freeze":  (ROLES, ("active",)),
 }
 
 

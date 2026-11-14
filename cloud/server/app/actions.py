@@ -3068,12 +3068,21 @@ def _has_float(x):
     return False
 
 
-def freeze(ctx, acc, user_id, agent_id, kind="freeze"):
+# r0292 (owner 13.11, p.5): a person who is not an owner (a Viewer, an Approver) freezes at most FREEZE_RATE_N times per FREEZE_RATE_S
+# (counted from the durable journal agent_freezes, so a restart does not reset it). The owner is never limited: the owner can always stop.
+FREEZE_RATE_N = 5
+FREEZE_RATE_S = 3600
+
+
+def freeze(ctx, acc, user_id, agent_id, kind="freeze", limited=False):
     """0.2.24 (critique T2, approval bombing): one passkey touch stops an agent. Every request of it that waits for a person (pending_approval,
     held) is cancelled (denied AGENT_FROZEN: nobody can approve it any more; the ledger receipt simply expires unapproved), an approved one can no
     longer be presented, and every new call is denied AGENT_FROZEN until the owner unfreezes it. Journal: table agent_freezes + the log."""
     with ctx.hub.lock(acc["id"]):
         t = now()
+        if limited and ctx.db.one("SELECT COUNT(*) AS n FROM agent_freezes WHERE account_id=? AND by_user=? AND t>? AND kind IN ('freeze','freeze-again')",
+                                  (acc["id"], user_id, t - FREEZE_RATE_S))["n"] >= FREEZE_RATE_N:
+            raise Err(429, "FREEZE_RATE", "you froze %d agents in the last hour: ask an owner (owners are not limited)" % FREEZE_RATE_N)
         first = ctx.db.n("UPDATE agents SET frozen_at=? WHERE id=? AND account_id=? AND frozen_at IS NULL", (t, agent_id, acc["id"]))
         rids = [r["rid"] for r in ctx.db.q("SELECT rid FROM actions WHERE agent_id=? AND status IN ('pending_approval','held')", (agent_id,))]
         for rid in rids:

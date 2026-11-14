@@ -47,7 +47,9 @@ def test_6_observer_403_on_every_changing_path(app):
     p = act(owner.c, hdr, "publish", {"channel": "news", "text": "t"}).json()
     ids = {"aid": ag["id"], "rid": p["rid"], "sid": d["req_id"], "mid": "m_none", "agent": ag["id"], "id": d["req_id"]}
     obs.stepup()                                          # a fresh passkey signature does not lift the role
-    changing = [(m, pth) for m, pth in api_routes(app) if m in CHANGING and not pth.startswith("/api/auth/") and pth not in USER_LEVEL]
+    # r0292 (owner 13.11, p.5): the ONE changing path a Viewer may take is "freeze an agent" (tests/test_1311_r0292_viewer_freeze.py)
+    changing = [(m, pth) for m, pth in api_routes(app) if m in CHANGING and not pth.startswith("/api/auth/") and pth not in USER_LEVEL
+                and pth != "/api/agents/{aid}/freeze"]
     assert len(changing) >= 12, changing
     for m, pth in changing:
         r = obs.c.request(m, fill(pth, ids), json={"approved": True, "envelope_b64": "AA", "roles": ["owner"], "release": True,
@@ -78,7 +80,7 @@ def test_rights_table_is_the_only_gate(app):
         r = bob.c.request(m, pth, json=j, headers=H)
         assert r.status_code == 403 and r.json()["error"] == "FORBIDDEN", (pth, r.text)
     assert bob.post("/api/mandates/draft", agent_id=ag["id"], form=MSG_FORM).status_code == 200      # a signer may draft a mandate
-    assert set(org.RIGHTS) == {"read", "session", "write", "mandate", "sign", "owner"}
+    assert set(org.RIGHTS) == {"read", "session", "write", "mandate", "sign", "owner", "freeze"}      # r0292: "freeze" -- any active member
     assert all("observer" not in org.RIGHTS[a][0] for a in ("write", "mandate", "sign", "owner"))
 
 

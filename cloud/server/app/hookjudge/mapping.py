@@ -210,7 +210,7 @@ def _map(ev, home, env=None):
         from . import envmask as _envmask
         if _envmask.masked_line(cmd):                # 06.11 (r0260): `env | grep -i node | <mask>`: no secret value reaches the agent
             c.danger = [d for d in c.danger if d != "secrets:whole environment"]
-        if any(isinstance(h, str) and SANDBOXED_CODE in h for h in c.heads):
+        if any(isinstance(h, str) and (SANDBOXED_CODE in h or AUTO_PROFILE in h or h.startswith(OUTSIDE_WRITE)) for h in c.heads):
             c.add("opaque", "a command named like the mandate's reserved entry")     # 0.2.82: never matched as the list entry
         from . import sandbox as _sbx
         from .bashparse import FETCHERS, REMOTE_SHELLS
@@ -712,3 +712,72 @@ def default_form(project_dir: str, web_domains=None, safe_commands=None, home=No
             "command": {"allow": list(DEFAULT_SAFE_COMMANDS if safe_commands is None else safe_commands)
                                  + ([SANDBOXED_CODE] if DEFAULT_SANDBOXED_CODE else []), "unlisted": DEFAULT_UNLISTED,
                         "sandboxed": DEFAULT_SANDBOXED}}
+
+
+# r0296 (SVEZHIY-VZGLYAD-1311 p.7-8): the profile "auto mode + Witness" -- Witness completes Claude Code's own auto mode instead of arguing
+# with it: it asks the person only about what cannot be undone and about what auto mode / the sandbox would hand to a person anyway
+# (an exit: git push, publish, deploy, a request with data; deleting outside the project; money; secrets; anything that starts by itself;
+# the agent's own settings), and lets the rest run quietly WITH a receipt. A profile is not a new member of the core: it is two reserved
+# entries of the signed command list, so the offline checker keeps judging every receipt from the signed mandate alone (signed = shown):
+#   AUTO_PROFILE  the one line the person reads and signs ("ask only what cannot be undone"); it names no command (a command of that name
+#                 has blanks in it: opaque, never matched) and widens nothing by itself;
+#   AUTO_OUTSIDE  "(write outside the project) /*": the core allows the pseudo-command OUTSIDE_WRITE. The mapping makes that pseudo-command
+#                 ONLY for a write in the person's home folder, outside the project, that is not a secret, not a place of persistence, not
+#                 the agent's or git's configuration, and whose file the hook copied first (shadow: `deus-witness-hook --undo PATH` puts the
+#                 bytes back) -- i.e. a write that can be undone. A write in shared /tmp (no copy: r0261f marks it dangerous), outside the
+#                 home, or with no copy is still asked; a dangerous line is never covered by a list. After the owner's No to the same
+#                 place (provenance.refused_before) the write is asked again (actions: refused_outside_write).
+# Code still runs quietly only inside a strict sandbox (the code option): auto mode's classifier is a model, it proves nothing, so the
+# profile buys no silence for unconfined code. Same strings: the client's form.py and web/js/mandate_form.js (a test keeps them equal).
+AUTO_PROFILE = "(auto mode: ask only what cannot be undone)"
+AUTO_OUTSIDE = OUTSIDE_WRITE + "/*"
+AUTO_ENTRIES = (AUTO_PROFILE, AUTO_OUTSIDE)
+
+
+def auto_profile_form(form: dict) -> dict:
+    """-> a copy of a mandate FORM with the profile's two entries in command.allow (once, at the end). A form whose command section is
+    not a list form (absent / false / not a dict) is returned unchanged: the profile widens only a list the person already signs."""
+    f = json.loads(json.dumps(form))
+    c = f.get("command")
+    if not isinstance(c, dict) or not isinstance(c.get("allow"), list):
+        return f
+    c["allow"] = [x for x in c["allow"] if x not in AUTO_ENTRIES] + list(AUTO_ENTRIES)
+    return f
+
+
+def is_auto_profile(command_perm) -> bool:
+    """the signed command permission carries the profile (both entries)"""
+    return isinstance(command_perm, dict) and isinstance(command_perm.get("allow"), list) and all(e in command_perm["allow"] for e in AUTO_ENTRIES)
+
+
+# r0296: what the profile lets run quietly outside the project is a DATA file: a note, a text, a table. A place another program reads as
+# code or configuration later -- outside Witness, when the person opens vim, starts python, runs `make` in another project, logs in --
+# would turn an undoable write into something that has already run before the undo. So, besides the places the mapping already guards
+# (secrets, persistence, the agent's / git's configuration), the profile's quiet write is never: under a hidden segment (dotfiles,
+# ~/.config, ~/.local, ~/.vim, ~/.ipython ...), under Library / bin / Applications / site-packages / node_modules, a code-shaped file or an
+# ecosystem file (Makefile, package.json, conftest.py ... : repeat.code_shaped), a file without an extension (a script run by its name),
+# or a property list. Such a write is asked as before (with the profile it is marked dangerous: no list covers it).
+AUTO_NOT_DATA_SEGS = {"library", "bin", "sbin", "applications", "site-packages", "dist-packages", "node_modules", "launchagents",
+                      "launchdaemons", "startupitems", "autostart"}
+AUTO_NOT_DATA_EXT = {"plist", "command", "tool", "app", "workflow", "service", "desktop", "pth", "terminal", "webloc", "inetloc", "url",
+                     "lnk", "scpt", "scptd", "applescript", "exe", "dll", "msi", "dmg", "pkg"}
+
+
+def auto_quiet_place(path: str) -> bool:
+    """True when `path` (absolute, outside the project) is a plain data file the profile may write quietly (with a copy)."""
+    if not isinstance(path, str) or not path.startswith("/"):
+        return False
+    segs = [s for s in path.split("/") if s]
+    if not segs or any(s.startswith(".") for s in segs) or any(s.lower() in AUTO_NOT_DATA_SEGS for s in segs):
+        return False
+    base = segs[-1]
+    if "." not in base.strip("."):
+        return False
+    ext = base.rsplit(".", 1)[-1].lower()
+    if ext in AUTO_NOT_DATA_EXT:
+        return False
+    try:
+        from app.repeat import code_shaped
+        return not code_shaped(path)
+    except Exception:      # noqa: BLE001  fail closed: asked
+        return False

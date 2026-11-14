@@ -1,6 +1,9 @@
 // Human-readable text derived from the SAME map that is encoded and signed.
 import { fmtMoney, fmtTime } from './ui.js';
 const SANDBOXED_CODE = '(code in the strict sandbox)';   // 0.2.82: the reserved command-list entry (mandate_form.js, server mapping.py)
+const AUTO_PROFILE = '(auto mode: ask only what cannot be undone)';   // r0296: the profile's reserved entries (mandate_form.js, server mapping.py)
+const AUTO_OUTSIDE = '(write outside the project) /*';
+const RESERVED = [SANDBOXED_CODE, AUTO_PROFILE, AUTO_OUTSIDE];
 
 export function describeMandate(m) {
   const L = [];
@@ -32,9 +35,11 @@ export function describeMandate(m) {
   const OTHER = { ask: 'need your approval', allow: 'run without asking', deny: 'are refused' };
   if (cm === undefined || cm === null) L.push(['Shell commands', 'not specified: every command needs your approval; dangerous ones (rm -rf, dd, mkfs, force-push, curl | sh ...) always do']);
   else if (cm === false) L.push(['Shell commands', 'forbidden']);
-  else L.push(['Shell commands', 'run without asking: ' + ((cm.allow || []).filter((x) => x !== SANDBOXED_CODE).join(', ') || 'none') + '; other commands ' + (OTHER[cm.unlisted || 'ask'] || 'need your approval') + '; dangerous ones ' + (cm.unlisted === 'deny' ? 'are refused' : 'always need your approval')
+  else L.push(['Shell commands', 'run without asking: ' + ((cm.allow || []).filter((x) => !RESERVED.includes(x)).join(', ') || 'none') + '; other commands ' + (OTHER[cm.unlisted || 'ask'] || 'need your approval') + '; dangerous ones ' + (cm.unlisted === 'deny' ? 'are refused' : 'always need your approval')
     + (cm.sandboxed === 'allow' ? '; test runners (pytest, npm test, make ...) run without asking only inside a strict Claude Code sandbox (no network, secrets unreadable), asked otherwise' : '')
     + (cm.sandboxed === 'allow' && (cm.allow || []).includes(SANDBOXED_CODE) ? "; code in Claude Code's strict sandbox (scripts, interpreters, files the agent wrote) runs without asking; network, writes outside the project, .git, the agent's settings, secrets, remote git and deleting outside the project are still asked" : '')]);
+  // r0296: the profile in one line (signed = shown: the line is derived from the two entries the passkey signs)
+  if (cm && (cm.allow || []).includes(AUTO_PROFILE) && (cm.allow || []).includes(AUTO_OUTSIDE)) L.push(['Auto mode profile', 'ask only what cannot be undone: a change of a file outside the project in your home folder runs without asking after Witness keeps a copy (undo); deleting outside the project, network and git push, money, secrets, the agent\'s settings and anything that starts by itself are still asked']);
   const hp = P.http;   // PROPOSAL-08-http
   if (hp === undefined || hp === null) L.push(['HTTP requests', 'not specified: every request needs your approval']);
   else if (hp === false) L.push(['HTTP requests', 'forbidden']);

@@ -115,6 +115,21 @@ export const RECOMMENDED_UNLISTED = 'ask';   // 0.2.90 (QA 03.11): silence only 
 // command list (the core has no member for it); same string as the server's hookjudge/mapping.py SANDBOXED_CODE. It needs the runner option
 // above (command.sandboxed = "allow"). On by default in the recommended section; delete the entry from the list to switch it off.
 export const SANDBOXED_CODE = '(code in the strict sandbox)';
+// r0296: the profile "auto mode + Witness" (ask only what cannot be undone) = these two reserved entries of the signed command list; same
+// strings as the server's hookjudge/mapping.py AUTO_PROFILE / AUTO_OUTSIDE and the client's form.py (a test keeps them equal). The second
+// lets a write in the home folder outside the project run with a receipt, only when the hook copied the file first (undo).
+export const AUTO_PROFILE = '(auto mode: ask only what cannot be undone)';
+export const AUTO_OUTSIDE = '(write outside the project) /*';
+export function autoProfileForm(form) {
+  const f = JSON.parse(JSON.stringify(form || {}));
+  const c = f.command;
+  if (!c || typeof c !== 'object' || !Array.isArray(c.allow)) return f;
+  c.allow = c.allow.filter((x) => x !== AUTO_PROFILE && x !== AUTO_OUTSIDE).concat([AUTO_PROFILE, AUTO_OUTSIDE]);
+  return f;
+}
+export function isAutoProfile(cm) {
+  return !!cm && Array.isArray(cm.allow) && cm.allow.includes(AUTO_PROFILE) && cm.allow.includes(AUTO_OUTSIDE);
+}
 
 // 0.2.9: the recommended "Shell commands" section for an agent whose tool map judges shell commands as class `command` (preset claude-code);
 // null for any other agent (nothing preset). Used only when the agent has no active mandate yet.

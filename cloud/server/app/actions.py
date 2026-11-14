@@ -1181,6 +1181,7 @@ def stores_unseen_risky(ctx, agent_id, tool, args, t0):
 
 
 from app.hookjudge.mapping import OUTSIDE_WRITE as OUTSIDE_WRITE_HEAD  # noqa: E402
+from app.hookjudge.mapping import auto_quiet_place, is_auto_profile  # noqa: E402  r0296
 
 
 def written_run_files(ctx, agent_id, args, t0):
@@ -2182,6 +2183,11 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         # 11.11 (r0261, поворот: ЗАКРЫТЫЙ СПИСОК): under a fresh strict fact (and the code option) a Bash line is decided by ONE table,
         # hookjudge/strict_policy.py: an immutable article -> refused (below, constitution), a reason of the list -> asked (the line's
         # command part), anything else -> every part the core would ask about runs as sandboxed (OK_SANDBOXED). Outside the fact: unchanged.
+        if m is not None and L is not None:
+            # r0296: a quiet outside write after the owner's No / not a data file under the profile -> asked (before the strict step:
+            # under a strict fact the line is then held by the sandbox, as without the profile)
+            act = refused_outside_write(ctx, agent["id"], L, m["id"], act, tnow, t0, tool, args, ameta)
+            used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
         sv_ = None
         if m is not None and L is not None and isinstance(tool, str) and tool.startswith("Bash") and not al.team(ctx, acc) \
                 and al.in_strict_sandbox(L, m["id"], al.project_meta(args), w_):
@@ -2218,6 +2224,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 ea = al.code_net_cover(L, m["id"], ea, tool, args, w_, tnow)
             if ameta is not None:
                 ea = amend.cover(L, m["id"], ea, tool, args, ameta, tnow)
+            ea = refused_outside_write(ctx, agent["id"], L, m["id"], ea, tnow, t0, tool, args, ameta)   # r0296 (before the strict step)
             if sv_ is not None:
                 ea = strict_policy.soften_data(L, m["id"], ea, tool, args, sv_, tnow)[0]
                 ea = strict_policy.cover(L, m["id"], ea, tool, args, sv_, tnow, al.project_meta(args))
@@ -2478,6 +2485,50 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if v == "defer" and getattr(ctx, "notify", None) is not None and not quiet:
             ctx.notify.approval(row)                             # 0.2.25: queued; a channel is never awaited here
         return to_result(ctx, refresh(ctx, row["rid"]))
+
+
+def refused_outside_write(ctx, agent_id, L, mid, act, now, t0, tool=None, args=None, ameta=None):
+    """r0296 (profile "auto mode + Witness", Authorization Drift): a write outside the project that the signed list lets run quietly
+    (the profile's "(write outside the project) /*", an owner's own folder entry, or `unlisted: "allow"`) is ASKED again -- marked dangerous,
+    so no list covers it -- when the owner refused a call of this agent within provenance.REFUSED_WINDOW_S whose effect touched the same
+    place (`sed -i note` -> No, then `Edit note`) -- or the witness itself refused one (`rm -rf ~/Documents` FORBIDDEN_WIPE, then `Write
+    ~/Documents/a.txt ""`). The question then carries "You said No to this ... ago" (_mark_refused_before). Only
+    narrows: an allow becomes a question, never the other way; an owner's "from now on" (OK_ALLOWANCE) is the owner's later word and stays.
+    Under the profile also: a place that is not a plain data file (mapping.auto_quiet_place: dotfiles, Library, bin, code, no extension ...)
+    is asked -- another program could run it before an undo."""
+    if not isinstance(act, dict) or act.get("class") != "command" or act.get("dangerous") is True or "allowance" in act \
+            or act.get("sandboxed") is True:          # the strict sandbox holds the line (the OS keeps it from writing there): as before
+        return act
+    rc = act.get("recipient")
+    if not isinstance(rc, str) or not rc.startswith(OUTSIDE_WRITE_HEAD):
+        return act
+    try:
+        if L.S.decide_for(mid, act, now)[1:] not in (("allow", "OK"), ("allow", "OK_UNSPECIFIED")):
+            return act
+        pth = rc[len(OUTSIDE_WRITE_HEAD):].strip()
+        key = "out:" + (provenance._canon(pth) or "")
+        M = L.S.mandates.get(mid)
+        not_data = is_auto_profile(((M or {}).get("permissions") or {}).get("command")) and not auto_quiet_place(pth)
+        if not not_data and provenance.refused_place(ctx, agent_id, key, t0) is None:
+            return act
+        b = dict(act, dangerous=True)
+        if L.S.decide_for(mid, b, now)[1] != "defer":
+            return act
+        if not_data and ameta is not None:
+            # the owner's "from now on" for this folder (app/amend.py, offered on the question) covers it, as without the profile.
+            # amend.cover wants OK_ALLOWANCE, but the profile's own entry matches the folder id first (the core answers OK): accept both,
+            # only for an active amendment of this mandate and project that lists the id
+            hm_ = amend.home_of(args, ameta)
+            id_ = amend.id_for(tool, b, args, hm_)
+            if id_ is not None and amend.line_ok(tool, args, hm_):
+                for gid in amend.active(L, mid, ameta["project"], id_, now):
+                    c = dict(b, recipient=id_, dangerous=False, allowance=gid, project=ameta["project"])
+                    if L.S.decide_for(mid, c, now)[1:] in (("allow", "OK_ALLOWANCE"), ("allow", "OK")):
+                        return c
+        return b
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "refused outside-write check failed")
+        return dict(act, dangerous=True)
 
 
 def _mark_refused_before(ctx, agent, row, act, args, t0, hit=None):

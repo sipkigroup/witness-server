@@ -360,6 +360,36 @@ def refused_before(ctx, agent_id, keys, t0, rid=None):
     return None
 
 
+PLACE_KINDS = ("out", "persist")
+
+
+def refused_place(ctx, agent_id, key, t0):
+    """r0296 (profile "auto mode + Witness"): -> rid of the latest call of this agent, within REFUSED_WINDOW_S, that the owner refused
+    (status refused) or the witness refused (denied: an article such as FORBIDDEN_WIPE, the mandate) whose ONLY effects on the world were
+    places outside the project (out:, persist:) and one of them overlaps `key` (an "out:<path>" key) -- so the No was about that place.
+    A refused line that also sent, published or read a secret is not counted (its No may have been about that part); its question keeps
+    the r0275 mark where one is asked. None when there is none."""
+    if not isinstance(key, str) or not key.startswith("out:"):
+        return None
+    try:
+        rows = ctx.db.q("SELECT rid, fx_keys FROM actions WHERE agent_id=? AND created_at>? AND status IN ('refused','denied') "
+                        "AND fx_keys IS NOT NULL AND updated_at>? ORDER BY updated_at DESC LIMIT 400",
+                        (agent_id, t0 - REFUSED_WINDOW_S - 7200, t0 - REFUSED_WINDOW_S))
+    except Exception:      # noqa: BLE001
+        return None
+    for r in rows:
+        try:
+            rk = json.loads(r["fx_keys"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(rk, list):
+            continue
+        world = [q for q in rk if isinstance(q, str) and not q.startswith("wrote:")]
+        if world and all(q.split(":", 1)[0] in PLACE_KINDS for q in world) and any(_same(key, q) for q in world):
+            return r["rid"]
+    return None
+
+
 KIND_WORDS = {"sec": "reading a secret", "out": "changing files outside the project", "net": "sending data to this site",
               "exit": "publishing", "persist": "a change that starts by itself later"}
 

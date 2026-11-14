@@ -9,6 +9,7 @@ import { sha256, TYP_MANDATE } from './profile.js';
 import { signPayload } from './sign.js';
 import { createCredential, explainError, supported, NO_PASSKEY_TEXT } from './webauthn.js';
 import { describeMandate, isTempPath } from './describe.js';
+import { autoProfileForm, isAutoProfile, AUTO_PROFILE, AUTO_OUTSIDE } from './mandate_form.js';
 import { mountHomePlate } from './homeplate.js';
 import { inspectFields } from './honest.js';
 import { h, $, clear, notice, mountNav, fmtTime, kv, safeId, termsShown } from './ui.js';
@@ -75,9 +76,23 @@ export function describeForm(f) {
   L.push(['Shell commands', 'run without asking: ' + ((c.allow || []).join(', ') || 'none') + '; any other command asks you first or is refused']);
   L.push(['Web', 'reads without asking only from: ' + ((m.domains || []).join(', ') || 'nowhere') + '; other sites asked first or refused']);
   L.push(['Money', 'purchases and payments are asked first']);
+  if (isAutoProfile(c)) L.push(['Auto mode profile', 'ask only what cannot be undone: a change of a file outside the project in your home folder runs without asking after Witness keeps a copy (undo); deleting outside the project, network and git push, money, secrets, the agent\'s settings and anything that starts by itself are still asked']);
   L.push(['Valid', (f.valid_days || 7) + ' days; then your agent is refused until you sign new rules']);
   return L;
 }
+
+// r0296: the profile "auto mode + Witness" -- one line above the button. Ticked, the form the passkey signs gets the profile's two
+// entries (mandate_form.autoProfileForm = server hookjudge/mapping.auto_profile_form); the full list and the signed view show them.
+const AUTO_KEY = 'dw_trial_auto';
+export function profiled(form, on) {
+  if (on) return autoProfileForm(form);
+  const f = JSON.parse(JSON.stringify(form || {}));
+  if (f.command && Array.isArray(f.command.allow)) f.command.allow = f.command.allow.filter((x) => x !== AUTO_PROFILE && x !== AUTO_OUTSIDE);
+  return f;
+}
+// the choice made on this page (null: never shown here -- then the form as `deus-witness try` sent it decides)
+function autoChoice() { try { const v = localStorage.getItem(AUTO_KEY); return v === '1' ? true : v === '0' ? false : null; } catch (e) { return null; } }
+function setAutoChoice(v) { try { localStorage.setItem(AUTO_KEY, v ? '1' : '0'); } catch (e) { /* per-browser convenience only */ } }
 
 // the folders the rules let the agent change without asking, as a person names them ("your project folder “proekt”")
 export function outsideWords(targets) {
@@ -91,11 +106,13 @@ export function outsideWords(targets) {
 // or "files change only inside" (a program a command starts is not seen inside); "dangerous ones always" said plainly; what day 8 brings
 export function ruleSummary(f) {
   const d = f.delete || {}, c = f.command || {}, m = f.message || {};
-  const n = (c.allow || []).length, dom = (m.domains || []).length;
+  const n = (c.allow || []).filter((x) => x !== AUTO_PROFILE && x !== AUTO_OUTSIDE).length, dom = (m.domains || []).length;   // r0296: the profile's entries are no commands
   // r0283 (PES UIT2 on prod 0.2.108: the summary is at most 3 lines): what runs by itself / what is asked / how long
   return [
     'Everyday commands (' + n + ' listed)' + (dom ? ' and reading ' + dom + ' listed site' + (dom > 1 ? 's' : '') : '') + ' run without asking.',
-    'Anything else asks you first or is refused: changes ' + outsideWords(d.targets) + ', purchases and payments too.',
+    isAutoProfile(c)
+      ? 'Only what cannot be undone asks you first or is refused: deleting ' + outsideWords(d.targets) + ', sending or publishing, purchases and payments; other changes keep a copy.'
+      : 'Anything else asks you first or is refused: changes ' + outsideWords(d.targets) + ', purchases and payments too.',
     'These rules last ' + (f.valid_days || 7) + ' days; then your agent is refused until you sign new rules.',        // r0281 (#30), r0283 (#6)
   ];
 }
@@ -189,14 +206,24 @@ async function claimGone() {
   sayTop('ok', 'This trial link was used in another tab or replaced by a newer `deus-witness try`. Use the page that `deus-witness try` opened last (you can close this one).');
 }
 
-async function unclaimed() {
-  $('#claim').hidden = false;
+function showRules() {
   const ins = inspectFields(describeForm(view.form || {}));
   clear($('#rules')).append(...ins.rows.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })]));
   const sum = inspectFields(ruleSummary(view.form || {}).map((t, i) => ['Rule ' + (i + 1), t]));
   clear($('#rulesum')).append(...sum.rows.map(([, v]) => h('li', { text: v })));
   // r0281 (blind evaluation #29): the full list opens right under the summary, BEFORE the button that signs it
   const nCmd = ((view.form || {}).command || {}).allow; if (Array.isArray(nCmd)) $('#rulesfullsum').textContent = 'See every rule you sign (the ' + nCmd.length + ' commands, the full paths)';
+}
+
+async function unclaimed() {
+  $('#claim').hidden = false;
+  const box = $('#autoprof');
+  if (box) {
+    box.checked = isAutoProfile((view.form || {}).command);      // as `deus-witness try` sent it (try --profile auto); off by default
+    setAutoChoice(box.checked);
+    box.onchange = () => { setAutoChoice(box.checked); view.form = profiled(view.form, box.checked); showRules(); };
+  }
+  showRules();
   clear($('#sent')).append(...(view.sent || []).map((s) => h('li', { text: s })));
   showWaiting(view.waiting || []);
   polling = setInterval(async () => {
@@ -223,6 +250,7 @@ async function pickClaim(fromHash) {
 }
 
 async function signRules(agentId, form) {
+  { const ch = autoChoice(); form = profiled(form, ch === null ? isAutoProfile((form || {}).command) : ch); }   // r0296: the line as ticked
   const me = await get('/api/me');
   const r = await post('/api/mandates/draft', { agent_id: agentId, form });
   if (r.typ !== TYP_MANDATE) throw new Error('Unexpected object type from server: ' + r.typ);

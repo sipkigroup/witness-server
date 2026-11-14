@@ -200,6 +200,8 @@ def test_pv2_team_old_page_after_a_view_request_is_refused(app):
 def test_pv2_team_k1_action_decided_at_once_with_the_view(app):
     owner, bob, carol, hdr, rid = _team_purchase(app, amount=1000)               # below the budget rule: k=1
     r, page = _team_approve(owner, rid)
+    assert r.status_code == 409 and r.json()["error"] == "SELF_APPROVAL", r.text      # r0284: the creator of the agent does not confirm its k=1 question
+    r, page = _team_approve(bob, rid)
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     assert _approval(app, owner.uid, rid)["view"] == page
 

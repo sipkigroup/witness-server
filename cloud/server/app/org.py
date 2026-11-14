@@ -487,6 +487,14 @@ def _rebase(ctx, account_id, pol, h):
         ctx.db.x("UPDATE sig_requests SET policy_hash=?, needs=?, sigs=? WHERE id=?", (h, json.dumps(needs), _sigs_json(sigs), r["id"]))
 
 
+def is_team(ctx, account_id):
+    """r0284: True when the account has someone besides its first person: another member (not removed) or an open invite."""
+    n = ctx.db.one("SELECT COUNT(*) AS n FROM members WHERE account_id=? AND status<>'removed'", (account_id,))["n"]
+    if n > 1:
+        return True
+    return ctx.db.one("SELECT 1 AS k FROM invites WHERE account_id=? AND used_by IS NULL AND expires>=?", (account_id, now())) is not None
+
+
 # ---------------------------------------------------------------- invites
 def create_invite(ctx, account_id, roles):
     if not isinstance(roles, list) or not roles or len(set(roles)) != len(roles) or any(r not in ROLES for r in roles) or \
@@ -679,7 +687,7 @@ def sign_request(ctx, acc, user_id, sid, env):
                     raise Err(409, "VIEW_CHANGED", "the witness cannot rebuild the view of this request")
                 vm(acc, r["ref"], user_id, bytes.fromhex(meta["view"]))
             if x is not None:
-                delegation.check_approval(ctx, aid, x["agent_id"], [kid], bool(meta.get("approved")))
+                delegation.check_approval(ctx, aid, x["agent_id"], [kid], bool(meta.get("approved")), json.loads(x["action_json"] or "{}"))
                 if meta.get("approved"):
                     levels.check_signers(ctx, aid, [kid], json.loads(x["action_json"] or "{}"), x["reason"], x["level_min"])
         check_sign_counts(ctx, env, "sigreq:" + str(r["kind"]), aid)   # 0.2.20: counted once, here; the wq built below is not counted again

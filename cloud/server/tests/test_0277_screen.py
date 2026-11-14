@@ -223,13 +223,15 @@ def test_screen_vectors_file():
     levels, a wrong count, another recipient than the receipt)."""
     path = os.path.join(os.path.dirname(SC.__file__), "screen-vectors-0277.json")
     n, bad = SC.run_vectors(path)
-    assert n == 13 and bad == []
+    assert n == 17 and bad == []          # r0281: + S-14..S-17 (the file-send sentences; an older receipt under the r0280 vocabulary)
     d = json.load(open(path, encoding="utf-8"))
     for c in d["cases"]:
         assert hashlib.sha256(signview.jcs(c["view"])).hexdigest() == c["view_sha256"]
         assert hashlib.sha256(d["vocabularies"][c["vocab"]].encode("utf-8")).hexdigest() == c["vocab"]
     want = {"S-03": "INVALID WORDING_NOT_DERIVED", "S-06": "INVALID WORDING_NOT_DERIVED", "S-07": "INVALID VOCAB_MISMATCH",
-            "S-08": "INVALID OMITTED_MISMATCH", "S-09": "INVALID OMITTED_MISMATCH", "S-10": "VALID OMITTED_UNDECLARED"}
+            "S-08": "INVALID OMITTED_MISMATCH", "S-09": "INVALID OMITTED_MISMATCH", "S-10": "VALID OMITTED_UNDECLARED",
+            "S-14": "VALID APPROVED_PARTIAL_VIEW", "S-15": "INVALID WORDING_NOT_DERIVED", "S-16": "VALID APPROVED_PARTIAL_VIEW",
+            "S-17": "INVALID WORDING_NOT_DERIVED"}
     assert {c["id"]: c["expect"] for c in d["cases"] if c["id"] in want} == want
 
 

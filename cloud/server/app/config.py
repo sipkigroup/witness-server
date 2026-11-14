@@ -82,6 +82,15 @@ class Config:
     trial_per_day: int = 2000
     trial_ttl_days: int = 7
     trial_quota: int = 2000
+    # r0288 (owner 13.11, p.2): an account in use is never erased by time. DW_IDLE_DAYS (0 = off, else 30..3650, default 90): an account
+    # (with a passkey, not a team) is erased only after that many days in which its hook never called the witness and nobody signed in;
+    # DW_IDLE_WARN_DAYS (1..60, default 14) before that a push goes to its devices, and it is never erased sooner than that after the push.
+    # A quick start account without a passkey is kept while its hook calls (DW_IDLE_DAYS after the last call), else DW_TRIAL_TTL_DAYS.
+    idle_days: int = 90
+    idle_warn_days: int = 14
+    # r0288: the public status page of this witness, kept OFF this server (open repo: GitHub Actions + Pages). Empty = none (pages and
+    # the Caddy error page then show no link). DW_STATUS_URL: a plain https URL.
+    status_url: str = ""
     # 0.2.45: ceiling of allowed reads (class pass), which do not spend the action quotas: per agent and per account in 24 h (DW_PASS_PER_AGENT_DAY, DW_PASS_PER_ACCOUNT_DAY)
     pass_per_agent_day: int = 50000
     pass_per_account_day: int = 200000
@@ -131,6 +140,7 @@ class Config:
                                    ("defer_ttl_s", "DW_DEFER_TTL_S", 30, 3600),
                                    ("trial_per_hour", "DW_TRIAL_PER_HOUR", 1, 100), ("trial_per_day", "DW_TRIAL_PER_DAY", 1, 100000),
                                    ("trial_ttl_days", "DW_TRIAL_TTL_DAYS", 1, 30), ("trial_quota", "DW_TRIAL_QUOTA", 10, 5000),
+                                   ("idle_days", "DW_IDLE_DAYS", 0, 3650), ("idle_warn_days", "DW_IDLE_WARN_DAYS", 1, 60),
                                    ("pass_per_agent_day", "DW_PASS_PER_AGENT_DAY", 100, 10000000), ("pass_per_account_day", "DW_PASS_PER_ACCOUNT_DAY", 100, 100000000)):
             v = (e.get(var) or "").strip()
             if v:
@@ -140,6 +150,14 @@ class Config:
                     lim[field] = 0
                 if not lo <= lim[field] <= hi:
                     raise ConfigError("%s must be %d..%d" % (var, lo, hi))
+        if 0 < lim.get("idle_days", 90) < 30:
+            raise ConfigError("DW_IDLE_DAYS must be 0 (off) or 30..3650")
+        if lim.get("idle_days", 90) and lim.get("idle_warn_days", 14) >= lim.get("idle_days", 90):
+            raise ConfigError("DW_IDLE_WARN_DAYS must be less than DW_IDLE_DAYS")
+        status_url = (e.get("DW_STATUS_URL") or "").strip().rstrip("/")
+        if status_url and not re.fullmatch(r"https://[A-Za-z0-9.\-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~\-/]*)?", status_url):
+            raise ConfigError("DW_STATUS_URL must be a plain https:// URL")
+        lim["status_url"] = status_url
         smtp_tls = (e.get("DW_SMTP_TLS") or "starttls").lower()
         if smtp_tls not in ("starttls", "ssl", "off"):
             raise ConfigError("DW_SMTP_TLS must be starttls|ssl|off")

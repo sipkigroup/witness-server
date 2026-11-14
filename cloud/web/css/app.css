@@ -395,7 +395,7 @@ dl.simple pre.what{font-size:.86rem;padding:8px 10px;margin:0;box-shadow:none;bo
 .harm .riskbar b{font-size:.88rem}
 .harm .riskbar[data-level=high] b{color:var(--warn)}
 .harm .riskbar[data-level=critical] b{color:var(--bad)}
-pre.cmdline,pre.cmdline.lines{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;text-overflow:clip;max-height:calc(1.4em * 4 + 20px)}
+pre.cmdline,pre.cmdline.lines{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all;text-overflow:clip;max-height:calc(1.4em * 4 + 22px)}   /* r0283b: + the 2 px border: 4 whole lines do not count as overflow (no Details opens by itself any more) */
 .stickybar>.gate{color:var(--mute);font-weight:500;font-size:.82rem}
 .lineparts-same{overflow-wrap:anywhere;min-width:0}
 .lineparts-same .linepart{border-top:1px solid var(--line);padding-top:.4em;margin-top:.5em}
@@ -405,3 +405,30 @@ details.advanced{margin:1em 0}
 details.advanced>summary{cursor:pointer;font-weight:600;padding:12px 0;color:var(--mute)}
 /* r0278: no empty card when Details does not repeat the command (CSS, not [hidden]: #what_dd is shown again later on some pages) */
 #qw_cmd:not(:has(#what_dd:not([hidden]))){display:none}
+/* r0281 (blind evaluation of 0.2.105): #4 at a high risk "Allow once" is not the one primary button; #5 high and critical in the colour of
+   danger; #3 a choice that cannot be taken looks off and says why on itself; #18 the agent's state at the top; #15 Details in plain text */
+#decide #yes.calm{background:var(--card);color:var(--ink);border:1px solid var(--line-2);box-shadow:var(--sh-1)}
+#decide button .btnsub{display:block;font-size:.72rem;font-weight:500;line-height:1.15;opacity:.9;margin-top:2px}
+#decide #allow24:disabled{opacity:1;border:1px dashed var(--line-2);background:transparent;color:var(--mute)}
+.riskbar[data-level=high] .segs i.on{background:var(--danger)}
+.riskbar[data-level=critical] .segs i.on{background:var(--bad)}
+.harm .riskbar[data-level=high] b,.harm .riskbar[data-level=critical] b{color:var(--bad)}
+.single #stale.stale{margin:.2em 0 .5em;font-size:.92rem;text-align:left}
+.qwdet p{margin:.3em 0}
+.qwdet p.detlabel{margin-bottom:.1em}
+.qwdet pre.what{margin:0 0 .4em}
+#decide button *{pointer-events:none}
+.qwdet{overflow-wrap:anywhere;word-break:normal}
+#decide>button{display:inline-flex;flex-direction:column;align-items:center;justify-content:center}
+#rulesfull>summary{color:var(--acc);font-weight:600;cursor:pointer;margin:.3em 0}
+
+/* r0283 (third blind evaluation #11, decision 9): the risk in the harm line is ONE coloured label; the "N of 4" segments are gone there */
+.harm .riskbar .segs{display:none}
+/* r0283 (#14): "from now on" that cannot be chosen: its reason readable (not pale grey) */
+#decide #allow24 .btnsub{opacity:1;color:var(--ink)}
+/* r0283 (#26, decision 4): iPhone in a Safari tab: questions reach only the Home Screen app -- said first, as a plate */
+.homeplate{margin:0 0 1em}
+/* r0283 (#30, decision 6): Disable lives under "More": a quiet text button, not a twin of the red Revoke */
+details.agentmore{margin-top:.5em}
+details.agentmore>summary{cursor:pointer;color:var(--mute);font-size:.9rem}
+.btn.quietdanger{background:transparent;border:0;color:var(--bad);text-decoration:underline;padding:.4em 0;box-shadow:none}

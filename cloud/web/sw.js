@@ -16,6 +16,7 @@ function safeUrl(url, scope) {
 // 0.2.2 security signals (never merged away): r = a recovery code was used, k = a passkey was added or removed;
 // 0.2.14: d = a passkey's device class (phone / this computer) changed; 0.2.15: p = a new phone was declared with a recovery code;
 // 0.2.21: c = a passkey signed with a counter that went back (a copy of it, or an old signature sent again; at most one per key per 10 min).
+// r0288: i = the account has not been used for a long time and will be erased; a sign-in (or a call of the hook) keeps it.
 // RT-SUP 29.10: v = a team signature request was replaced because what it shows changed; earlier signatures do not count, sign again.
 const TEXT = {
   a: ['Deus Witness', 'An agent is waiting for your decision. Open to see what it wants.'],
@@ -27,6 +28,7 @@ const TEXT = {
   k: ['Deus Witness - security', 'A passkey was added to or removed from your account. If this was not you, sign in and check Devices now.'],
   d: ['Deus Witness - security', 'A passkey was re-marked as your phone or as this computer. If this was not you, sign in and check Devices now.'],
   p: ['Deus Witness - security', 'A recovery code was used to declare a NEW PHONE on your account. It counts as your phone only after a waiting time. Not you? Open Devices and press "This was not me - cancel".'],
+  i: ['Deus Witness', 'Your account has not been used for a long time and will be erased. To keep it, sign in once (or use Claude Code with the hook); the dashboard shows the date.'],
   c: ['Deus Witness - security', 'One of your passkeys may have been copied: it signed with a counter that went back, and it was refused. Open Devices: the key is marked there. If this was not you, remove it with another passkey.'],
 };
 
@@ -34,6 +36,7 @@ function urlFor(d) {
   if (d.k === 'a' && typeof d.id === 'string' && /^[rR]_[A-Za-z2-7]{1,40}$/.test(d.id)) return 'approve.html?rid=' + d.id;
   if ((d.k === 's' || d.k === 'v') && typeof d.id === 'string' && /^sr_[0-9a-f]{1,40}$/.test(d.id)) return 'sign.html?req=' + d.id;
   if (d.k === 'q') return 'approve.html';
+  if (d.k === 'i') return 'app.html';
   if (d.k === 'r' || d.k === 'k' || d.k === 'd' || d.k === 'p' || d.k === 'c') return 'devices.html';
   return 'app.html';
 }
@@ -46,11 +49,11 @@ function noteFrom(d, scope) {
   if (k === 'a' && Array.isArray(d.t) && d.t.length === 2 && d.t.every((x) => typeof x === 'string' && x.length > 0 && x.length < 200)) body = d.t[0] + '. ' + d.t[1];
   const g = typeof d.g === 'string' && /^[0-9a-f]{1,32}$/.test(d.g) ? d.g : '';
   // one agent = one tag: a newer request replaces its older notification on the device (renotify: it still buzzes)
-  const tag = k === 'q' ? 'dw-summary' : k === 't' ? 'dw-test' : k === 'r' || k === 'k' || k === 'p' || k === 'c' ? 'dw-security-' + k : g ? 'dw-' + k + '-' + g : 'dw';
+  const tag = k === 'i' ? 'dw-idle' : k === 'q' ? 'dw-summary' : k === 't' ? 'dw-test' : k === 'r' || k === 'k' || k === 'p' || k === 'c' ? 'dw-security-' + k : g ? 'dw-' + k + '-' + g : 'dw';
   const data = { url: safeUrl(urlFor(d), scope) };
   const b = ackBody(d, 'opened');
   if (b) { data.id = b.id; data.n = b.n; }
-  return { title, options: { body, tag, renotify: true, requireInteraction: k === 'a' || k === 's' || k === 'v' || k === 'r' || k === 'k' || k === 'p' || k === 'c',
+  return { title, options: { body, tag, renotify: true, requireInteraction: k === 'a' || k === 's' || k === 'v' || k === 'i' || k === 'r' || k === 'k' || k === 'p' || k === 'c',
     icon: scope + 'icons/icon-192.png', data } };
 }
 

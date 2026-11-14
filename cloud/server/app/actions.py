@@ -63,8 +63,13 @@ except ImportError:
 
 TTL = 900
 REFUSAL_BLOCK_S = 3600
-QUOTA_PER_DAY = 5000
-QUOTA_PER_AGENT_DAY = 2000     # N-12: one agent cannot eat the quota of the others
+# r0285 (PARALLEL-I-KVOTA-1311): the quota counts ACTIONS (one per part of a judged call) that are not reads (class `pass`: Read, Grep,
+# Glob, LS). The hook's fact rounds (`need`) and the reads have their own high ceiling (cfg.pass_per_*). Before r0285 every `need` round and
+# every read of the hook counted: 2.45 units per call of the dev corpus (968 calls -> 1118 actions + 1254 rounds), so one agent that
+# works 8 h (~175 calls/h) used up its 2000 in ~4.7 h. Now ~1.1 units per call (1085 / 968), and the limits are x2 of a full day:
+QUOTA_PER_DAY = 10000          # account: ~3 agents x 8 h x 195 actions/h (dev corpus, 5.6 active h) = 4700, x2
+QUOTA_PER_AGENT_DAY = 4000     # N-12: one agent cannot eat the quota of the others; ~8 h at the busy pace of the load model (400 actions/h) = 3200
+QUOTA_WARN = 0.8               # r0285: from this share on, the judge's answer carries `quota` (the hook tells the person once)
 STATUS_OF = {"allow": "allowed", "deny": "denied", "defer": "pending_approval"}
 WAITING = ("pending_approval", "approved", "held")
 
@@ -1814,64 +1819,98 @@ def hidden_sibling(ctx, y):
     return z is not None and z["status"] == "pending_approval" and now() <= z["expires"]
 
 
-def quota_used(ctx, agent, t0):
-    """-> (used by the account, used by the agent) in the last 24 h: actions + judge rounds without an action (written and buffered).
-    0.2.18: one statement instead of four."""
+def _used4(ctx, agent, t0):
+    """-> (actions of the account, of the agent, hook rounds of the account, of the agent) in the last 24 h (rounds: written and buffered)."""
     acc, since = agent["account_id"], t0 - 86400
-    r = ctx.db.one("SELECT (SELECT COUNT(*) FROM actions WHERE account_id=? AND created_at>?) + (SELECT COUNT(*) FROM hook_rounds WHERE account_id=? AND t>?) AS acc, "
-                   "(SELECT COUNT(*) FROM actions WHERE agent_id=? AND created_at>?) + (SELECT COUNT(*) FROM hook_rounds WHERE agent_id=? AND t>?) AS ag",
+    r = ctx.db.one("SELECT (SELECT COUNT(*) FROM actions WHERE account_id=? AND created_at>?) AS acc, (SELECT COUNT(*) FROM hook_rounds WHERE account_id=? AND t>?) AS racc, "
+                   "(SELECT COUNT(*) FROM actions WHERE agent_id=? AND created_at>?) AS ag, (SELECT COUNT(*) FROM hook_rounds WHERE agent_id=? AND t>?) AS rag",
                    (acc, since, acc, since, agent["id"], since, agent["id"], since), flush_rounds=False)     # the buffer is counted below
     b_acc, b_ag = ctx.db.rounds.count(acc, agent["id"], since)
-    return r["acc"] + b_acc, r["ag"] + b_ag
+    return r["acc"], r["ag"], r["racc"] + b_acc, r["rag"] + b_ag
+
+
+def quota_used(ctx, agent, t0):
+    """-> (actions of the account, of the agent) in the last 24 h, reads included (they are taken off only near a limit: passes_used).
+    r0285: the hook's judge rounds without an action no longer count here (rounds_used, the reads' ceiling)."""
+    a, g, _, _ = _used4(ctx, agent, t0)
+    return a, g
+
+
+def rounds_used(ctx, agent, t0):
+    """r0285: -> (judge rounds without an action of the account, of the agent) in the last 24 h, written and buffered."""
+    _, _, ra, rg = _used4(ctx, agent, t0)
+    return ra, rg
 
 
 def passes_used(ctx, account_id, t0, agent_id=None):
     """0.2.44 (K2): the rows of the last 24 h that were class `pass` (Read, Grep, Glob, LS...: nothing for a person to decide, no ledger entry).
-    A trial account does not spend its daily quota on them."""
+    A trial account does not spend its daily quota on them. r0285: the hook's reads too (status consumed, class pass: before, only the
+    MCP path's status `pass` was taken off, and the hook's Read / Grep / Glob spent the quota the pages said they do not)."""
     if agent_id is not None:       # 0.2.45: the same for one agent
-        return ctx.db.one("SELECT COUNT(*) AS n FROM actions WHERE agent_id=? AND created_at>? AND status='pass'", (agent_id, t0 - 86400))["n"]
-    return ctx.db.one("SELECT COUNT(*) AS n FROM actions WHERE account_id=? AND created_at>? AND status='pass'", (account_id, t0 - 86400))["n"]
+        return ctx.db.one("SELECT COUNT(*) AS n FROM actions WHERE agent_id=? AND created_at>? AND (status='pass' OR class='pass')", (agent_id, t0 - 86400))["n"]
+    return ctx.db.one("SELECT COUNT(*) AS n FROM actions WHERE account_id=? AND created_at>? AND (status='pass' OR class='pass')", (account_id, t0 - 86400))["n"]
+
+
+def _free_at(ctx, t0, over, account_id, agent_id=None):
+    """r0285: when the rolling 24-h count is below its limit again: the (over+1)-th oldest counted action of the window + 24 h."""
+    col, val = ("agent_id", agent_id) if agent_id is not None else ("account_id", account_id)
+    r = ctx.db.one("SELECT created_at FROM actions WHERE %s=? AND created_at>? AND status<>'pass' AND COALESCE(class,'')<>'pass' "
+                   "ORDER BY created_at LIMIT 1 OFFSET ?" % col, (val, t0 - 86400, max(0, int(over))))
+    return int(r["created_at"]) + 86400 if r else t0 + 86400
+
+
+def _hhmm(t):
+    return time.strftime("%H:%M UTC", time.gmtime(t))
 
 
 def check_quota(ctx, agent, t0=None):
     """The daily quotas (account, agent). 0.2.17 (R9-04): the hook's judge rounds that end without an action (`need`, `refuse`, table
-    hook_rounds) count too, and (R9-02) the judge checks them BEFORE it classifies anything. Raises 429 QUOTA.
-    0.2.18: atomic with the use that follows only under hub.lock(account) (do_action, hookjudge._round): every use of the quota is there."""
+    hook_rounds) are bounded too, and (R9-02) the judge checks them BEFORE it classifies anything. Raises 429 QUOTA.
+    0.2.18: atomic with the use that follows only under hub.lock(account) (do_action, hookjudge._round): every use of the quota is there.
+    r0285: actions that are not reads count (QUOTA_PER_DAY, QUOTA_PER_AGENT_DAY); reads and rounds share the reads' ceiling (cfg.pass_per_*);
+    the refusal says when the limit frees up. -> None, or {"used", "limit", "of": "account"|"agent"} from QUOTA_WARN of a limit on."""
     t0 = now() if t0 is None else t0
-    used, mine = quota_used(ctx, agent, t0)
+    used, mine, r_acc, r_ag = _used4(ctx, agent, t0)
     raw_acc, raw_ag = used, mine
     quota = QUOTA_PER_DAY if ctx.cfg.quota_per_day is None else ctx.cfg.quota_per_day
     acc = agent["account_id"]
-    n_acc = n_ag = None                     # allowed reads (class pass) in 24 h, counted only when a limit is reached
-    if trial.info(ctx, acc) is not None:
+    n_acc = n_ag = None                     # allowed reads (class pass) in 24 h, counted only near a limit
+    trial_q = trial.info(ctx, acc) is not None
+    if trial_q:
         quota = min(quota, int(getattr(ctx.cfg, "trial_quota", 2000)))        # 0.2.38: a trial account has its own quota until kept
-        if used >= quota:
-            n_acc = passes_used(ctx, acc, t0)
-            used -= n_acc                                                     # 0.2.44 (K2): allowed reads (class pass) do not spend it
-        if used >= quota:
-            refusals.note(ctx, "TRIAL_QUOTA", acc, agent["id"])
-            raise Err(429, "QUOTA", "The quick start limit of %d actions a day is used up (reads such as Read, Grep and Glob do not count). The quick start account resets "
-                      "within 24 hours; to keep working now, sign up (free during the beta): %s/signup.html" % (quota, ctx.cfg.origin))
-    if used >= quota and n_acc is None:       # 0.2.45: the same for the account limit (5000)
+    if used >= quota * QUOTA_WARN:
         n_acc = passes_used(ctx, acc, t0)
-        used -= n_acc
+        used -= n_acc                                                         # 0.2.44 (K2): allowed reads (class pass) do not spend it
     if used >= quota:
+        free = _hhmm(_free_at(ctx, t0, used - quota, acc))
+        if trial_q:
+            refusals.note(ctx, "TRIAL_QUOTA", acc, agent["id"])
+            raise Err(429, "QUOTA", "The quick start limit of %d actions a day is used up (reads such as Read, Grep and Glob do not count). It counts the "
+                      "last 24 hours: the next action is possible at %s; to keep working now, sign up (free during the beta): %s/signup.html" % (quota, free, ctx.cfg.origin))
         refusals.note(ctx, "ACCOUNT_QUOTA", acc, agent["id"])
-        raise Err(429, "QUOTA", "%d actions per day during the beta (reads such as Read, Grep and Glob do not count)" % quota)
-    if mine >= QUOTA_PER_AGENT_DAY:           # 0.2.45: and the limit of one agent (2000)
+        raise Err(429, "QUOTA", "The daily limit of %d actions of this account is used up (reads such as Read, Grep and Glob do not count). It counts "
+                  "the last 24 hours: the next action is possible at %s." % (quota, free))
+    if mine >= QUOTA_PER_AGENT_DAY * QUOTA_WARN:     # 0.2.45: and the limit of one agent
         n_ag = passes_used(ctx, acc, t0, agent["id"])
         mine -= n_ag
     if mine >= QUOTA_PER_AGENT_DAY:
         refusals.note(ctx, "AGENT_QUOTA", acc, agent["id"])
-        raise Err(429, "QUOTA", "%d actions per day for one agent (reads such as Read, Grep and Glob do not count)" % QUOTA_PER_AGENT_DAY)
-    # 0.2.45: reads are free of the action quotas but not unlimited: their own ceiling (a pass row is at most a part of all rows, so count only above it)
+        raise Err(429, "QUOTA", "The daily limit for one agent (%d actions) is used up (reads such as Read, Grep and Glob do not count). It counts the "
+                  "last 24 hours: the next action of this agent is possible at %s; another agent of the account can go on." % (
+                      QUOTA_PER_AGENT_DAY, _hhmm(_free_at(ctx, t0, mine - QUOTA_PER_AGENT_DAY, acc, agent["id"]))))
+    # 0.2.45: reads are free of the action quotas but not unlimited: their own ceiling, shared with the hook's rounds (r0285)
     cap_ag, cap_acc = int(ctx.cfg.pass_per_agent_day), int(ctx.cfg.pass_per_account_day)
-    if raw_ag >= cap_ag and passes_used(ctx, acc, t0, agent["id"]) >= cap_ag:
+    if raw_ag + r_ag >= cap_ag and (n_ag if n_ag is not None else passes_used(ctx, acc, t0, agent["id"])) + r_ag >= cap_ag:
         refusals.note(ctx, "READS_CAP", acc, agent["id"])
-        raise Err(429, "QUOTA", "%d reads per day for one agent" % cap_ag)
-    if raw_acc >= cap_acc and passes_used(ctx, acc, t0) >= cap_acc:
+        raise Err(429, "QUOTA", "%d reads and file checks per day for one agent (it counts the last 24 hours)" % cap_ag)
+    if raw_acc + r_acc >= cap_acc and (n_acc if n_acc is not None else passes_used(ctx, acc, t0)) + r_acc >= cap_acc:
         refusals.note(ctx, "READS_CAP", acc, agent["id"])
-        raise Err(429, "QUOTA", "%d reads per day per account" % cap_acc)
+        raise Err(429, "QUOTA", "%d reads and file checks per day per account (it counts the last 24 hours)" % cap_acc)
+    near = [(used / quota if quota else 0, used, quota, "account")]
+    if n_ag is not None:
+        near.append((mine / QUOTA_PER_AGENT_DAY, mine, QUOTA_PER_AGENT_DAY, "agent"))
+    share, u, lim, of = max(near)            # below QUOTA_WARN of raw rows nothing was taken off: the share is below it too
+    return {"used": int(u), "limit": int(lim), "of": of} if share >= QUOTA_WARN else None
 
 
 def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, created=None):
@@ -2725,7 +2764,7 @@ def approve_with_envelope(ctx, acc, rid, approved, env, counted=False, view=None
             raise Err(409, "WA_MALFORMED")
         org.refuse_revoked(ctx, env)                 # 0.2.2: a removed passkey never counts, even inside a client-built wq
         kids = levels.env_kids(env)
-        signer_users, behalf = delegation.check_approval(ctx, acc["id"], x["agent_id"], kids, approved)     # 0.2.13: no self-approval (Team)
+        signer_users, behalf = delegation.check_approval(ctx, acc["id"], x["agent_id"], kids, approved, rc["action"])     # 0.2.13: no self-approval (Team)
         if approved:
             levels.check_signers(ctx, acc["id"], kids, rc["action"], x["reason"], x["level_min"])        # 0.2.13: a laptop key never confirms a phone action
         if cur is None:
@@ -2960,7 +2999,7 @@ def release(ctx, acc, user_id, rid, rel, env, view=None, view_fn=None):
             raise Err(409, "RELEASE_SIG" if code == "MANDATE_SIG" else code)
         org.touch_kids(ctx, [kid])                # 0.2.19
         # 0.2.14 (R8-07): a release lets the action go exactly like an approval does -> the same two checks as approve_with_envelope
-        delegation.check_approval(ctx, acc["id"], x["agent_id"], [kid], bool(rel))        # no self-release by the agent's operator (Team)
+        delegation.check_approval(ctx, acc["id"], x["agent_id"], [kid], bool(rel), json.loads(x["action_json"]))        # no self-release by the agent's operator (Team)
         if rel and cur is not None:
             dc = wq.delegation_code(cur[0], x["agent_id"], [kid])       # 0.2.15: and the signed policy's delegation
             if dc:

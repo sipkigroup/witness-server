@@ -88,10 +88,16 @@ def main():
     for cid, rec, expect in (("p01-no-recovery-rule", None, None), ("p02-recovery-any-2", {"role": "any", "k": 2}, None),
                              ("p03-recovery-k1", {"role": "any", "k": 1}, "POLICY_MALFORMED"),
                              ("p04-recovery-unreachable", {"role": "any", "k": 3}, "POLICY_MALFORMED"),
-                             ("p05-recovery-budget-2", {"role": "budget", "k": 2}, "POLICY_MALFORMED")):
+                             ("p05-recovery-budget-2", {"role": "budget", "k": 2}, "POLICY_MALFORMED"),
+                             ("p06-revocation-owner-only", None, "POLICY_MALFORMED"),
+                             ("p07-revocation-any-2", None, "POLICY_MALFORMED")):
         pp = copy.deepcopy(p)
         if rec:
             pp["rules"]["recovery"] = rec
+        if cid == "p06-revocation-owner-only":      # law Z3: stopping is any ONE signer; another rule is not a valid policy
+            pp["rules"]["revocation"] = {"role": "owner", "k": 1}
+        if cid == "p07-revocation-any-2":
+            pp["rules"]["revocation"] = {"role": "any", "k": 2}
         assert q.validate_policy(pp) == expect, cid
         save(cid, {"id": cid, "kind": "policy", "policy": hx(pp), "policy_hex": wa.cde(pp).hex(), "expect": expect})
     # key swap: olga's key replaced by olga2 (k02 of vectors: what policy_step accepts with bob + carol)

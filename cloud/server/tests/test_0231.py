@@ -23,7 +23,8 @@ def test_0231_pricing_page_and_link():
     idx = _read("web", "index.html")
     assert 'href="/pricing/"' in idx and "Pricing after early access" not in idx
     pg = _read("web", "pricing", "index.html")
-    assert "Free during the beta, for individuals and teams. No card. Self-hosting and enterprise terms: later." in pg
+    # r0288 (owner 13.11): one person free, no "for good"; teams free during the beta
+    assert "If this ever changes, existing accounts stay free and we announce it in advance." in pg and "Teams: free during the beta" in pg
     assert "Pricing not published yet" not in pg and "Team and Enterprise" not in pg and 'id="teamreq"' in pg
     # 24.10 (ошибка ×2: пин версии ломался на каждом выпуске): не ниже 0.2.31, а не список
     assert tuple(map(int, _read("deploy", "VERSION").strip().split("."))) >= (0, 2, 31)
@@ -40,5 +41,5 @@ def test_0231_pricing_is_served(tmp_path):
     cl = TestClient(create_app(c), base_url=ORIGIN)
     for path in ("/pricing/", "/pricing", "/pricing/index.html"):
         r = cl.get(path)
-        assert r.status_code == 200 and "Free during the beta" in r.text, path
+        assert r.status_code == 200 and "Free for one person" in r.text, path
     assert cl.get("/pricing/x.md").status_code == 404

@@ -39,7 +39,7 @@ def test_unknown_code_is_honest_not_silent():
 def test_words_come_from_parsed_fields_with_host_path_and_undo():
     w = qwords.words(_row("ESCALATE_SECRET_SEEN", "Bash.net", "disclosure", "example.com", text=""))
     assert w["what"] == "Your agent wants to send a request to example.com"
-    assert "keys or passwords" in w["harm"] and "example.com" in w["details"] and "cannot be taken back" in w["details"] and w["risk"] == "critical"
+    assert "keys or passwords" in w["harm"] and "example.com" in w["details"] and "Undo: not possible once sent." in w["details"] and w["risk"] == "critical"
     assert len(w["harm"].split()) <= 12
     h = qwords.words(_row("ESCALATE_HTTP", "Bash.net", "disclosure", "example.com", text="curl -sI https://example.com"))
     assert h["harm"] == "Information from your computer could be sent to this site." and h["risk"] == "high" and "Why it matters" in h["details"]

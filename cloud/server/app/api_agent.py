@@ -35,6 +35,7 @@ def make_router(ctx):
         if trial.expired(ctx, a["account_id"]):
             raise Err(401, "TRIAL_EXPIRED", "this quick start account has expired and is being erased: run `deus-witness try` again, or sign up")
         req.state.account = a["account_id"]
+        trial.seen(ctx, a["account_id"])                  # r0288: an account in use is not erased (at most one write an hour)
         rate = RATE if ctx.cfg.rate_per_min is None else ctx.cfg.rate_per_min
         if not ctx.limiter.hit(scope + a["id"], rate * mult, 60, weight=weight):
             refusals.note(ctx, "RATE_MINUTE", a["account_id"], a["id"])

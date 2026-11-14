@@ -255,6 +255,9 @@ def verify_consistency(old, new, old_root, new_root, path):
 # ------------------------------------------------------------------ C2SP signed note / checkpoint
 ALG_ED25519 = 0x01
 ALG_COSIG_ED25519 = 0x04
+# r0286 (crypto agility, POSTKVANT-1311): the C2SP key types this checker VERIFIES. Any other type byte (e.g. a future ML-DSA key) is
+# parsed and kept with supported=False: its signatures are "cannot check" -- never counted as verified, never a crash.
+SIG_ALGS = {ALG_ED25519: "Ed25519", ALG_COSIG_ED25519: "Ed25519 timestamped cosignature"}
 MAX_NOTE = 1 << 16
 MAX_SIGS = 32
 EM = "— "
@@ -262,6 +265,10 @@ EM = "— "
 
 class NoteError(ValueError):
     pass
+
+
+class NoteUnsupported(NoteError):
+    """r0286: the note is signed only by known keys whose algorithm this checker cannot verify: "cannot check", not "verified"."""
 
 
 def b64e(b):
@@ -301,11 +308,11 @@ def parse_vkey(s):
     except ValueError:
         raise NoteError("bad vkey id")
     raw = b64d(parts[2])
-    if len(raw) != 33 or raw[0] not in (ALG_ED25519, ALG_COSIG_ED25519):
-        raise NoteError("unsupported vkey type")
+    if len(raw) < 2 or (raw[0] in SIG_ALGS and len(raw) != 33):
+        raise NoteError("bad vkey length")
     if key_id(parts[0], raw[0], raw[1:]) != kid:
         raise NoteError("vkey id does not match its key")
-    return {"name": parts[0], "id": kid, "alg": raw[0], "pub": raw[1:]}
+    return {"name": parts[0], "id": kid, "alg": raw[0], "pub": raw[1:], "supported": raw[0] in SIG_ALGS}
 
 
 def parse_note(note):
@@ -359,13 +366,17 @@ def cosig_message(text, t):
 
 def verify_note(note, vkeys, now=None):
     """c2sp signed-note rules: unknown keys ignored; a known key (name AND id) MUST verify, else the note is rejected; at least one
-    known key must verify. -> {"text", "signers": [name...], "cosig_times": {name: t}}. Raises NoteError."""
+    known key must verify. -> {"text", "signers": [name...], "cosig_times": {name: t}, "unverifiable": [name...]}. Raises NoteError;
+    NoteUnsupported (r0286) when the only known keys that signed have an algorithm this checker does not verify (SIG_ALGS)."""
     text, sigs = parse_note(note)
     keys = [k if isinstance(k, dict) else parse_vkey(k) for k in vkeys]
-    signers, times = [], {}
+    signers, times, unverifiable = [], {}, []
     for name, kid, sig in sigs:
         k = next((x for x in keys if x["name"] == name and x["id"] == kid), None)
         if k is None:
+            continue
+        if k["alg"] not in SIG_ALGS:          # r0286: a known key of an algorithm this checker cannot verify: said, not counted
+            unverifiable.append(name)
             continue
         if k["alg"] == ALG_ED25519:
             ok = ed25519_verify_strict(k["pub"], sig, text.encode())
@@ -382,8 +393,11 @@ def verify_note(note, vkeys, now=None):
             raise NoteError("signature of a known key does not verify: " + name)
         signers.append(name)
     if not signers:
+        if unverifiable:
+            raise NoteUnsupported("cannot check: signed only by key(s) of an algorithm this checker does not verify (%s): %s"
+                                  % (", ".join(SIG_ALGS.values()), ", ".join(unverifiable)))
         raise NoteError("no signature of a known key")
-    return {"text": text, "signers": signers, "cosig_times": times}
+    return {"text": text, "signers": signers, "cosig_times": times, "unverifiable": unverifiable}
 
 
 def checkpoint_text(origin, size, root, ext=()):

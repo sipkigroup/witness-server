@@ -66,7 +66,13 @@ MAX_INFLIGHT = 256            # 0.2.18 (DW_MAX_INFLIGHT): ~1 s of queue at the m
 THREADS = 8                   # 0.2.18 (DW_THREADS): worker threads of the handlers (anyio default 40); fewer = less GIL convoy (measured)
 
 
-PER_KEY_INFLIGHT = 8          # 0.2.18: requests of one Bearer key in progress at once; more -> 429 at once (a burst never fills the server)
+PER_KEY_INFLIGHT = 8          # 0.2.18: requests of one Bearer key in progress at once (a burst never fills the server)
+# r0285 (NAGRUZKA-I-EKONOMIKA-1311 p.1): Claude Code runs up to 10 tool calls of one agent at once (CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY,
+# default 10) and its subagents share the key: 10 hooks at once got 3 x 429 and the hook said "cannot be reached". A request of a key that
+# has PER_KEY_INFLIGHT in progress now WAITS for a slot (on the event loop: no worker thread, not counted in the global limit), at most
+# PER_KEY_QUEUE of one key and at most PER_KEY_WAIT_S; beyond -> 429 at once, as before. The work one key may hold stays PER_KEY_INFLIGHT.
+PER_KEY_QUEUE = 40
+PER_KEY_WAIT_S = 2.0
 
 
 POLL_PER_KEY = 8              # 2710rt: long polls (GET /v1/actions/{rid}?wait=N, N>0) of one key open at once; beyond -> answered at once as wait=0
@@ -148,16 +154,65 @@ class Shed:
     shed: /healthz and the steps of an action already decided (/v1/actions/{rid}: GET, present, report): shedding them would waste the
     judge's work and the hook answers deny on any error; they count toward the limit, so new work (judge, POST /v1/actions, the web API) is
     shed first. The long poll GET ...?wait=N is not counted at all (it sleeps on the event loop, holds no worker thread).
-    One agent key may have at most `per_key` requests in progress (429 RATE_LIMIT beyond, not counted in the global limit): a burst of one
-    key cannot push the other tenants into 503."""
+    One agent key may have at most `per_key` requests in progress (not counted in the global limit): a burst of one key cannot push the
+    other tenants into 503. r0285: beyond it a request waits for a slot of its key (at most `per_key_queue` of one key, at most
+    `per_key_wait` s, first come first served), then 429 RATE_LIMIT; the waiting ones hold no worker thread."""
 
-    def __init__(self, app, limit=MAX_INFLIGHT, retry_after=1, per_key=PER_KEY_INFLIGHT, poll_per_key=POLL_PER_KEY):
+    def __init__(self, app, limit=MAX_INFLIGHT, retry_after=1, per_key=PER_KEY_INFLIGHT, poll_per_key=POLL_PER_KEY,
+                 per_key_queue=PER_KEY_QUEUE, per_key_wait=PER_KEY_WAIT_S):
         self.app, self.limit, self.retry_after, self.per_key = app, limit, retry_after, per_key
         self.poll_per_key = poll_per_key
+        self.per_key_queue, self.per_key_wait = per_key_queue, per_key_wait
         self.polls = {}                 # 2710rt: key hash -> long polls open now
         self.n = 0
         self.shed = 0
         self.keys = {}
+        self.waiters = {}               # r0285: key hash -> deque of futures waiting for a slot of that key
+        self.key_refused = 0            # r0285: 429s of the per-key bound (a burst that did not fit the queue either)
+
+    async def _key_slot(self, k) -> bool:
+        """r0285: take a slot of key `k` (True), waiting for one when the key has `per_key` in progress; False = 429."""
+        if self.keys.get(k, 0) < self.per_key and not self.waiters.get(k):
+            self.keys[k] = self.keys.get(k, 0) + 1
+            return True
+        import asyncio
+        from collections import deque
+        q = self.waiters.setdefault(k, deque())
+        if len(q) >= self.per_key_queue or self.per_key_wait <= 0:
+            if not q:
+                del self.waiters[k]
+            return False
+        fut = asyncio.get_running_loop().create_future()
+        q.append(fut)
+        try:
+            await asyncio.wait_for(fut, self.per_key_wait)
+            return True                 # the slot was handed over by _key_free (the count already includes it)
+        except asyncio.TimeoutError:
+            # the slot may have been handed over in the same turn of the loop as the timeout: it is ours then (else it would leak)
+            return fut.done() and not fut.cancelled()
+        except asyncio.CancelledError:
+            if fut.done() and not fut.cancelled():
+                self._key_free(k)       # handed over just as the client went away: pass it on
+            raise
+        finally:
+            try:
+                q.remove(fut)
+            except ValueError:
+                pass
+            if not q and self.waiters.get(k) is q:
+                del self.waiters[k]
+
+    def _key_free(self, k) -> None:
+        q = self.waiters.get(k)
+        while q:
+            f = q.popleft()
+            if not f.done():
+                f.set_result(True)      # the slot goes to the oldest waiter: the count of the key stays
+                return
+        if self.keys.get(k, 0) <= 1:
+            self.keys.pop(k, None)
+        else:
+            self.keys[k] -= 1
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" or not self.limit or scope["path"] == "/healthz":
@@ -169,24 +224,22 @@ class Shed:
             if h == b"authorization":
                 k = hashlib.sha256(v).digest() if v.startswith(b"Bearer ") and len(v) <= 200 else None
                 break
-        if k is not None and self.keys.get(k, 0) >= self.per_key:
+        if k is not None and not await self._key_slot(k):
+            self.key_refused += 1
             return await self._refuse(send, 429, "RATE_LIMIT", "at most %d requests of one key at a time" % self.per_key)
         cont = scope["path"].startswith("/v1/actions/")          # present / report / GET of an action already decided: never shed
         if not cont and self.n >= self.limit:
             self.shed += 1
+            if k is not None:
+                self._key_free(k)
             return await self._refuse(send, 503, "OVERLOADED", "the server is busy; retry after %d s" % self.retry_after)
         self.n += 1                     # one event loop: no lock needed
-        if k is not None:
-            self.keys[k] = self.keys.get(k, 0) + 1
         try:
             await self.app(scope, receive, send)
         finally:
             self.n -= 1
             if k is not None:
-                if self.keys[k] <= 1:
-                    del self.keys[k]
-                else:
-                    self.keys[k] -= 1
+                self._key_free(k)
 
     async def _long_poll(self, scope, receive, send):
         """2710rt: a long poll is not counted in the global limit (it holds no worker thread) but at most `poll_per_key` of one key may be open:
@@ -466,7 +519,7 @@ def create_app(cfg=None):
         hd = {"Cache-Control": "no-store"}
         if clear == "1":
             hd["Clear-Site-Data"] = '"cache"'
-        return JSONResponse({"build": webbuild.build(web_dir)}, headers=hd)
+        return JSONResponse({"build": webbuild.build(web_dir), "status_url": ctx.cfg.status_url or None}, headers=hd)     # r0288: kept by the page for the day this server is down
 
     @app.get("/api/witness")
     @app.get("/v1/witness")

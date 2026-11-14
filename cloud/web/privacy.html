@@ -24,8 +24,8 @@
   <li><strong>Quick start accounts</strong> (<code>deus-witness try</code>): the same as an account above, plus the expiry time, a SHA-256 hash of the one-time claim link (deleted at your first passkey touch) and the drafted mandate form of your project (project and temp paths, command and domain lists). No passkey, no name and no journal exist before your first touch.</li>
   <li><strong>Counters:</strong> daily totals; which onboarding steps an account passed and when (the day, to count "came back on another day"); whether an account is ours (internal).</li>
  </ul>
- <h3>Unclaimed quick start accounts are erased after 7 days</h3>
- <p>A quick start account nobody has claimed with a passkey, and everything in it, is erased 7 days after <code>deus-witness try</code> made it (every row is deleted; there is no journal yet) and its agent key stops working. Once you make the passkey the account is yours and is never erased by time: a single person uses Deus Witness free, for good; only <strong>Delete account</strong> below removes it. Backups follow the 15-day rule below. Honest limit: until your first touch, whoever has the claim link can make the account theirs; the link goes only to your browser (in the part after <code>#</code>, which browsers do not send to any server), and it is not in the command's output or a file: with a browser it is opened there (the browser keeps it in its history until you claim the account), without one it is shown on your terminal only (written to /dev/tty).</p>
+ <h3>Which accounts are erased by time</h3>
+ <p>A quick start account nobody has claimed with a passkey, and everything in it, is erased 7 days after <code>deus-witness try</code> made it if its hook never called the witness (every row is deleted; there is no journal yet) and its agent key stops working; while its hook calls, it stays until 90 days after the last call. <strong>Free for one person.</strong> If this ever changes, existing accounts stay free and we announce it in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on. The erase of an unused account with a passkey is the same as <strong>Delete account</strong> below (the journal becomes its hash skeleton); a team, or a person who signs for another team, is never erased for being unused. Backups follow the 15-day rule below. Honest limit: until your first touch, whoever has the claim link can make the account theirs; the link goes only to your browser (in the part after <code>#</code>, which browsers do not send to any server), and it is not in the command's output or a file: with a browser it is opened there (the browser keeps it in its history until you claim the account), without one it is shown on your terminal only (written to /dev/tty).</p>
 
  <h3>What we do not store</h3>
  <p>IP addresses in the database (the rate limit keeps them in memory only and drops each at most 2 hours after its last request; they do appear in the reverse-proxy access logs, see Retention); request bodies in logs; third-party analytics or ad cookies. Unmasked text is never written to disk: to check risk, the server holds the unmasked text of the last 64 calls in memory only; newer calls push it out and a restart clears it.</p>
@@ -45,11 +45,11 @@
  </ul>
 
  <h3>Retention</h3>
- <p>While the account exists; an unclaimed quick start account at most 7 days. Sign-in challenges: 5 minutes. Push subscriptions: until gone or 5 failures. Application logs: ~50 MB rolling. Reverse-proxy access logs (these include the IP address of a request): up to 30 days, not in the database. Backups: at most 15 days. Anchored hashes: permanent.</p>
+ <p>While the account exists and is used (see above: 90 days after the last call of your hook or your last sign-in); an unclaimed quick start account its hook never called, at most 7 days. Sign-in challenges: 5 minutes. Push subscriptions: until gone or 5 failures. Application logs: ~50 MB rolling. Reverse-proxy access logs (these include the IP address of a request): up to 30 days, not in the database. Backups: at most 15 days. Anchored hashes: permanent.</p>
 
  <h3>Requests</h3>
  <p>Delete your account in the dashboard. "Download evidence pack" exports your journal and receipts, and the objects you signed in the last 30 days (not every table). Anything else: support@sipkigroup.com.</p>
- <p class="hint">Updated 2026-11-04.</p>
+ <p class="hint">Updated 2026-11-13.</p>
 </section>
 </main>
 <footer>Deus Witness preview. Draft specification, not yet submitted to the IETF, not a standard. <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>

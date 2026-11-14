@@ -81,6 +81,7 @@ export async function validatePolicy(p) {
     const extra = Object.keys(rl || {}).filter((k) => !RULE_KEYS.includes(k));
     if (!rl || !RULE_KEYS.every((k) => k in rl) || extra.some((k) => k !== 'recovery' && k !== 'delegation')) return 'POLICY_MALFORMED';
     for (const k of ['policy', 'revocation', 'ceiling']) if (!reqOk(rl[k], ROLES.concat('any'))) return 'POLICY_MALFORMED';
+    if (rl.revocation.role !== 'any' || rl.revocation.k !== 1) return 'POLICY_MALFORMED';   // law Z3: any ONE signer may stop
     for (const k of ['mandate', 'approval']) if (!Array.isArray(rl[k]) || !rl[k].every(tierOk)) return 'POLICY_MALFORMED';
     const holders = { any: ms.length };
     for (const r of ROLES) holders[r] = ms.filter((m) => m.roles.includes(r)).length;

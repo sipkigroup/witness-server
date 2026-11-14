@@ -55,7 +55,10 @@ export const CMD_MAX = 60;
 // text of every command (cleaned of invisible characters), passed only for a low question: when there are at most CMD_LINES of them, each
 // short and on one line, the first screen holds every one in full (one per line) and nothing is cut. Anything else is named, as before.
 export const CMD_LINES = 4;
-export function cmdLine(heads, text, whole) {
+// r0281 (blind evaluation, rule (g)): a one-line command is not cut where it names what the signed `what` quotes (the file, the host, the
+// path): up to CMD_WIDE characters it stands whole (it wraps; at 390 px that is 4 lines at most). keep = those quotes.
+export const CMD_WIDE = 150;
+export function cmdLine(heads, text, whole, keep) {
   const hs = Array.isArray(heads) ? heads.map(String).filter(Boolean) : [];
   if (hs.length > 1) {
     const w = Array.isArray(whole) ? whole.map((c) => String(c == null ? '' : c).trim()) : null;
@@ -68,6 +71,8 @@ export function cmdLine(heads, text, whole) {
   const nl = t.indexOf('\n');
   const first = nl >= 0 ? t.slice(0, nl) : t;
   if (nl < 0 && first.length <= CMD_MAX) return { text: first, cut: false };
+  const ks = Array.isArray(keep) ? keep.map(String).filter((k) => k.length >= 3) : [];
+  if (nl < 0 && first.length <= CMD_WIDE && ks.some((k) => { const i = first.indexOf(k); return i >= 0 && i + k.length > CMD_MAX - 1; })) return { text: first, cut: false };
   return { text: first.slice(0, CMD_MAX - 1) + '\u2026', cut: true };
 }
 
@@ -124,21 +129,50 @@ export function agentVoice(text) {
 }
 
 // the short note by the buttons when "Allow this from now on" is not offered (the full reason, from the server, is under Details)
+// r0281 (blind evaluation #3, #16): the reason stands ON the button that cannot be chosen (one place, one wording), not in a second line
 export function laterShort(r) {
   const a = (r && r.action && typeof r.action === 'object') ? r.action : {};
   const tool = String((r && r.tool) || '');
-  if (tool === 'Bash.net' || /^(WebFetch|WebSearch)/.test(tool) || ['disclosure', 'message', 'publish', 'purchase'].includes(a.class)) return 'Only once for internet requests';
-  if (a.class === 'delete') return 'Only once for deleting files';
-  if (a.class === 'file' || /^(Write|Edit|MultiEdit|NotebookEdit)/.test(tool)) return 'Only once for file changes';
-  if (r && r.danger) return 'Only once for dangerous commands';
-  return 'Only once for this kind of request';
+  const rc = a.recipient != null ? String(a.recipient) : '';
+  if (tool === 'Bash.net' || rc.startsWith('(network) ') || /^(WebFetch|WebSearch)/.test(tool) || ['disclosure', 'message', 'publish', 'purchase'].includes(a.class)) return 'Not for internet requests';
+  if (a.class === 'delete') return 'Not for deleting files';
+  if (a.class === 'file' || /^(Write|Edit|MultiEdit|NotebookEdit)/.test(tool)) return 'Not for file changes';
+  if ((r && r.danger) || a.dangerous === true) return 'Asked every time for this command';
+  return 'Not for this kind of request';
+}
+
+// r0281 (blind evaluation #9, #10, #13, #15): the signed Details words (server qwords.details) as lines a person reads: one fact per line,
+// the command text in its own block. Left out on this level: "Tool: ..." (the tool name is under Technical details) and the full text of
+// the call when the first screen already shows it whole (shownWhole: the same text, so it is not said twice).
+// -> [{label, text, block}] (block: the text of the call, kept on its lines)
+export function detLines(details, shownWhole) {
+  const src = String(details == null ? '' : details).split('\n');
+  const out = [];
+  for (let i = 0; i < src.length; i++) {
+    const ln = src[i];
+    const m = /^(Full text|Text \(first [^)]*\)|All commands of the line):$/.exec(ln);
+    if (m) {
+      const body = [];
+      while (i + 1 < src.length && !/^(What changes: |Undo: |All commands of the line:$)/.test(src[i + 1])) body.push(src[++i]);     // the server's order (qwords.py)
+      const text = body.join('\n');
+      if (m[1] === 'Full text' && shownWhole && text === shownWhole) continue;
+      out.push({ label: m[1], text, block: true });
+      continue;
+    }
+    if (/^Tool: /.test(ln) || !ln.trim()) continue;
+    const k = /^([A-Z][A-Za-z ]{1,30}): ([\s\S]*)$/.exec(ln);
+    // r0283 (third blind evaluation #19 / Н-2): the absolute path of a file is technical: the page shows it under Technical details (tech)
+    if (k && k[1] === 'Full path') { out.push({ label: k[1], text: k[2], block: false, tech: true }); continue; }
+    out.push(k ? { label: k[1], text: k[2], block: false } : { label: '', text: ln, block: false });
+  }
+  return out;
 }
 
 // 05.11 (owner, the risk scale): the level is the SERVER's (qwords.py, from the reason code), a member of the signed view. A call of several parts: the
 // highest over the lead and every part (each part's own view carries its own). -> {level, n (1..4), label ("High risk")} or null (an older server
 // that sends none: no bar, never an invented level). A part without a level counts as high.
 export const RISKS = ['low', 'medium', 'high', 'critical'];
-export const RISK_LABELS = { low: 'Low risk', medium: 'Medium risk', high: 'High risk', critical: 'Critical risk' };
+export const RISK_LABELS = { low: 'Low risk', medium: 'Medium risk', high: 'High risk', critical: 'Critical risk' };   // r0283 (#11): the label alone, no "N of 4"
 export function riskOf(r) {
   const lead = r && r.risk;
   const parts = (r && Array.isArray(r.line_group) ? r.line_group : []).map((g) => (g && g.view && g.view.risk) || 'high');

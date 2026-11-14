@@ -252,6 +252,15 @@ class Pusher:
                     "topic": "dw-security", "payload": {"v": 2, "k": k}})
         self._ensure_worker()
 
+    def notify_idle(self, user_id):
+        """r0288: the account has not been used for a long time and will be erased (app/trial.py idle_due) -> every device of that
+        person, at once, like a security signal (fixed text "i" in sw.js; the payload carries no id). Any sign-in or hook call keeps it."""
+        if not self.enabled:
+            return
+        self.q.put({"account": user_id, "security": True, "users": [user_id], "key": "idle:" + user_id, "rid": None,
+                    "topic": "dw-idle", "payload": {"v": 2, "k": "i"}})
+        self._ensure_worker()
+
     def _sigreq_users(self, acc, sid):
         """-> (user ids still needed, body text) of an open signature request; ([], "") when nothing is asked any more."""
         r = self.db.one("SELECT * FROM sig_requests WHERE id=? AND account_id=?", (sid, acc))
@@ -349,7 +358,7 @@ class Pusher:
         acc, t = note["account"], self.clock()
         if note.get("security"):
             self.stats["security"] += 1
-            self.send_all(acc, dict(note["payload"]), "dw-security", note["users"])
+            self.send_all(acc, dict(note["payload"]), note.get("topic") if note.get("topic") == "dw-idle" else "dw-security", note["users"])
             return "sent"
         users = None
         if note.get("sigreq"):

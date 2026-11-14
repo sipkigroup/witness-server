@@ -9,8 +9,17 @@ export function uxReport(u, nowMs) {
 }
 
 // the dashboard line: the three numbers side by side (a number alone would be a target; together they are a picture)
+export const UX_TIME_N = 5;      // r0283: below it a median time is one or two cases, not "typical"
+export const UX_MIN_N = 10;      // = server uxstat.MIN_N: below it a share is noise (r0281, blind evaluation B9: "50%" of 2 decisions)
 export function uxText(v) {
   if (!v || !v.decisions) return '';
+  if (v.decisions < UX_MIN_N) {
+    // r0283 (third blind evaluation #32 Н-8): a "typical" time of one decision is not typical: shown from UX_TIME_N decisions on; no note
+    // about shares that are not there
+    const head = v.decisions + (v.decisions === 1 ? ' decision' : ' decisions') + ': ' + v.approvals + ' approved, ' + v.denials + ' refused';
+    if (v.decisions < UX_TIME_N || typeof v.median_read_ms !== 'number') return head + '.';
+    return head + '; typical time from the question to the button ' + (v.median_read_ms / 1000).toFixed(1) + ' s.';
+  }
   const pct = (x) => (typeof x === 'number' ? Math.round(x * 100) + '%' : 'n/a');
   const sec = typeof v.median_read_ms === 'number' ? (v.median_read_ms / 1000).toFixed(1) + ' s' : 'n/a';
   return v.decisions + ' decisions: ' + v.approvals + ' approved, ' + v.denials + ' refused. Typical time from the question to the button: ' + sec

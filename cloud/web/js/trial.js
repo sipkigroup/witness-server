@@ -8,7 +8,8 @@ import { encode, bytesToHex } from './cde.js';
 import { sha256, TYP_MANDATE } from './profile.js';
 import { signPayload } from './sign.js';
 import { createCredential, explainError, supported, NO_PASSKEY_TEXT } from './webauthn.js';
-import { describeMandate, placesWords } from './describe.js';
+import { describeMandate, isTempPath } from './describe.js';
+import { mountHomePlate } from './homeplate.js';
 import { inspectFields } from './honest.js';
 import { h, $, clear, notice, mountNav, fmtTime, kv, safeId } from './ui.js';
 import { mountOffer } from './pushoffer.js';
@@ -69,24 +70,46 @@ export function claimFromHash(hash) {
 export function describeForm(f) {
   const L = [];
   const d = f.delete || {}, c = f.command || {}, m = f.message || {};
-  L.push(['Writes and deletes', 'only inside: ' + ((d.targets || []).join(', ') || 'nowhere') + '; anywhere else refused']);
-  L.push(['Shell commands', 'run without asking: ' + ((c.allow || []).join(', ') || 'none') + '; any other command asks you; dangerous ones always ask']);
-  L.push(['Web', 'reads only from: ' + ((m.domains || []).join(', ') || 'nowhere') + '; other sites refused']);
-  L.push(['Money', 'no purchases']);
-  L.push(['Valid', (f.valid_days || 7) + ' days']);
+  // r0283 (third blind evaluation Н-3 Н-4, decision 7): only what Witness checks -- "asked first or refused", never "no purchases" / "only inside"
+  L.push(['Writes and deletes', 'without asking only inside: ' + ((d.targets || []).join(', ') || 'nowhere') + '; anywhere else asked first or refused']);
+  L.push(['Shell commands', 'run without asking: ' + ((c.allow || []).join(', ') || 'none') + '; any other command asks you first or is refused']);
+  L.push(['Web', 'reads without asking only from: ' + ((m.domains || []).join(', ') || 'nowhere') + '; other sites asked first or refused']);
+  L.push(['Money', 'purchases and payments are asked first']);
+  L.push(['Valid', (f.valid_days || 7) + ' days; then your agent is refused until you sign new rules']);
   return L;
 }
 
-// 0.2.76 (owner 31.10: "very technical"): the rules in three short lines above the button; the full list is folded under it
+// the folders the rules let the agent change without asking, as a person names them ("your project folder “proekt”")
+export function outsideWords(targets) {
+  const names = [...new Set((targets || []).map(String).filter((t) => !isTempPath(t)).map((t) => t.replace(/\\/g, '/').replace(/\/\*+$/, '').replace(/\/+$/, '').split('/').pop() || t))];
+  if (names.length === 1) return 'outside your project folder \u201c' + names[0] + '\u201d';
+  if (names.length > 1) return 'outside your folders ' + names.map((x) => '\u201c' + x + '\u201d').join(', ');
+  return 'anywhere on this computer';
+}
+// 0.2.76 (owner 31.10: "very technical"): the rules in short lines above the button; the full list is folded under it
+// r0283 (third blind evaluation #4 #5 #6 Н-3 Н-4, decision 7): each line promises only what Witness checks: what is ASKED, not "no purchases"
+// or "files change only inside" (a program a command starts is not seen inside); "dangerous ones always" said plainly; what day 8 brings
 export function ruleSummary(f) {
   const d = f.delete || {}, c = f.command || {}, m = f.message || {};
   const n = (c.allow || []).length, dom = (m.domains || []).length;
+  // r0283 (PES UIT2 on prod 0.2.108: the summary is at most 3 lines): what runs by itself / what is asked / how long
   return [
-    'Everyday commands (' + n + ' listed) run without asking; any other command asks you first, dangerous ones always.',
-    'Files change only inside ' + placesWords(d.targets) + ' (full paths in the rules below).',
-    'Web: ' + (dom ? dom + ' site' + (dom > 1 ? 's' : '') + ' to read from' : 'no sites') + '; no purchases; valid ' + (f.valid_days || 7) + ' days.',
+    'Everyday commands (' + n + ' listed)' + (dom ? ' and reading ' + dom + ' listed site' + (dom > 1 ? 's' : '') : '') + ' run without asking.',
+    'Anything else asks you first or is refused: changes ' + outsideWords(d.targets) + ', purchases and payments too.',
+    'These rules last ' + (f.valid_days || 7) + ' days; then your agent is refused until you sign new rules.',        // r0281 (#30), r0283 (#6)
   ];
 }
+// r0283 (third blind evaluation #2 #3, decision 8): the button names what THIS device does (Face ID on an iPhone); "passkey" is explained under it
+export function confirmMethod(nav) {
+  const ua = String((nav && nav.userAgent) || ''), pf = String((nav && nav.platform) || ''), tp = Number((nav && nav.maxTouchPoints) || 0);
+  if (/iPhone|iPod/.test(ua) || pf === 'iPhone') return 'Face ID';
+  if (/iPad/.test(ua) || (pf === 'MacIntel' && tp > 1)) return 'Touch ID';
+  if (/Macintosh|Mac OS X/.test(ua) || /^Mac/.test(pf)) return 'Touch ID';
+  if (/Windows/.test(ua) || /^Win/.test(pf)) return 'Windows Hello';
+  return 'your device';
+}
+const METHOD = typeof navigator !== 'undefined' ? confirmMethod(navigator) : 'your device';
+export const GO_TEXT = 'Confirm with ' + METHOD;
 
 async function trialState(c) {
   const r = await fetch('/api/trial/state', { headers: { 'x-dw-claim': c, 'x-dw-build': BUILD }, credentials: 'omit' });
@@ -134,7 +157,9 @@ const PART_WORDS = { write: 'writes a file', danger: 'a risky command', net: 'go
 function showWaiting(items) {
   const box = clear($('#waiting'));
   const calls = groupCalls(items);
-  $('#waithead').textContent = calls.length ? (calls.length === 1 ? 'Next step: you decide this call (your agent waits; nothing is allowed yet):' : 'Next step: you decide these ' + calls.length + ' calls (your agent waits; nothing is allowed yet):')
+  // r0281b (second blind evaluation #1): signing the rules does not allow the waiting call: the agent repeats it and the rules decide (a listed
+  // command runs, anything else is asked on the next screen). The line says that, not "you decide this call"
+  $('#waithead').textContent = calls.length ? (calls.length === 1 ? 'Waiting for your rules (nothing is allowed yet): after you confirm, your agent repeats this call and the rules decide it; if they need you, you decide on the next screen:' : 'Waiting for your rules (nothing is allowed yet): after you confirm, your agent repeats these ' + calls.length + ' calls and the rules decide them; if they need you, you decide on the next screen:')
     : 'Waiting for the first call of your agent that needs you… Use Claude Code as usual: the call shows up here. You do not have to wait: the button above works before any call arrives.';
   const shown = calls.slice(0, 5);
   const ins = inspectFields(shown.map((c) => { const t = callText(c.parts[0]); return [t.verb, t.text]; }));
@@ -170,6 +195,8 @@ async function unclaimed() {
   clear($('#rules')).append(...ins.rows.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })]));
   const sum = inspectFields(ruleSummary(view.form || {}).map((t, i) => ['Rule ' + (i + 1), t]));
   clear($('#rulesum')).append(...sum.rows.map(([, v]) => h('li', { text: v })));
+  // r0281 (blind evaluation #29): the full list opens right under the summary, BEFORE the button that signs it
+  const nCmd = ((view.form || {}).command || {}).allow; if (Array.isArray(nCmd)) $('#rulesfullsum').textContent = 'See every rule you sign (the ' + nCmd.length + ' commands, the full paths)';
   clear($('#sent')).append(...(view.sent || []).map((s) => h('li', { text: s })));
   showWaiting(view.waiting || []);
   polling = setInterval(async () => {
@@ -282,7 +309,7 @@ async function doSign(agentId, form) {
   const btn = $('#sign'); btn.disabled = true; sayNear(btn, 'ok', '');
   const t0 = Math.floor(Date.now() / 1000);
   try { await signRules(agentId, form); await afterSigned(agentId, t0); }
-  catch (e) { sayNear(btn, 'err', passkeyStepText(e, 'Sign the rules with your passkey')); btn.disabled = false; }
+  catch (e) { sayNear(btn, 'err', passkeyStepText(e, 'Confirm the rules with ' + METHOD)); btn.disabled = false; }
 }
 
 $('#go').addEventListener('click', async () => {
@@ -295,7 +322,7 @@ $('#go').addEventListener('click', async () => {
     r = await post('/api/trial/claim/finish', { flow_id: b.flow_id, credential, claim });
   } catch (e) {
     if (e && (e.code === 'TRIAL_UNKNOWN' || e.code === 'TRIAL_CLAIMED')) { btn.disabled = false; claimGone(); return; }
-    btn.disabled = false; sayNear(btn, 'err', passkeyStepText(e, 'Create passkey & sign rules')); return;
+    btn.disabled = false; sayNear(btn, 'err', passkeyStepText(e, GO_TEXT)); return;
   }
   store(null); claim = null; gone = true;
   if (polling) clearInterval(polling);
@@ -303,7 +330,7 @@ $('#go').addEventListener('click', async () => {
   catch (e) {                                          // e.g. Safari wants a click for the second passkey prompt
     $('#claim').hidden = true; $('#signrules').hidden = false;
     $('#sign').onclick = () => doSign(r.agent_id, r.form);
-    sayNear($('#sign'), (e && e.name === 'NotAllowedError') ? 'ok' : 'err', (e && e.name === 'NotAllowedError') ? 'Passkey made. Press the button above to sign the rules.' : passkeyStepText(e, 'Sign the rules with your passkey'));
+    sayNear($('#sign'), (e && e.name === 'NotAllowedError') ? 'ok' : 'err', (e && e.name === 'NotAllowedError') ? 'Passkey made. Press the button above to confirm the rules.' : passkeyStepText(e, 'Confirm the rules with ' + METHOD));
   }
 });
 
@@ -320,6 +347,8 @@ window.addEventListener('storage', (ev) => {        // the claim was used (or re
 
 (async () => {
   mountNav(false, { noSignup: true });
+  $('#go').textContent = GO_TEXT; $('#sign').textContent = 'Confirm the rules with ' + METHOD;        // r0283 (decision 8)
+  mountHomePlate(window, $('#homeplate'));                                                           // r0283 (#26, decision 4)
   // 0.2.48: no passkeys in this browser -> hide the buttons that cannot work and say where to go
   if (!supported()) { $('#go').hidden = true; $('#sign').hidden = true; sayTop('err', NO_PASSKEY_TEXT); }
   const fromHash = claimFromHash(location.hash);

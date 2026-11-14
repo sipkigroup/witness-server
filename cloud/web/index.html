@@ -9,7 +9,7 @@
  <div class="hero-copy">
  <p class="eyebrow">For developers of unattended agents</p>
  <h1>Face ID, fingerprint or security key for your AI agent's risky actions. And a hard budget.</h1>
- <p class="lead"><strong>For agents that run with nobody watching: cron, <code>claude -p</code>, CI.</strong> A Claude Code hook sends each shell, file, web and MCP call to a hosted witness before it runs. What the rules you signed once with your passkey allow runs, what they forbid is refused, anything else waits for your approval, and no answer means refused. Free during the beta, no card.</p>
+ <p class="lead"><strong>For agents that run with nobody watching: cron, <code>claude -p</code>, CI.</strong> A Claude Code hook sends each shell, file, web and MCP call to a hosted witness before it runs. What the rules you signed once with your passkey allow runs, what they forbid is refused, anything else waits for your approval, and no answer means refused. Free for one person, no card.</p>
  <p class="row cta"><a class="btn big" href="#tryline">Try it in 2 minutes</a><a class="btn big ghost" href="/demo/">Try the demo - no signup</a></p>
  <p class="hint">The demo takes about a minute. The Claude Code quick start below takes about 2 minutes; connecting your own MCP agent by hand takes longer: plan on about 10 minutes the first time.</p>
  </div>
@@ -43,7 +43,7 @@
 /plugin install deus-witness@sipkigroup
 /deus-witness:try</pre>
   <p class="hint">Then ask Claude anything; the first call that needs you waits on the page. &ldquo;3 userConfig options not yet set&rdquo; is expected: <code>/plugin install</code> opens a settings panel whose options can stay unset. If asked, run <code>/reload-plugins</code>.</p>
-  <p class="hint">Makes a quick start account and opens a browser page. Two passkey prompts (create the passkey, sign the rules), then the call that is waiting; if nobody touches the page within 90 s, that call is refused. Without the plugin, <code>uvx --from deus-witness deus-witness try</code> only creates the account; add the hook yourself (<a href="/dl/docs/quickstart.html#hook">quickstart</a>). Free for one person, for good; an account nobody claims with a passkey is erased after 7 days.</p>
+  <p class="hint">Makes a quick start account and opens a browser page. Two passkey prompts (create the passkey, sign the rules), then the call that is waiting; if nobody touches the page within 90 s, that call is refused. Without the plugin, <code>uvx --from deus-witness deus-witness try</code> only creates the account; add the hook yourself (<a href="/dl/docs/quickstart.html#hook">quickstart</a>). An account nobody claims with a passkey and whose hook never calls is erased after 7 days.</p>
  </div>
  <div class="why">
  <h2>Why not just Claude Code's own permissions?</h2>
@@ -134,10 +134,11 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
 </section>
 
 <section class="card" id="licence">
- <h2>Free during the beta</h2>
- <p>Free during the beta, for individuals and teams. No card. Self-hosting and enterprise terms: later. Checking receipts and evidence packs is always free.</p>
+ <h2>Free for one person</h2>
+ <p><strong>Free for one person.</strong> If this ever changes, existing accounts stay free and we announce it in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on.</p>
+ <p>Teams: free during the beta; later a price per signing member (viewers free), announced in advance. No card. Checking receipts and evidence packs is always free. Self-hosting: the open server is free (Apache-2.0).</p>
  <p class="row"><a class="btn ghost" href="/pricing/">Details</a></p>
- <p class="hint">Preview software: not a finished product, no uptime promise. Beta limits: 25 agents and 5000 actions per day per account and 2000 per agent; a quick start account before its passkey, 2000 a day.</p>
+ <p class="hint">Preview software: not a finished product, no uptime promise. Beta limits: 25 agents and 10000 actions per day per account and 4000 per agent; a quick start account before its passkey, 2000 a day (reads such as Read, Grep and Glob do not count; the count is over the last 24 hours).</p>
  <form id="teamreq">
   <h3 class="small">Self-hosting or enterprise questions</h3>
   <label for="tr_email">Work e-mail</label><input id="tr_email" type="email" maxlength="254" required autocomplete="email">

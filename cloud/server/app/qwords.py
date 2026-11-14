@@ -63,6 +63,13 @@ SCREEN = {
     "when_min": "{n} min ago",
     "when_h": "{n} h ago",
     "when_earlier": "earlier",
+    # r0281 (blind evaluation of 0.2.105, #1 / B5): `curl -d @notes.txt host` SENDS the file, every time: the words name the file and the host
+    # (was "Information from your computer could be sent": softer than the act). Both {t} are quotes of the call (file, then host).
+    "send_file_what": "Your agent wants to send the file {t} to {t}",
+    "send_files_what": "Your agent wants to send files to {t}",
+    "send_file_harm": "Its contents would leave this computer for good.",
+    "send_files_harm": "Their contents would leave this computer for good.",
+    "send_secret_file_harm": "Your keys or passwords would leave this computer for good.",
 }
 
 # 05.11 (owner, the risk scale): the SERVER puts the level, from the reason code and the parsed target -- never from the agent's words. Four steps
@@ -377,6 +384,97 @@ def _refused_before(x):
     return rb if isinstance(rb, dict) and isinstance(rb.get("at"), int) else None
 
 
+# r0281: the files a single curl / wget command uploads (the server's own parse of the call's text, never the agent's words about it)
+_CURL_DATA = ("-d", "--data", "--data-binary", "--data-ascii", "--json", "--data-urlencode")
+_CURL_FORM = ("-F", "--form")
+_CURL_UP = ("-T", "--upload-file")
+_URL = re.compile(r"^(?:https?|ftp)://(?:[^/@\s]*@)?([A-Za-z0-9.\-]+|\[[0-9A-Fa-f:.]+\])(?::\d+)?(?:[/?#]|$)", re.I)
+_SECRET_FILE = re.compile(r"(^|/)\.(ssh|aws|gnupg)(/|$)|(^|/)\.env(\.|$)|id_rsa|id_ed25519|credentials|\.pem$|\.key$|(^|/)\.netrc$|(^|/)\.npmrc$|(^|/)\.pypirc$")
+
+
+def upload_of(text):
+    """`curl -s https://h/x -d @notes.txt` -> (["notes.txt"], "h"); None when the text is not ONE curl / wget command that sends files
+    to one host (a line of several commands, an unreadable quote, no file, no URL or several hosts)."""
+    import shlex
+    t = str(text or "")
+    if not t or "\n" in t or len(t) > 2000:
+        return None
+    try:
+        lx = shlex.shlex(t, posix=True, punctuation_chars=True)
+        lx.whitespace_split = True
+        toks = list(lx)
+    except ValueError:
+        return None
+    if not toks or any(k and set(k) <= set(";&|<>()") for k in toks):
+        return None
+    prog = toks[0].rsplit("/", 1)[-1]
+    if prog not in ("curl", "wget"):
+        return None
+    files, hosts, urls = [], [], []
+    i = 1
+    while i < len(toks):
+        k = toks[i]
+        opt, val = k, None
+        if k.startswith("--") and "=" in k:
+            opt, val = k.split("=", 1)
+        elif prog == "curl" and len(k) > 2 and k[0] == "-" and k[1] != "-" and k[:2] in ("-d", "-F", "-T"):
+            opt, val = k[:2], k[2:]
+        takes = opt in _CURL_DATA + _CURL_FORM + _CURL_UP + ("--post-file", "--body-file")
+        if takes and val is None:
+            i += 1
+            val = toks[i] if i < len(toks) else ""
+        if takes and prog == "curl" and opt in _CURL_DATA:
+            if val.startswith("@"):
+                files.append(val[1:])
+            elif opt == "--data-urlencode" and "@" in val and "=" not in val.split("@", 1)[0]:
+                files.append(val.split("@", 1)[1])
+        elif takes and prog == "curl" and opt in _CURL_FORM:
+            v_ = val.split("=", 1)[1] if "=" in val else ""
+            if v_[:1] in ("@", "<"):
+                files.append(v_[1:].split(";", 1)[0])
+        elif takes and prog == "curl" and opt in _CURL_UP:
+            files.append(val)
+        elif takes and prog == "wget" and opt in ("--post-file", "--body-file"):
+            files.append(val)
+        else:
+            m = _URL.match(k)
+            if m:
+                hosts.append(m.group(1).lower())
+                urls.append(k)
+        i += 1
+    files = [f for f in dict.fromkeys(files) if f and f != "-"]
+    hosts = list(dict.fromkeys(hosts))
+    if not files or len(hosts) != 1:
+        return None
+    return files, hosts[0], urls[0]
+
+
+def _cwd_of(x):
+    """r0281b: the folder the call runs in (the hook's `_witness.cwd` in the stored arguments, else the project of the line), or None."""
+    try:
+        m = re.search(r'"cwd": ("(?:[^"\\]|\\.)*")', str(x["args_preview"] if "args_preview" in x.keys() and x["args_preview"] else ""))
+        c = json.loads(m.group(1)) if m else None
+        if not (isinstance(c, str) and c.startswith("/")):
+            cm = json.loads(x["cmd_meta"]) if "cmd_meta" in x.keys() and x["cmd_meta"] else {}
+            c = cm.get("project") if isinstance(cm, dict) else None
+        return c if isinstance(c, str) and c.startswith("/") and "\x00" not in c else None
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+
+
+def _project_of(x):
+    """r0283: the project folder of the call (the hook's `_witness.project`, else the line's `cmd_meta.project`), or None."""
+    try:
+        m = re.search(r'"project": ("(?:[^"\\]|\\.)*")', str(x["args_preview"] if "args_preview" in x.keys() and x["args_preview"] else ""))
+        c = json.loads(m.group(1)) if m else None
+        if not (isinstance(c, str) and c.startswith("/")):
+            cm = json.loads(x["cmd_meta"]) if "cmd_meta" in x.keys() and x["cmd_meta"] else {}
+            c = cm.get("project") if isinstance(cm, dict) else None
+        return c if isinstance(c, str) and c.startswith("/") and len(c) > 1 and "\x00" not in c else None
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+
+
 def words(x):
     """-> {"what", "harm", "details"} (non-empty strings) for an actions row x (sqlite Row or dict). Never raises."""
     try:
@@ -410,7 +508,8 @@ def words(x):
                         long_harm = "It changes a place that starts by itself later: the agent could stay on your computer for good."
             if kind == "host" and reason in ("ESCALATE_HTTP", "ESCALATE_COMMAND_DANGER") and t:
                 harm = NET_HARM
-                long_harm = LONG_HARM["ESCALATE_HTTP"] if reason == "ESCALATE_HTTP" else LONG_HARM["ESCALATE_COMMAND_DANGER"]
+                # r0281 (B4): a request to a host is not "can delete or overwrite files": the network words for both codes
+                long_harm = LONG_HARM["ESCALATE_HTTP"]
             if kind == "host" and reason in ("ESCALATE_SECRET_SEEN", "ESCALATE_DATA", "ESCALATE_EGRESS_UNSPECIFIED") and t:
                 what = SCREEN["send_request"].format(t=t)
                 harm = SCREEN["secret_to_host"]
@@ -506,6 +605,29 @@ def words(x):
                          "In return Witness asks only about what could leave this Mac or cannot be undone. It starts with your next "
                          "Claude Code session. Undo: deus-witness-hook --undo-strict in your own terminal. Only you can approve this; it "
                          "is asked every time.")
+        up_ = None
+        sec_cmd_ = kind == "command" and str(t).startswith("secrets:") and reason == "ESCALATE_COMMAND_DANGER"   # `curl -d @.env host`: the secret mark
+        if ent is not None and (kind == "host" or secret_read or sec_cmd_) and sent_ is None:
+            up_ = upload_of(x["text_preview"] if "text_preview" in x.keys() else "")
+            if up_ is not None and kind == "host" and t and t.lower() != up_[1]:
+                up_ = None                          # the row's host is not the host of the text: say nothing more than before
+        if up_ is not None:
+            # r0281 (blind evaluation #1 / #2 / B5 / B4): the call SENDS these files to this host; the harm says what leaves, nothing about
+            # deleting (B4); "Why it matters" is not repeated under Details (#10): the short line is already exact
+            fs_, h_ = [_clean(f, 160) for f in up_[0]], _clean(up_[1], 120)
+            secret_f = secret_read or any(_SECRET_FILE.search(f) for f in up_[0])
+            if len(fs_) == 1:
+                p_ = SCREEN["send_file_what"].split("{t}")
+                what = p_[0] + fs_[0] + p_[1] + h_ + p_[2]
+            else:
+                what = SCREEN["send_files_what"].format(t=h_)
+            harm = SCREEN["send_secret_file_harm"] if secret_f else SCREEN["send_file_harm" if len(fs_) == 1 else "send_files_harm"]
+            long_harm, persist = "", False
+            secret_f = secret_f or sec_cmd_
+            if secret_f:
+                harm = SCREEN["send_secret_file_harm"]
+            kind, t = "host", h_
+            dmark_ = ""                             # the secret mark ("secrets:<path>") said the same as the title, in the classifier's words
         heads = _heads(x)
         risk = RISK_BY_CODE.get(str(reason or ""), "high") if sent_ is None else sent_[3]
         if dmark_ and sent_ is None:
@@ -516,6 +638,8 @@ def words(x):
             risk = ac_risk                          # 12.11: the agent's harness in words (above): a read of git settings is low
         if secret_read and risk_max([risk, DANGER_WORDS["secrets"][3]]) != risk:
             risk = DANGER_WORDS["secrets"][3]          # r0280: a secret read is at least what the vocabulary says of "secrets" (high)
+        if up_ is not None and harm == SCREEN["send_secret_file_harm"]:
+            risk = "critical"                       # r0281: keys or passwords leave the computer
         if persist:
             risk = "critical"                       # ~/.zshrc, LaunchAgents, the agent's own settings, keys: the agent could stay for good
         elif kind == "host" and risk_max([risk, "high"]) != risk:
@@ -546,7 +670,24 @@ def words(x):
             d.append("Why Witness asks: %s" % (dmark_ or ac_mark))
         d.append("Tool: %s" % _clean(str(x["tool"] or "").split(".")[0], 80))     # r0264: "Bash", not the part code "Bash.danger"
         tp = x["text_preview"] if "text_preview" in x.keys() else ""
-        if kind == "host":
+        if kind == "host" and up_ is not None:
+            # r0281b (second blind evaluation #6, #7): what the title does not say -- the full address and the full path of each file sent
+            # r0283 (third blind evaluation #18 / Н-1, #19 / Н-2): nothing is sent before a decision ("Will send", never "File sent"); the
+            # file as the person knows it -- its project folder and the path inside it ("proekt/notes.txt") -- and, when that is not already
+            # the absolute path, the absolute path on its own line "Full path:" (the page shows it under Technical details: signed = shown)
+            import posixpath as _pp
+            cwd_, prj_ = _cwd_of(x), _project_of(x)
+            d.append("Goes to: %s" % _clean(up_[2], 300))
+            fulls_ = []
+            for f_ in up_[0][:8]:
+                full_ = f_ if f_.startswith("/") else (_pp.normpath(_pp.join(cwd_, f_)) if cwd_ and not f_.startswith("~") else f_)
+                known_ = full_
+                if prj_ and full_.startswith(prj_.rstrip("/") + "/"):
+                    known_ = _pp.basename(prj_.rstrip("/")) + "/" + full_[len(prj_.rstrip("/")) + 1:]
+                d.append("Will send: %s" % _clean(known_, 300))
+                if known_ != full_ and full_.startswith("/"):
+                    fulls_.append(full_)
+        elif kind == "host":
             d.append("Data goes to host: %s" % (t or "(not shown)"))
         elif kind == "path":
             d.append("File: %s" % (t or "(not shown)"))
@@ -565,16 +706,25 @@ def words(x):
         reads_ = "Read" in str(x["tool"] or "") or secret_read
         if kind == "path":
             d.append("What changes: this file." if not reads_ else "What changes: nothing is written; the agent reads this file.")
+        elif kind == "host" and up_ is not None:
+            # r0283 (#20, #21): "nothing on this computer" beside "Undo: not possible" calmed down a leak; where the copy ends up, and that
+            # Witness cannot say who sees it there
+            d.append("What changes: nothing on this computer; a copy will be on %s, and who sees it is up to that site." % _clean(up_[1], 120))
         elif kind == "host":
-            d.append("What changes: data is sent to that host. This cannot be taken back.")
+            d.append("What changes: data is sent to that host.")      # r0281 (B3): "cannot be taken back" is said once, by the Undo line
         else:
             d.append("What changes: whatever the command does to your files and system.")
         if kind == "path" and not reads_:
             d.append("Undo: a file outside the project gets a shadow copy first; restore it with: deus-witness-hook --undo PATH")
+        elif kind == "host" and up_ is not None:
+            d.append("Undo: not possible.")                 # r0281b: the harm line already says it leaves for good
         elif kind == "host":
             d.append("Undo: not possible once sent.")
         else:
             d.append("Undo: not automatic. Files outside the project written by a command get a shadow copy (deus-witness-hook --undo PATH).")
+        if up_ is not None and kind == "host":
+            for f_ in fulls_:
+                d.append("Full path: %s" % _clean(f_, 300))      # r0283: the page puts it under Technical details
         return {"what": what, "harm": harm, "risk": risk, "details": "\n".join(d)}
     except Exception:    # fail closed in words: still a question, an honest general text
         return {"what": UNKNOWN_WHAT, "harm": UNKNOWN_HARM, "risk": "high", "details": "Witness could not read more about this call. Decide only if you expected it."}

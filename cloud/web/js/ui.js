@@ -76,7 +76,7 @@ export async function mountNav(requireLogin, opts) {      // 0.2.78: opts.noSign
   }
   if (nav) {
     if (me) {
-      fillNav(nav, [h('a', { href: 'app.html' }, 'Dashboard'), h('a', { href: 'approve.html' }, 'Approvals'), h('a', { href: 'allowances.html' }, 'Permissions'), h('a', { href: 'team.html' }, 'Team'), h('a', { href: 'digest.html' }, 'Digest'), h('a', { href: 'devices.html' }, 'Devices'), h('a', { href: 'settings.html' }, 'Settings'), h('span', { class: 'who', text: me.account.display_name }),
+      fillNav(nav, [h('a', { href: 'app.html' }, 'Dashboard'), h('a', { href: 'approve.html' }, 'Approvals'), h('a', { href: 'allowances.html' }, 'Permissions'), ...(me.team !== false ? [h('a', { href: 'team.html' }, 'Team')] : []), h('a', { href: 'digest.html' }, 'Digest'), h('a', { href: 'devices.html' }, 'Devices'), h('a', { href: 'settings.html' }, 'Settings'), h('span', { class: 'who', text: me.account.display_name }),
         h('button', { class: 'btn ghost', type: 'button', onclick: async () => { try { await post('/api/auth/logout'); } catch (e) { /* ignore */ } setMarker(false); location.href = 'index.html'; } }, 'Sign out'),
         h('button', { class: 'btn ghost', type: 'button', title: 'End every session of this account on all devices', onclick: async () => { if (!confirm('Sign out on all devices? Every session of this account ends. Agent API keys keep working: if you fear a stolen session, also delete and recreate the agents\' keys.')) return; try { await post('/api/auth/logout-all'); } catch (e) { /* ignore */ } setMarker(false); location.href = 'index.html'; } }, 'Sign out everywhere')]);
     } else {

@@ -17,7 +17,7 @@ import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash } from './signview.js';
 import { askOf, dangerText, protectedTarget, reasonWords, dangerCovered } from './ask.js';
-import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE } from './qwords.js';
+import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE, detLines } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
 import { gateNeeded, actKey, refusedRecently, REFUSED_MS } from './gate.js';
 
@@ -61,11 +61,8 @@ function cmdEnd() {
   const dd = $('#what_dd');
   if (dd && !dd.hidden) return dd.getBoundingClientRect().bottom;
   if ($('#linefull')) return $('#mustend').getBoundingClientRect().top;
-  const p = $('#qw_det'), t = p.firstChild, s = p.textContent, i = s.indexOf('Full text:\n');
-  if (i < 0 || !t || t.nodeType !== 3) return p.getBoundingClientRect().bottom;
-  const m = /\n(What changes|Undo):/.exec(s.slice(i)), r = document.createRange();     // only the text of the call, not the lines after it
-  r.setStart(t, i); r.setEnd(t, m ? i + m.index : s.length);
-  return r.getBoundingClientRect().bottom;
+  const pre = document.querySelector('#qw_det pre[data-full]');      // r0281: the text of the call is its own block (detLines)
+  return (pre || $('#qw_det')).getBoundingClientRect().bottom;
 }
 function mustTop() {
   // 12.11 (r0263): nothing dangerous to read first. But a command the first screen does not show whole (cut with "..." or only the names of
@@ -87,10 +84,24 @@ function gateApply() {
   $('#gate').hidden = gateOpen;
   // 05.11 (outside UX review): the page does not tell the person where to tap; one button opens what must be read and goes to it
   // 05.11 (outside UX review, owner: "do it"): no "tap here, then there"; Details opens by itself, the note says why Allow waits
-  if (!gateOpen && !autoOpened && $('#qw_more') && $('#qw_more').hidden && (mustHasContent() || cmdCut || cmdOverflow()) && !$('#qw').hidden) { autoOpened = true; $('#qw_btn').click(); return; }
+  // r0283b (coordinator, owner rule "everything technical only under Details, folded"; PES UI3S1a): Details NEVER opens by itself. The
+  // self-opening put the text to read on the first screen without a touch, and once it fitted above the buttons the gate counted it as read.
+  // Now, while Details is folded and something must be read there, the first screen says what and where in one short line; Allow waits
+  // for the person's own tap and for the end of that text on screen.
+  if ($('#qw_more') && $('#qw_more').hidden && !$('#qw').hidden && (mustHasContent() || cmdCut || cmdOverflow())) {
+    $('#gate').textContent = 'Allow unlocks after you open Details and read ' + gateWhat() + '.';
+    fixLater(); return;
+  }
   // r0278 (find 3): one short neutral line (it was the fourth "dangerous" of the screen, a yellow block over the buttons)
   $('#gate').textContent = mustHasContent() ? (manyCmds ? 'This call does several things: Allow unlocks once each of them below was on screen.' : 'Allow unlocks once you have read to the end of the text below.') : (manyCmds ? 'This call runs several commands: Allow unlocks once each of them below was on screen.' : 'Allow unlocks once the whole command below was on screen.');
   fixLater();
+}
+// r0283b: what the person must read under Details, in a few words (the first screen names it, Details holds it)
+let gateWhatText = '';
+function gateWhat() {
+  if (gateWhatText) return gateWhatText;
+  if (mustHasContent()) return 'what is there';
+  return manyCmds ? 'each command' : 'the whole command';
 }
 // a decision in flight (Refuse / Reject disabled by decide / go): opening the gate then does not enable Approve again (unlock() does after an error)
 const inFlight = () => !!(($('#no') && $('#no').disabled) || ($('#rej') && $('#rej').disabled));
@@ -178,17 +189,50 @@ function reloadButton(el) {
 // r0278 (L3 13.11 with the owner, find 4): the hook waited 15 s and told the agent "refused", while the page still said "14 min 46 s left to
 // decide". The page follows what the server knows (agent_waiting: the hook's polls; gave_up_at: the hook's last poll said it gave up) and
 // says it in one line instead of the countdown: the answer is kept, it applies when the agent makes the same call again.
-export function stoppedText(t) {
-  const at = typeof t === 'number' && t > 0 ? ' at ' + new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-  return 'The agent stopped waiting' + at + '; your answer applies if it asks again (same command).';
+// r0281 (blind evaluation #18, B7, B1, #19): the agent's state is said at the TOP (the signed title stays the question), "Allow once" says it
+// applies when the agent asks again, and the bar keeps ONE line of time: the deadline (and, while the agent waits, how long it still waits).
+// r0283b: a path as the person knows it -- the project folder and the path inside it ("proekt/hello.py"); anything else as it is
+export function projectOf(r) {
+  const m = /"project":\s*("(?:[^"\\]|\\.)*")/.exec(String((r && r.args_preview) || ''));
+  try { const p = m ? JSON.parse(m[1]) : null; return typeof p === 'string' && p.startsWith('/') && p.length > 1 ? p.replace(/\/+$/, '') : null; } catch (e) { return null; }
 }
-let stoppedAt = null;
+export function knownPath(p, prj) {
+  const s = String(p || '');
+  return prj && s.startsWith(prj + '/') ? prj.split('/').pop() + '/' + s.slice(prj.length + 1) : s;
+}
+export function clockOf(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); }
+// r0283 (third blind evaluation #23 #25 Н-6, decision 3): "stopped waiting ... Nothing ran" + "Allow once / if it asks again" + "You can still
+// decide" read as "pressing now sends it". Now: what happened (it gave up; this call was not sent / did not run), then ONE line that says what
+// the buttons are about ("If it asks again within 14 min:") and buttons that say it themselves. No clock time (two formats on two pages).
+export function stoppedText(t, net) {
+  return 'Your agent gave up. ' + (net ? 'Nothing was sent.' : 'It did not run.');
+}
+// the one line of time by the buttons: waitS = how long the agent still waits (null: unknown or gone), expires = the request's end
+// r0281b (second blind evaluation #2, #3): ONE thought, ONE number. While the agent waits: how long it still waits. Once it stopped: how long
+// the question stays open (the time after which it closes, said as minutes left, not a clock time beside another number).
+export function timeText(expires, waitS, stopped, nowS) {
+  if (!(expires > nowS)) return 'Time is up: nothing ran.';
+  if (stopped) return 'If it asks again within ' + Math.max(1, Math.floor((expires - nowS) / 60)) + ' min:';     // floor: never more than is left
+  // r0283 (#15 Н-5): the seconds tick (setInterval below) and the line says what happens at zero
+  return waitS > 0 ? 'Your agent waits ' + waitS + ' s more, then gives up.' : 'Your agent is waiting for your answer.';
+}
+let stoppedAt = null, netOfThis = false;
+export const YES_GONE = 'Allow if it asks again', NO_GONE = 'Deny if it asks again';
 function showStopped(t) {
   if (typeof t !== 'number' || !(t > 0)) t = stoppedAt || Math.floor(Date.now() / 1000);    // an older server / no gave_up_at: when this page saw it
   stoppedAt = t;
-  $('#stale').textContent = stoppedText(t); $('#stale').hidden = false; $('#left').hidden = true;
+  $('#stale').textContent = stoppedText(t, netOfThis); $('#stale').hidden = false;
+  if ($('#yes_sub')) $('#yes_sub').hidden = true;
+  if (!$('#allow_cb').checked && !$('#rep_cb').checked) $('#yes_t').textContent = YES_GONE;
+  $('#no').textContent = NO_GONE;
+  if (typeof window !== 'undefined' && window.__dwTick) window.__dwTick();
 }
-function showWaiting() { $('#stale').hidden = true; $('#left').hidden = false; }
+function showWaiting() {
+  $('#stale').hidden = true; if ($('#yes_sub')) $('#yes_sub').hidden = true;
+  if ($('#yes_t').textContent === YES_GONE) $('#yes_t').textContent = 'Allow once';
+  if ($('#no').textContent === NO_GONE) $('#no').textContent = 'Deny';
+  if (typeof window !== 'undefined' && window.__dwTick) window.__dwTick();
+}
 // N2 29.10 (series 8b, R1a2): the agent may send the same call again after this page was opened (its hook then waits for it): the page
 // re-reads the item and takes the "stopped waiting" line away, instead of saying it while the agent waits. r0278: and the other way round
 // (the hook gives up while the page is open): every 3 s while the page is seen, every 15 s in the background, while undecided.
@@ -342,7 +386,7 @@ function done(head, text, refused = false) {
   $('#box').hidden = true; $('#done').hidden = false; $('#donehead').textContent = head; $('#donetext').textContent = text;
   if (refused && agentOfThis) {
     markRefused(agentOfThis, keyOfThis);
-    $('#donetext').after(freezeRow(agentOfThis, 'donefreeze', 'Did not expect this call? Freeze stops this agent now: nothing it asks runs until you unfreeze it.'));
+    $('#donetext').after(freezeRow(agentOfThis, 'donefreeze', 'Did not expect this call? Freeze: Witness refuses every call of this agent until you unfreeze it.'));
   }
   if (!refused) mountOffer(window, $('#pushoffer')).catch(() => {});     // 0.2.96: "Get questions on your phone" after the passkey touch
   if (!fromTrial) { watchNext(); return; }
@@ -387,30 +431,25 @@ async function single(me) {
   }
   // 27.10 (polygon O3): the hook that asked stopped waiting (Claude Code's timeout, Ctrl-C, a closed session). The request is still valid: the
   // owner may approve it and ask the agent to repeat the call (the quickstart path relies on that), so it is said, not cancelled.
+  { const rc0 = String((r.action && r.action.recipient) || ''); netOfThis = rc0.startsWith('(network) ') || /^Your agent wants to send\b/.test(String(r.what || '')) || /^(WebFetch|WebSearch)|\.net$/.test(String(r.tool || '')); }
   if (r.agent_waiting === false && !r.covered_by) showStopped(r.gave_up_at);    // 05.11: one short line by the buttons, no yellow plate (r0278: in place of the countdown)
   if (r.covered_by) notice(msg, 'ok', 'Already allowed for this project (' + r.covered_by + '): the agent repeats the call and it runs. Nothing else to decide here.');
   const aRows = describeAction(r.action), mRows = describeMandate(r.mandate);
   document.getElementById('main').classList.add('single');
+  $('#title').before($('#stale')); $('#stale').className = 'notice warn stale';      // r0281 (#18): the agent's state at the top
   $('#more_opts').hidden = true;
   const ask = askOf(r);
   const askIns = inspectFields([], [['What', clip4k(ask.what || '')]]);
   // 05.11 (owner rule + owner at the phone, "too complex"): the first screen holds ONE sentence (what, the title), ONE short line of harm, ONE line
   // with the command, the three answers and a small timer. The reasons, the parts, the full text, the host / path, what changes, the undo, the
   // tool and every mark are under Details (#qw_more). The words come from the server's dictionary and are signed with the view.
+  let qDetails = '';
   {
     const q = qwView(r);
     $('#title').textContent = q.what;
     $('#what').textContent = askIns.rows[0][1] || '(nothing to show)';      // Details, first level: the whole text of the call
-    $('#qw_harm').textContent = q.harm; $('#qw_det').textContent = q.details; $('#qw').hidden = false;
+    $('#qw_harm').textContent = q.harm; qDetails = q.details; $('#qw').hidden = false;
     detHasText = /(^|\n)Full text:\n/.test(q.details);     // 12.11 (r0263): the signed words hold the whole text: the card does not repeat it
-    const pbox = $('#qw_parts'); pbox.textContent = '';
-    qwParts(r).forEach((p, i) => {
-      const d = document.createElement('div'); d.className = 'qpart';
-      const a = document.createElement('strong'); a.textContent = 'Part ' + (i + 2) + ': ' + p.what;
-      const b = document.createElement('p'); b.textContent = p.harm;
-      const pre = document.createElement('pre'); pre.className = 'qpartdet'; pre.textContent = p.details;
-      d.append(a, b, pre); pbox.append(d);
-    });
     const relayer = () => { gateGeo = null; gateApply(); gateCheck(); requestAnimationFrame(() => { gateGeo = gateGeom(); gateCheck(); }); };
     $('#qw_btn').addEventListener('click', () => {
       const open = $('#qw_more').hidden;
@@ -427,12 +466,16 @@ async function single(me) {
     const rk = riskOf(r);                                   // the server's level (signed); the word is next to the colour
     $('#riskbar').hidden = !rk;
     if (rk) {
+      // r0283 (third blind evaluation #11, decision 9): ONE label in the harm line ("High risk"), coloured; no "3 of 4" scale (app.css hides
+      // the segments in the harm line). High and critical are drawn red (app.css), the colour of danger
       $('#riskbar').dataset.level = rk.level; $('#riskbar').setAttribute('aria-label', rk.label); $('#risk_word').textContent = rk.label;
+      // r0281 (#4): at a high or critical level "Allow once" is not the one primary button (Deny keeps its red)
+      if (rk.n >= 3) $('#yes').classList.add('calm');
       [...$('#riskbar').querySelectorAll('i')].forEach((el, i) => { el.className = i < rk.n ? 'on' : ''; });
     }
     const sr = simpleRows(r, agentNameOfThis, askIns.rows[0][1]);               // Details, first level: who -> what -> where -> can it be undone
     const sri = inspectFields([['Where', sr.where], ['Who', sr.who]], []);
-    $('#sx_where').textContent = sri.rows[0][1]; $('#sx_who').textContent = sri.rows[1][1]; $('#sx_undo').textContent = sr.undo; $('#sx_act').textContent = sr.act;
+    $('#sx_who').textContent = sri.rows[1][1];      // r0281 (B3, #10): where / what / undo are the signed Details lines above, said once
     get('/api/agents').then((l) => { const a = (Array.isArray(l) ? l : []).find((z) => z && z.id === agentOfThis); if (a && typeof a.name === 'string' && a.name) $('#sx_who').textContent = inspectFields([['Who', a.name]], []).rows[0][1]; }).catch(() => {});
   }
   const ins = inspectFields([...aRows.map(([k, v]) => ['Action / ' + k, v]), ...mRows.map(([k, v]) => ['Mandate / ' + k, v]), ['Tool', r.tool || ''], ['Arguments', r.args_preview || '']],
@@ -481,7 +524,8 @@ async function single(me) {
     // 12.11 (r0264): a LOW question: the full text of each command (never a cut 4 KB text, never folded echoes) may stand on the first screen
     const lf0 = hv && rk && rk.level === 'low' ? lineFull(r) : null;
     const whole = lf0 && !lf0.cut && !lf0.items.some((c) => c.fold) ? inspectFields([], lf0.all.map((c, i) => ['Command ' + (i + 1), c])).rows.map(([, v]) => v) : null;
-    const cmd = cmdLine(hv, askIns.rows[0][1], whole);
+    const keep = String(qwView(r).what).split(/\s+/).filter((w) => /[./@:]/.test(w) && w.length >= 3);     // r0281 (g): what the title quotes
+    const cmd = cmdLine(hv, askIns.rows[0][1], whole, keep);
     // 13.11 (r0271, ISPYTANIE-0266 Н3): the agent's prose stays off the first screen: comments and long strings fold (the whole text is
     // under Details, Allow waits for it), the line is labelled as the agent's, and words of a verdict get a warning. The signed view is
     // the server's members (text_preview, line_full ...), unchanged: Details shows them whole.
@@ -491,8 +535,12 @@ async function single(me) {
     $('#cmdline').textContent = shown; $('#cmdline').hidden = !shown;
     $('#cmdline').classList.toggle('lines', !!cmd.lines);
     const isCmd = /^Bash/.test(String(r.tool || ''));
-    $('#cmd_by').textContent = CMD_BY; $('#cmd_by').hidden = !shown || !isCmd;
     const vw = isCmd ? agentVoice([askIns.rows[0][1] || '', ...(whole || [])].join('\n')) : '';
+    // r0283 (third blind evaluation #12, decision 9): the caption "Command, as your agent wrote it:" stood above EVERY command (a line of its
+    // own, against "one line of the command"). It guards against one case -- the agent's text dressed as a verdict of Witness (r0271) -- and
+    // that case has its own warning (#cmd_voice): the caption comes with the warning only; otherwise it is the command's accessible name.
+    $('#cmd_by').textContent = CMD_BY; $('#cmd_by').hidden = !shown || !isCmd || !vw;
+    $('#cmdline').setAttribute('aria-label', CMD_BY.replace(/:$/, ''));
     $('#cmd_voice').textContent = vw ? VOICE_NOTE.replace('{w}', vw) : ''; $('#cmd_voice').hidden = !vw;
     cmdCut = cmd.cut || folded; autoOpened = false; manyCmds = !!hv && !cmd.lines;
     cmdWhole = !!cmd.lines;
@@ -501,6 +549,27 @@ async function single(me) {
     firstWhole = dup ? cmd.text : '';
     $('#what_dt').hidden = dup; $('#what_dd').hidden = dup;
     $('#what_parts').hidden = true; $('#what').hidden = false; $('#what_dt').textContent = 'Command';
+  }
+  {
+    // r0281 (#9, #10, #13, #15): the signed Details words as plain lines; the call's text in its own block, left out when the first screen
+    // shows it whole; the tool name only under Technical details
+    const box = $('#qw_det'); box.textContent = '';
+    const techBox = $('#more_paths'); if (techBox) techBox.textContent = '';
+    for (const it of detLines(qDetails, firstWhole)) {
+      if (it.tech && techBox) {          // r0283 (#19): the absolute path, under Technical details (signed = shown, one tap deeper)
+        const p = document.createElement('p'); const b = document.createElement('strong'); b.textContent = it.label + ': '; p.append(b, it.text); techBox.append(p);
+        continue;
+      }
+      if (it.block) {
+        const h = document.createElement('p'); h.className = 'detlabel'; h.textContent = it.label + ':';
+        const pre = document.createElement('pre'); pre.className = 'what'; pre.dataset.full = '1'; pre.textContent = it.text;
+        box.append(h, pre);
+      } else {
+        const p = document.createElement('p');
+        if (it.label) { const b = document.createElement('strong'); b.textContent = it.label + ': '; p.append(b, it.text); } else p.textContent = it.text;
+        box.append(p);
+      }
+    }
   }
   const lf = lineFull(r);
   if (lf) {
@@ -538,31 +607,47 @@ async function single(me) {
   }
   // 04.11 (L3): one tool call = one question: every reason the witness asked about, in this one place (the answer decides all parts)
   // red team p.4: in words, never the codes (ESCALATE_COMMAND ...)
-  if (Array.isArray(r.line_reasons) && r.line_reasons.length > 1) {
+  const lgPls = Array.isArray(r.line_group) && r.line_group.length ? r.line_group.map((g, i) => partLines(g, i + 1, r.line_group.length + 1, lf)) : [];
+  const sameParts = lgPls.length > 0 && !lgPls.some((p) => p.warnings.length) && r.line_group.every((g) => partRedundant(g, firstWhole, lf));
+  if (!sameParts) qwParts(r).forEach((p, i) => {
+    const d = document.createElement('div'); d.className = 'qpart';
+    const a = document.createElement('strong'); a.textContent = 'Part ' + (i + 2) + ': ' + p.what;
+    const b = document.createElement('p'); b.textContent = p.harm;
+    const pre = document.createElement('pre'); pre.className = 'qpartdet'; pre.textContent = p.details;
+    d.append(a, b, pre); $('#qw_parts').append(d);
+  });
+  if (!sameParts && Array.isArray(r.line_reasons) && r.line_reasons.length > 1) {
     const p = document.createElement('p'); p.id = 'linereasons'; p.className = 'notice warn';
-    p.textContent = 'This one call is asked about for ' + r.line_reasons.length + ' reasons: ' + [...new Set(r.line_reasons.map(reasonWords))].join('; ') + '. Your answer decides all of them.';
+    p.textContent = 'This one call is asked about for ' + r.line_reasons.length + ' reasons: ' + [...new Set(r.line_reasons.map(reasonWords))].join('; ') + '. One answer decides the whole call.';
     $('#qw_det').before(p);             // 05.11: the reasons are under Details (the first screen says it once, in `harm`)
   }
   // red team p.1 ("signed != shown"): one answer signs every part asked with this one, each with its own view: each part is SHOWN here, in
   // full (what must be seen of it: commands, danger, code, files, masked values, the text), above the gate's end
   if (Array.isArray(r.line_group) && r.line_group.length) {
     const box = document.createElement('div'); box.id = 'lineparts';
-    const n = r.line_group.length + 1;
     const ws = [];
     r.line_group.forEach((g, i) => {
-      const pl = partLines(g, i + 1, n, lf);
+      const pl = lgPls[i];
       const d = document.createElement('div'); d.className = 'notice warn linepart'; d.dataset.rid = String(g.rid || '');
       for (const it of pl.items) {
         const e = document.createElement(it.kind === 'pre' ? 'pre' : it.kind === 'head' ? 'strong' : 'p');
         if (it.kind === 'pre') e.className = 'netcode'; else if (it.kind === 'hint') e.className = 'hint';
-        e.textContent = it.text; d.append(e);
+        e.textContent = sameParts ? it.text.replace(/^Part \d+ of \d+ of this call\. /, '') : it.text; d.append(e);
       }
       ws.push(...pl.warnings); box.append(d);
     });
     // r0278 (find 3): parts that repeat the first screen (the same command, generic danger, nothing else) are shown under Details, after
     // what must be read; they do not hold Allow back. Any other part stays in #must (read before Allow), as before.
-    const same = !ws.length && r.line_group.every((g) => partRedundant(g, firstWhole, lf));
-    if (same) { box.className = 'hint lineparts-same'; for (const d of box.children) d.className = 'linepart'; $('#mustend').after(box); }
+    const same = sameParts;
+    if (same) {
+      // r0281 (#9, #11, #12, #14): `curl -d @f host` is ONE command the witness checked two ways (the network, the command). The second check
+      // says nothing the first screen does not: it is under Technical details (signed, shown), not "Part 2 of 2" with a second set of reasons
+      box.className = 'hint lineparts-same'; for (const d of box.children) d.className = 'linepart';
+      const hd = document.createElement('p'); hd.textContent = 'Witness checked this one command a second way too; your one answer covers both. What that check shows (signed with your answer):';
+      box.prepend(hd);
+      qwParts(r).forEach((p) => { const pre = document.createElement('pre'); pre.className = 'qpartdet'; pre.textContent = p.what + '\n' + p.harm + '\n' + p.details; box.append(pre); });
+      $('#more').querySelector('summary').after(box);
+    }
     else $('#must').append(box);
     if (ws.length) renderHonest($('#honest'), [...ins.warnings, ...ws]);
   }
@@ -587,7 +672,12 @@ async function single(me) {
     ? 'Held: this file is a copy this agent made earlier of a secret (a credential file). The mandate allows reading the file, but reading the copy reads the secret, so you decide.'
     : advisoryText(r) || (held ? 'Held by the data advisor (' + (r.reason || 'ADVISORY_HOLD') + '): the mandate allows this action, but the advisor flagged its text. A hint, not a decision.' : '');
   // r25 (s8 P2, P3): a question of the mandate or a secret hold that ALSO runs a file the agent wrote: both reasons are said
-  const wrunFiles = r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : [];
+  const wrunFiles = (r.written_run && Array.isArray(r.written_run.files) ? r.written_run.files : []).map((f) => knownPath(f, projectOf(r)));      // r0283b: as the person knows it
+  if (r.written_run && Array.isArray(r.written_run.files) && r.written_run.files.length) {
+    const nm = knownPath(String(r.written_run.files[0]), projectOf(r)).split('/').pop();
+    gateWhatText = r.written_run.files.length > 1 ? 'the files your agent wrote' : nm + ', which your agent wrote';
+  } else if (r.exec_changed && Array.isArray(r.exec_changed.files) && r.exec_changed.files.length) gateWhatText = 'the file that changed';
+  else if (typeof r.net_code === 'string' && r.net_code) gateWhatText = 'the code it runs';
   const adv1 = wrunFiles.length && r.reason !== 'ESCALATE_WRITTEN_RUN'
     ? (adv ? adv + ' ' : '') + 'It also runs a file this agent wrote earlier (' + wrunFiles.join(', ') + '): read what was written, shown below, before you decide.'
     : adv;
@@ -598,9 +688,10 @@ async function single(me) {
       + (r.unseen_write.secret === true && r.reason !== 'ESCALATE_SECRET_SEEN' ? ' This agent read a secret in the last minutes: what it writes may carry it.' : '')
     : adv1;
   $('#advmark').hidden = !adv2; $('#advmark').textContent = adv2;
-  const sl = held ? '' : secretLead(r);                                // N20 0.2.74: the page opens on what is asked: a secret read
+  // r0281: a send of a secret file is said by the signed title ("send the file .env to host"); the read line would be a second, other reason
+  const sl = held || /^Your agent wants to send (the file |files )/.test(String(r.what || '')) ? '' : secretLead(r);                                // N20 0.2.74: the page opens on what is asked: a secret read
   if (sl) {
-    $('#boxlead').textContent = sl;
+    $('#boxlead').textContent = sl; $('#boxlead').hidden = false;
     // r0280 (R-06, rule "signed = shown"): the title stays the server's signed `what` (qwords names a secret read: "keys or passwords");
     // the page no longer writes its own title over it (05.11 "Your agent wants to read a secret" was the page's words, not signed ones)
   }
@@ -612,7 +703,7 @@ async function single(me) {
       const gx = Array.isArray(w.git_texts) ? w.git_texts.filter((g) => g && typeof g.text === 'string' && g.text) : [];
       h.textContent = (w.by === 'shell' ? 'The agent\'s shell command that wrote ' + (w.file || 'the file')
           + (gx.length ? ' (a git line: it brings back what the agent had put into git; the text the agent last wrote there is shown below)' : ' (if it copies or downloads, the content itself is not shown and approving runs it blind)')
-        : 'Written by the agent (' + (w.by || 'a write') + ') into ' + (w.file || 'the file')) + ':';
+        : 'Written by the agent (' + (w.by || 'a write') + ') into ' + (w.file ? knownPath(w.file, projectOf(r)) : 'the file')) + ':';
       at.after(h); at = h;
       if (typeof w.text === 'string' && w.text) {
         const wi = inspectFields([], [['Written', w.text]]);
@@ -694,33 +785,18 @@ async function single(me) {
   // 0.2.76: the text the call sends stays on screen, unless it is exactly the command already shown as the title
   $('#pvblock').hidden = !r.text_preview || xShown === $('#what').textContent;
   if (protectedTarget(r)) $('#pvlabel').textContent = 'What it writes into this file:';      // 0.2.77 (H1)
-  const tick = () => { const u = until(r.expires); $('#left').textContent = u === 'expired' ? 'Time is up' : u.replace(/ left$/, ' left to decide'); };
+  let createdAt = null;
+  const tick = () => { $('#left').textContent = timeText(r.expires, stoppedAt || typeof createdAt !== 'number' ? null : Math.ceil(createdAt + HOOK_WAIT_S - Date.now() / 1000), !!stoppedAt, Date.now() / 1000); };
+  window.__dwTick = () => { if (!late) tick(); };
   if (late) {
     $('#title').textContent = 'This request expired';
     notice(msg, 'warn', 'Nobody answered in time, so this call was not run, and this request can no longer be approved. You can still approve the same call for this agent\'s next runs.');
     $('#left').textContent = 'Expired: ' + new Date(r.expires * 1000).toLocaleString() + '.';
   } else { tick(); setInterval(tick, 1000); if (!r.covered_by) followWait(); }
-  if (!late && r.agent_waiting !== false) {      // 0.2.78: how long the agent still waits, and what comes after (the call's start: the pending list, `t`)
-    const p = document.createElement('div'); p.id = 'agentwait'; p.className = 'hint agentwait'; p.hidden = true;
-    const sh = document.createElement('span'); sh.id = 'agentwait-short';        // 0.2.79 (edit 2): one short line first, the full promise under "why?"
-    const dt = document.createElement('details'); dt.id = 'agentwait-why';
-    const sm = document.createElement('summary'); sm.textContent = 'why?';
-    const fl = document.createElement('p'); fl.id = 'agentwait-full';
-    dt.append(sm, fl); p.append(sh, dt);
-    let created = null;
-    const upd = () => {
-      if (typeof created !== 'number') return;
-      p.hidden = false;
-      const m = stoppedAt ? 0 : Math.ceil(created + HOOK_WAIT_S - Date.now() / 1000);      // seconds (r0278: 0 once the server says the hook gave up)
-      sh.textContent = m > 0
-        ? 'Your agent is waiting (about ' + m + ' s). Approving later still counts.'
-        : 'Your agent stopped waiting. Approving still counts.';
-      fl.textContent = m > 0
-        ? 'Your agent waits for this answer about ' + m + ' s more (its hook waits ' + HOOK_WAIT_S + ' s from the call). Approve in that time and the call runs at once. Later, but before the time above runs out, your approval still counts: the agent repeats the same call and it runs once.'
-        : 'Your agent has stopped waiting. Your approval still counts until the time above runs out: when the agent repeats the same call, it runs once.';
-    };
-    $('#qw_more').append(p);            // 05.11: under Details (the first screen has the timer and, if the agent stopped, one line)
-    (async () => { try { const it = (await get('/api/approvals?status=pending')).find((z) => z.rid === rid); if (it && typeof it.t === 'number') { created = it.t; upd(); setInterval(upd, 5000); } } catch (e) { /* no line, the page works without it */ } })();
+  if (!late && r.agent_waiting !== false) {
+    // 0.2.78 / r0281 (B1): how long the agent still waits is part of the ONE time line by the buttons (timeText), never a second line under
+    // Details (it said "about 45 s" under "14 min 59 s left": two times, no names). The call's start comes from the pending list (`t`).
+    (async () => { try { const it = (await get('/api/approvals?status=pending')).find((z) => z.rid === rid); if (it && typeof it.t === 'number') { createdAt = it.t; tick(); } } catch (e) { /* the line says "is waiting" without seconds */ } })();
   }
   if (!late && r.asked_again && typeof r.asked_again.file === 'string') {      // 0.2.77b (R2-7): why the same command is asked again
     const p = document.createElement('p'); p.id = 'askedagain'; p.className = 'notice warn';
@@ -755,6 +831,7 @@ async function single(me) {
     // N5 29.10: a hold means the mandate ALLOWS the call (the witness or the advisor holds it), not "does not clearly allow"
     $('#boxlead').textContent = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN', 'ESCALATE_SECRET_COPY'].includes(r.reason)
       ? 'Your mandate allows this call, but the witness holds it for you to decide.' : 'Your mandate allows this call, but the data advisor flagged it.';
+    $('#boxlead').hidden = false;
     $('#decide').hidden = true; $('#release').hidden = false;
     gateStart();
     const go = async (release) => {
@@ -799,9 +876,9 @@ async function single(me) {
   const lp = laterPlan(r);
   $('#allow24').hidden = !!late;
   laterOff = !lp.ok; fixLater();
-  if (!lp.ok && !late) {          // 05.11: one short line by the buttons; the full reason is under Details
-    $('#later_note').textContent = laterShort(r); $('#later_note').hidden = false;
-    $('#later_why').textContent = 'Only "Allow once" is available here: ' + lp.why + '.'; $('#later_why').hidden = false;
+  if (!lp.ok && !late) {          // r0281 (#3, #16): the reason ON the button, one place; the server's full reason as its tooltip
+    $('#later_sub').textContent = laterShort(r); $('#later_sub').hidden = false;
+    $('#allow24').title = 'Only "Allow once" is available here: ' + lp.why + '.';
   }
   // 0.2.55: one main choice. With the 24 h button on screen, the checkboxes (longer time, later runs) fold under "More options" and the plain button says "Approve once"
   const day24 = !!ov.enabled && !late;   // (kept: the layout of "More options")
@@ -847,7 +924,7 @@ async function single(me) {
   $('#repeat').hidden = !rv.enabled;
   if (rv.show && !rv.enabled) unav += 'Also approve this exact call for later runs: ' + (rv.note || 'not possible here.') + ' ';
   $('#rep_cmd').hidden = !(r.repeat_offer && r.repeat_offer.command);   // 0.2.30 (B1): the line is approved, not the content of the script it runs
-  const label = () => { $('#yes').textContent = $('#allow_cb').checked ? 'Allow in this project' : $('#rep_cb').checked ? 'Approve now and for later runs' : once; };
+  const label = () => { $('#yes_t').textContent = $('#allow_cb').checked ? 'Allow in this project' : $('#rep_cb').checked ? 'Approve now and for later runs' : stoppedAt ? YES_GONE : once; };
   label();
   let plan = null;
   const replan = () => {
@@ -868,7 +945,7 @@ async function single(me) {
   }
   if (late) {
     $('#rep_cb').checked = true; $('#rep_cb').disabled = true; $('#rep_more').hidden = false; $('#allow').hidden = true; $('#allow_trust').hidden = true; $('#no').hidden = true;
-    replan(); $('#yes').textContent = 'Approve for the next runs';
+    replan(); $('#yes_t').textContent = 'Approve for the next runs';
     $('#repeat').hidden = false;
   }
   // 0.2.76: "More options" only when it holds a choice; folded, except for an expired request (its plan is what is signed: on screen, above the gate)

@@ -176,6 +176,7 @@ def test_0238_4_quota_and_expired_key(client, tmp_path):
     r = client.post("/v1/actions", json={"tool": "Bash", "args": {"command": "echo x"}}, headers=hdr)
     assert r.status_code == 429 and "quick start" in r.json()["detail"]
     c.db.x("UPDATE accounts SET trial_until=? WHERE trial_until IS NOT NULL", (int(time.time()) - 1,))
+    trial._SEEN.clear()                  # r0288: a use of the last hour (not written yet) would keep it alive: here it was not used since
     r = client.post("/v1/hook/judge", json={"v": 1}, headers=hdr)
     assert r.status_code == 401 and r.json()["error"] == "TRIAL_EXPIRED"
 
@@ -271,13 +272,19 @@ def test_0238_7_ttl_erases_unclaimed_and_claimed(client, app, tmp_path):
     assert mk.post("/api/trial/keep").json()["kept"] is True                                 # kept: an ordinary Free account
     aid = lambda t_: c.db.one("SELECT account_id FROM agents WHERE id=?", (t_["agent_id"],))
     ida, idb = aid(a)["account_id"], aid(b)["account_id"]
+    u = new_trial(client, tmp_path)                                                          # r0288: made, never used by a hook
+    idu = aid(u)["account_id"]
     assert trial.expire_due(c) == 0
     later = int(time.time()) + 8 * 86400
     idn = aid(n)["account_id"]
-    assert trial.expire_due(c, later) == 1                                                   # only the unclaimed one: a passkey makes the account permanent
+    assert trial.expire_due(c, later) == 1                                                   # only the unclaimed AND unused one
+    assert c.db.one("SELECT 1 AS k FROM accounts WHERE id=?", (idu,)) is None                # unclaimed, never called: nothing left at all
     assert c.db.one("SELECT erased_at FROM accounts WHERE id=?", (idn,))["erased_at"] is None and aid(n) is not None      # claimed, no journal: stays
+    assert aid(a) is not None                                                                # r0288: unclaimed but its hook called: kept (90 days)
+    assert trial.expire_due(c, int(time.time()) + 91 * 86400) == 1                           # 90 days after its last call: erased
     assert c.db.one("SELECT 1 AS k FROM accounts WHERE id=?", (ida,)) is None                # unclaimed: nothing left at all
     assert aid(a) is None and c.db.one("SELECT COUNT(*) AS n FROM actions WHERE account_id=?", (ida,))["n"] == 0
+    assert c.db.one("SELECT idle_warned_at FROM accounts WHERE id=?", (idb,))["idle_warned_at"] is not None   # claimed: warned, not erased
     r = c.db.one("SELECT * FROM accounts WHERE id=?", (idb,))
     assert r["erased_at"] is None and r["trial_until"] is None and r["display_name"]        # claimed + mandate: kept automatically, Free
     assert os.path.exists(os.path.join(c.cfg.data_dir, "ledgers", idb, "ledger.cose"))
@@ -374,6 +381,7 @@ def test_0245_agent_and_account_quota_skip_reads_but_pass_ceiling(client, tmp_pa
     t = new_trial(client, tmp_path)
     c = ctx_of(client)
     hdr = {"Authorization": "Bearer " + t["api_key"]}
+    q0 = act.QUOTA_PER_AGENT_DAY
     act.QUOTA_PER_AGENT_DAY = 5
     c.cfg.trial_quota = 1000
     try:
@@ -386,14 +394,14 @@ def test_0245_agent_and_account_quota_skip_reads_but_pass_ceiling(client, tmp_pa
         assert r.status_code == 429 and "for one agent" in r.json()["detail"]                # decisions are still limited
         assert client.post("/v1/actions", json={"tool": "Read", "args": {"file_path": "/tmp/z"}}, headers=hdr).status_code == 429   # fail-closed as before
         # reads' own ceiling
-        act.QUOTA_PER_AGENT_DAY = 2000
+        act.QUOTA_PER_AGENT_DAY = q0
         c.cfg.pass_per_agent_day = 100
         n = act.passes_used(c, t["account_id"] if "account_id" in t else client_acc(c), time.time())
         c.cfg.pass_per_agent_day = max(1, n)
         r = client.post("/v1/actions", json={"tool": "Read", "args": {"file_path": "/tmp/w"}}, headers=hdr)
-        assert r.status_code == 429 and "reads per day for one agent" in r.json()["detail"]
+        assert r.status_code == 429 and "reads and file checks per day for one agent" in r.json()["detail"]     # r0285: + the hook's rounds
     finally:
-        act.QUOTA_PER_AGENT_DAY = 2000
+        act.QUOTA_PER_AGENT_DAY = q0                    # r0285: was "= 2000": it leaked into the next tests once the default changed
 
 
 def client_acc(c):

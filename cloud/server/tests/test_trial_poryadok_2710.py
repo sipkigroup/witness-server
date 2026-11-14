@@ -24,6 +24,7 @@ def test_status_unclaimed_claimed_kept(client, app, tmp_path):
     ctx_of(client).cfg.trial_per_hour = 10
     t = new_trial(client, tmp_path)
     r = _status(client, t["api_key"])
+    # r0288: a use is written hourly (trial.flush_seen); the stored end moves then, not on this call
     assert r.status_code == 200 and r.json() == {"trial": True, "claimed": False, "expires_at": t["expires_at"]}
     me = Person(app, t["claim"])
     assert me.claim_it().status_code == 200

@@ -179,9 +179,12 @@ def test_rounds_without_an_action_are_counted_and_shown_to_the_owner(client, age
     client.post("/v1/hook/judge", json=_body({"command": "ls", "_witness": {}}, p), headers=agent)          # refuse RESERVED_KEY
     a = [x for x in owner.c.get("/api/agents").json() if x["name"] == "cc"][0]
     assert a["hook_rounds_24h"] == {"need": 3, "refuse": 1, "suspicious": False}
-    monkeypatch.setattr(act, "QUOTA_PER_AGENT_DAY", 4)                              # 4 rounds used: the next request is refused at once
+    # r0285: rounds no longer spend the action quota (they were 1.3 units per call of the dev corpus); they share the reads' ceiling
+    monkeypatch.setattr(act, "QUOTA_PER_AGENT_DAY", 4)
+    assert client.post("/v1/hook/judge", json=_body("ls", p), headers=agent).status_code == 200
+    monkeypatch.setattr(client.app.state.ctx.cfg, "pass_per_agent_day", 4)        # 4 rounds used: the next request is refused at once
     r = client.post("/v1/hook/judge", json=_body("ls", p), headers=agent)
-    assert r.status_code == 429 and r.json()["error"] == "QUOTA"
+    assert r.status_code == 429 and r.json()["error"] == "QUOTA" and "file checks" in r.json()["detail"]
     r = client.post("/v1/actions", json={"tool": "Bash", "args": {"command": "ls"}}, headers=agent)        # the same quota for /v1/actions
     assert r.status_code == 429
 

@@ -1,0 +1,12 @@
+# Continuous copy of the witness database (docker compose --profile replica; README "Continuous copy").
+# Litestream streams the WAL of /data/db.sqlite to DW_REPLICA_DB_URL within seconds; the service "replica" (python -m app.replica)
+# copies every other file of /data (the ledgers) next to it. Restore: README, never `litestream restore` alone (it would take a
+# database NEWER than the copied ledgers).
+#   file:///replica/db                         (default) the volume "replica" - put it on a SECOND disk: DW_REPLICA_DIR in .env
+#   s3://BUCKET/witness/db?endpoint=HOST&region=REGION    any S3-compatible store; keys in .env: LITESTREAM_ACCESS_KEY_ID,
+#                                                          LITESTREAM_SECRET_ACCESS_KEY (they never go into this file)
+dbs:
+  - path: /data/db.sqlite
+    replica:
+      url: ${DW_REPLICA_DB_URL}
+# Litestream's defaults otherwise (0.5): sync every 1 s, full snapshot daily, kept 24 h; an erased account leaves the copy within 24 h.

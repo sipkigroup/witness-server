@@ -222,7 +222,9 @@ class DB:
                                     ("actions", "fx_keys", "TEXT"),      # r0275: keys of the call's effect (provenance.effect_keys): a refused effect by another tool
                                     ("actions", "push_state", "TEXT"), ("actions", "push_at", "INTEGER"),     # r0276: the push ladder of a question
                                     ("actions", "push_state_at", "INTEGER"), ("actions", "push_tries", "INTEGER"),
-                                    ("push_subs", "acked", "INTEGER")):     # r0276b: this subscription's service worker has acked a push (no personal data)
+                                    ("agents", "created_by", "TEXT"),    # r0284: the member who made the agent (no self-approval in a team); NULL = made before r0284
+                                    ("push_subs", "acked", "INTEGER"),      # r0276b: this subscription's service worker has acked a push (no personal data)
+                                    ("accounts", "last_hook_at", "INTEGER"), ("accounts", "idle_warned_at", "INTEGER")):   # r0288: last call of the account's agents (hourly), the push before an idle erase
                 cols = {r["name"] for r in self.c.execute("PRAGMA table_info(%s)" % table)}
                 if col not in cols:
                     self.c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, typ))
@@ -233,6 +235,9 @@ class DB:
             # 0.2.24: the "agent saw a secret" look-up (T3) and the preview clean-up (B) on indexes, not on the whole book
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_taint ON actions(agent_id, updated_at) WHERE taint IS NOT NULL")
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_preview ON actions(created_at) WHERE preview_cut IS NULL OR preview_cut=1")
+            # r0285: the reads taken off the daily quota near a limit (actions.passes_used) on an index, not on the 24 h of the account
+            self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_pass_acc ON actions(account_id, created_at) WHERE status='pass' OR class='pass'")
+            self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_pass_agent ON actions(agent_id, created_at) WHERE status='pass' OR class='pass'")
             # 0.2.14 (R8-06): a person who has an explicitly marked phone key has had one (idempotent, only ever sets the mark)
             self.c.execute("UPDATE users SET phone_ever=1 WHERE phone_ever IS NULL AND id IN (SELECT user_id FROM credentials WHERE device='phone')")
         _LIVE.add(self)

@@ -10,4 +10,11 @@
 		# The witness takes the client IP for its per-IP limits from X-Real-IP: always OVERWRITE what the client sent.
 		header_up X-Real-IP {remote_host}
 	}
+	# The witness itself does not answer (stopped, restarting, overloaded): say so in words, with the status page kept OFF this
+	# server (DW_STATUS_URL in .env; .github/workflows/status.yml), instead of an empty 502.
+	handle_errors 502 503 504 {
+		header Content-Type "text/plain; charset=utf-8"
+		header Retry-After "30"
+		respond "The witness is not answering right now (HTTP {err.status_code}). Calls of your agents that need it are refused; nothing runs without it. Status page: {$DW_STATUS_URL:none set by this operator}" {err.status_code}
+	}
 }

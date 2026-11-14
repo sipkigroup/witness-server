@@ -1,0 +1,66 @@
+# Status page of the witness, kept OFF the witness's own server: GitHub checks it from outside and GitHub Pages serves the page, so the
+# page still answers on the day the witness (or its whole server) is down. status/check.py says what is checked and its honest limits.
+#
+# Turn it on (once, by a maintainer): Settings -> Pages -> "Build and deployment" -> Source: "GitHub Actions". That is all for
+# sipkigroup/witness-server. In a fork or your own copy, set the repository variable WITNESS_URL (Settings -> Secrets and variables ->
+# Actions -> Variables) to YOUR witness, e.g. https://witness.example.org; without it this workflow does nothing (it never checks
+# somebody else's witness). STATUS_PAGE_URL: only if the page has a custom domain.
+#
+# No secrets. Permissions: read the repository, deploy Pages (pages: write + id-token: write for the Pages deployment, nothing else; no
+# contents: write, so this workflow cannot change the code). The history lives on the published page itself (history.json, last 1000
+# checks): each run reads it back, adds one check and publishes again. Actions are pinned by commit SHA (the tag is for people only).
+# A run FAILS (after publishing) when the witness is down or its public log went back, so GitHub notifies the maintainers by e-mail.
+# GitHub turns scheduled workflows off after 60 days without activity in a public repository: re-enable it under Actions if that happens.
+name: status
+
+on:
+  schedule:
+    - cron: "3-59/10 * * * *"     # about every 10 minutes (GitHub runs schedules best effort: often late, sometimes skipped)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: status
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.repository == 'sipkigroup/witness-server' || vars.WITNESS_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: status
+      - name: check the witness from outside
+        id: check
+        env:
+          WITNESS_URL: ${{ vars.WITNESS_URL || 'https://witness.sipkigroup.com' }}
+          STATUS_PAGE_URL: ${{ vars.STATUS_PAGE_URL }}
+          KEEP: "1000"
+        # the page's own address (a schedule event carries no repository object: the name comes from GITHUB_REPOSITORY)
+        run: |
+          base="${STATUS_PAGE_URL:-https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}}"
+          PREV="${base%/}/history.json" python3 status/check.py _site
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9   # v5.0.0
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346   # v5.0.1
+      - name: fail the run when the witness is down (GitHub then notifies the maintainers)
+        if: steps.check.outputs.state == 'down' || steps.check.outputs.state == 'alarm'
+        env:
+          STATE: ${{ steps.check.outputs.state }}
+        run: |
+          echo "::error::witness state: $STATE (see the status page)"
+          exit 1

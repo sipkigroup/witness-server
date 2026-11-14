@@ -174,5 +174,5 @@ def test_vocabulary_version():
 
 def test_version_matches_changelog():
     ver = _read("deploy", "VERSION").strip()
-    m = re.search(r"^## server (\d+\.\d+\.\d+)", _read_or_skip("CHANGELOG.md"), re.M)
+    m = re.search(r"^## (?:[^\n]*? )?server (\d+\.\d+\.\d+)", _read_or_skip("CHANGELOG.md"), re.M)   # r0288: also "## client ... / server X" (0.2.111 heading)
     assert m and m.group(1) == ver, (ver, m and m.group(1))

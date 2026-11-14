@@ -2,6 +2,7 @@
 #
 #   docker compose up -d --build                       # local witness on http://localhost:8787 (this machine only)
 #   docker compose --profile https up -d --build       # + Caddy with automatic HTTPS for DW_DOMAIN (set it in .env first)
+#   docker compose --profile replica up -d             # + a continuous copy of the data (Litestream + app.replica; README "Continuous copy")
 #
 # First start creates YOUR signing key and pepper in the volume "secrets" (service "keys": runs at every start, never overwrites).
 # Everything the witness stores is in the volume "data". `docker compose down -v` deletes both, for good.
@@ -11,7 +12,7 @@ x-witness-image: &image
   build:
     context: .
     dockerfile: Dockerfile
-  image: deus-witness-open:${DW_VERSION:-0.2.107}
+  image: deus-witness-open:${DW_VERSION:-0.2.112}
 
 services:
   keys:
@@ -22,6 +23,7 @@ services:
     volumes:
       - secrets:/secrets
       - data:/data
+      - ${DW_REPLICA_DIR:-replica}:/replica
     command:
       - python
       - -c
@@ -37,10 +39,11 @@ services:
         for name in ("witness_ed25519", "key_pepper"):
             os.chown("/secrets/" + name, 10001, 10001); os.chmod("/secrets/" + name, 0o400)
         os.chown("/secrets", 10001, 10001); os.chmod("/secrets", 0o700)
-        if os.stat("/data").st_uid != 10001:            # a bind-mounted host folder: hand it to the witness user once
-            for dp, dn, fn in os.walk("/data"):
-                for x in [dp] + [os.path.join(dp, y) for y in dn + fn]:
-                    os.lchown(x, 10001, 10001)
+        for top in ("/data", "/replica"):
+            if os.stat(top).st_uid != 10001:            # a bind-mounted host folder: hand it to the witness user once
+                for dp, dn, fn in os.walk(top):
+                    for x in [dp] + [os.path.join(dp, y) for y in dn + fn]:
+                        os.lchown(x, 10001, 10001)
 
   witness:
     <<: *image
@@ -69,6 +72,8 @@ services:
       DW_MAX_AGENTS: ${DW_MAX_AGENTS:-3}
       DW_REG_PER_HOUR: ${DW_REG_PER_HOUR:-10}
       DW_TRUSTED_PROXY: ${DW_NET:-172.29.80}.2                 # X-Real-IP is believed only from the proxy container's fixed address
+      DW_STATUS_URL: ${DW_STATUS_URL:-}                        # your status page OFF this server (https; .github/workflows/status.yml); empty = none
+      DW_IDLE_DAYS: ${DW_IDLE_DAYS:-90}                        # an account unused this long (no hook call, no sign-in) is erased after a push; 0 = never
     volumes:
       - data:/data
       - secrets:/secrets:ro
@@ -88,7 +93,7 @@ services:
 
   proxy:
     profiles: ["https"]
-    image: caddy:2.8-alpine
+    image: caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0   # r0286: >= 2.10 = hybrid post-quantum TLS (X25519MLKEM768) by default; pinned by digest (multi-arch index)
     depends_on:
       witness:
         condition: service_healthy
@@ -97,6 +102,7 @@ services:
       - "${DW_HTTPS_PORT:-443}:443"
     environment:
       DW_DOMAIN: ${DW_DOMAIN:-localhost}
+      DW_STATUS_URL: ${DW_STATUS_URL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy:/data
@@ -104,6 +110,48 @@ services:
     networks:
       dw:
         ipv4_address: ${DW_NET:-172.29.80}.2
+
+  # ---- profile "replica": a continuous copy of /data (README "Continuous copy"; restore drill: cloud/deploy/replica-drill.sh) ----
+  litestream:
+    profiles: ["replica"]
+    image: litestream/litestream:0.5.17@sha256:4b02b9859a6b6b4087d8b8944e15f7e984bd7957cba322bbeee38b0e27b9656a   # pinned by digest (multi-arch index)
+    user: "10001:10001"
+    depends_on:
+      witness:
+        condition: service_healthy
+    command: ["replicate", "-config", "/etc/litestream.yml"]
+    environment:
+      DW_REPLICA_DB_URL: ${DW_REPLICA_DB_URL:-file:///replica/db}
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:-}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./litestream.yml:/etc/litestream.yml:ro
+      - data:/data                                             # read-write: Litestream keeps its position next to the database
+      - ${DW_REPLICA_DIR:-replica}:/replica
+    network_mode: ${DW_REPLICA_NETWORK:-none}                  # "none" for a disk target; "bridge" for an S3-compatible store
+    restart: unless-stopped
+  replica:
+    profiles: ["replica"]
+    <<: *image
+    user: "10001:10001"
+    depends_on:
+      witness:
+        condition: service_healthy
+    command: ["python", "-m", "app.replica", "run", "--data", "/data", "--to", "/replica/files", "--every", "10"]
+    volumes:
+      - data:/data:ro
+      - ${DW_REPLICA_DIR:-replica}:/replica
+    network_mode: none
+    restart: unless-stopped
+  replica-restore:                                             # only for `docker compose run` (README "Continuous copy"): writes /data
+    profiles: ["restore"]
+    <<: *image
+    user: "10001:10001"
+    volumes:
+      - data:/data
+      - ${DW_REPLICA_DIR:-replica}:/replica:ro
+    network_mode: none
+    restart: "no"
 
 networks:
   dw:
@@ -116,3 +164,4 @@ volumes:
   data: {}
   secrets: {}
   caddy: {}
+  replica: {}                                                  # or a folder on a SECOND disk: DW_REPLICA_DIR=/mnt/disk2/witness in .env

@@ -100,6 +100,10 @@ export async function witnessKey(pubHex) {
   return { pub, key, kid: await kidOf(pub) };
 }
 
+// r0286 (crypto agility, POSTKVANT-1311): the witness key algorithms this page verifies -- manifest name -> COSE alg id. Another name
+// (e.g. a future ML-DSA-65, COSE -49) is "CANNOT CHECK" + RESULT: NOT PROVEN: never VALID, never a crash.
+export const WITNESS_ALGS = new Map([['EdDSA', -8]]);
+
 // COSE_Sign1 (RFC 9052), witness key only: tag 18, protected = canonical map with alg -8 and kid, typ as asked, payload canonical.
 export async function verify1(data, wk, typ) {
   const t = decode(data, { canonical: false });
@@ -111,7 +115,7 @@ export async function verify1(data, wk, typ) {
   if (!(prot instanceof Map) || !prot.has(1) || !prot.has(4)) throw new Error('MALFORMED');
   if (typ && prot.get(16) !== typ) throw new Error('TYP_MISMATCH');
   if (!eq(prot.get(4), wk.kid)) throw new Error('KID_UNKNOWN');
-  if (prot.get(1) !== -8) throw new Error('ALG_MISMATCH');
+  if (prot.get(1) !== WITNESS_ALGS.get('EdDSA')) throw new Error('ALG_MISMATCH');
   const tbs = cde(['Signature1', pb, new Uint8Array(0), payload]);
   if (!(await subtle.verify({ name: 'Ed25519' }, wk.key, sig, tbs))) throw new Error('SIGNATURE_INVALID');
   let body;
@@ -168,6 +172,12 @@ export async function checkPack(read) {
     if (bytesToHex(await sha256(b)) !== h) { say('manifest: MISMATCH ' + p, false); bad++; }
   }
   say('manifest: ' + (bad ? bad + ' problems' : 'ok') + ' (' + Object.keys(man.files).length + ' files)', !bad);
+  const walg = man.witness.alg === undefined ? 'EdDSA' : man.witness.alg;      // absent in old packs = EdDSA
+  if (!WITNESS_ALGS.has(walg)) {
+    say('witness: CANNOT CHECK (key algorithm ' + JSON.stringify(walg) + ' is not one this page verifies: ' + [...WITNESS_ALGS.keys()].join(', ') + ')', false);
+    lines.push(bad ? 'RESULT: INVALID' : 'RESULT: NOT PROVEN');
+    return { ok: false, lines };
+  }
   let wk;
   try { wk = await witnessKey(man.witness.pub_hex); } catch (e) { return fail(e.message); }
   if (bytesToHex(wk.kid) !== man.witness.kid_hex) say('witness: kid does not match pub', false);

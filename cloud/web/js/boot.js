@@ -48,7 +48,14 @@ async function check(server, linkError) {
 async function serverBuild() {
   try {
     const r = await fetch('/api/build', { cache: 'no-store', credentials: 'same-origin', headers: { 'x-dw-build': MINE } });
-    return r.ok ? ((await r.json()).build || null) : null;
+    if (!r.ok) return null;
+    const j = await r.json();
+    // r0288: the status page of this witness (DW_STATUS_URL, kept off this server): remembered for the day this server does not answer
+    try {
+      if (typeof j.status_url === 'string' && /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/.test(j.status_url)) localStorage.setItem('dw_status_url', j.status_url);
+      else localStorage.removeItem('dw_status_url');
+    } catch (e) { /* no storage: no link */ }
+    return j.build || null;
   } catch (e) { return null; }
 }
 

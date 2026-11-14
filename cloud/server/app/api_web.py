@@ -348,6 +348,7 @@ def make_router(ctx):
     @r.get("/api/me")
     def me(req: Request):
         acc = auth.session_account(ctx, req)
+        trial.seen(ctx, acc["id"])                 # r0288: a person who opens the dashboard uses the account (at most one write an hour)
         sk = signing_keys(acc, req)
         c = sk[0] if sk else org.credential_of(ctx, req.state.user)
         u = db.one("SELECT id, display_name FROM users WHERE id=?", (req.state.user,))
@@ -358,7 +359,10 @@ def make_router(ctx):
                             "rp_id": c["rp_id"], "origins": [c["origin"]]},
                 # 0.2.2: the passkeys that may sign HERE (solo account: every active one; organisation with a policy: the member's key)
                 "signing_keys": [{"kid_hex": bytes(x["kid"]).hex(), "credential_id_b64": wa.b64u(bytes(x["credential_id"]))} for x in sk],
-                "trial": ({"expires_at": acc["trial_until"]} if "trial_until" in acc.keys() and acc["trial_until"] is not None else None)}     # 0.2.38
+                "trial": ({"expires_at": acc["trial_until"]} if "trial_until" in acc.keys() and acc["trial_until"] is not None else None),     # 0.2.38
+                "idle": trial.idle_view(ctx, acc["id"]),     # r0288: the account was warned it is unused (null = not)
+                "status_url": ctx.cfg.status_url or None,
+                "team": org.is_team(ctx, acc["id"])}     # r0284: false = a solo account (the page hides the "Team" entry)
 
     def signing_keys(acc, req):
         if org.current_policy(ctx, acc["id"]) is not None:
@@ -403,8 +407,8 @@ def make_router(ctx):
             pre = b.get("preset")
             if pre is not None and pre not in tm.PRESETS:
                 raise Err(422, "TOOLMAP_INVALID", "unknown preset")
-            db.x("INSERT INTO agents(id,account_id,name,key_prefix,key_hash,toolmap_json,created_at) VALUES(?,?,?,?,?,?,?)",
-                 (aid, acc["id"], name[:80], key[:12], ctx.key_hash(key), json.dumps(tm.preset(pre)), now()))
+            db.x("INSERT INTO agents(id,account_id,name,key_prefix,key_hash,toolmap_json,created_at,created_by) VALUES(?,?,?,?,?,?,?,?)",
+                 (aid, acc["id"], name[:80], key[:12], ctx.key_hash(key), json.dumps(tm.preset(pre)), now(), req.state.user))
         stats.first(ctx, acc["id"], "agent")                 # 0.2.28
         return {"agent": agent_view(db.one("SELECT * FROM agents WHERE id=?", (aid,))), "api_key": key}
 
@@ -582,6 +586,9 @@ def make_router(ctx):
         items = [{"rid": x["rid"], "t": x["created_at"], "agent_id": x["agent_id"], "tool": x["tool"], "class": x["class"], "recipient": x["recipient"],
                   "amount": x["amount"], "currency": x["currency"], "verdict": x["verdict"], "reason": x["reason"],
                   "status": act.refresh(ctx, x["rid"])["status"], "args_preview": x["args_preview"]} for x in rows]
+        for it, x in zip(items, rows):
+            if x["line_lead"]:                       # r0281 (blind evaluation #22 / B10): a part of a call: the panel folds it into its lead's row
+                it["line_lead"] = x["line_lead"]
         for it, x in zip(items, rows):                # 0.2.43b (C): the hook stopped waiting at its timeout: not run (still approvable)
             if x["gave_up_at"] and it["status"] in ("pending_approval", "held", "expired"):       # late 29.10: held too
                 it["gave_up_at"] = x["gave_up_at"]
@@ -625,6 +632,7 @@ def make_router(ctx):
                 it = {"rid": y["rid"], "t": y["created_at"], "agent_id": y["agent_id"], "tool": y["tool"],
                       "action": json.loads(y["action_json"]), "expires": y["expires"],
                       "text_preview": (y["text_preview"] or "")[:200]}     # 0.2.76: the Dashboard says the call in words ("run python3 hello.py")
+                it["what"] = qwords.words(y)["what"]                # r0281 (#20): the panel says the same line as the question's page
                 ws = waiting.state(y["rid"], y["created_at"])       # 27.10 (polygon O3): absent = cannot tell yet
                 if y["gave_up_at"]:
                     ws = False                                      # 0.2.43b (C): the hook said so (survives a restart)

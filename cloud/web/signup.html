@@ -10,7 +10,7 @@
  <p><button id="go" class="btn big" type="submit">Create passkey</button></p>
  <p class="hint">What we store and how deletion works: <a href="/privacy.html">privacy summary</a>.</p>
  <div id="msg" class="notice" hidden></div>
- <p class="hint">Already registered? <a href="login.html">Sign in</a>. If you lose all copies of your passkey you will need a new account (synced passkeys on iCloud or Google make this unlikely).</p>
+ <p class="hint">Already registered? <a href="login.html">Sign in</a>.</p>
 </form>
 <section id="card" class="card" hidden>
  <h2>Your key card</h2>
@@ -19,6 +19,18 @@
  <dl class="kv"><dt>Key ID (kid)</dt><dd class="mono" id="kid"></dd></dl>
  <p class="hint">Honest limit: we register the key on our own site, so this card cannot detect a swap made at the moment of registration.</p>
  <p><a class="btn big" id="cont" href="app.html">Continue to dashboard</a></p>
+</section>
+<section id="codesbox" class="card" hidden>
+ <h2>Save your way back</h2>
+ <p>Your passkey may be saved in your iCloud or Google account, but that is not guaranteed: it can stay only on this device. If you lose every device with the passkey and have no code, you cannot get back in. Ten one-time recovery codes fix that.</p>
+ <div id="codesmsg" class="notice" hidden></div>
+ <p class="row"><button id="savecodes" class="btn big" type="button">Save codes</button> <button id="later" class="btn ghost" type="button">Later</button></p>
+ <div id="codesshown" hidden>
+  <div class="notice warn">Save them now. Leaving this page hides them for good.</div>
+  <pre id="codes" class="mono"></pre>
+  <p class="row"><span id="copy"></span><button id="dl" class="btn ghost" type="button">Download .txt</button></p>
+  <p class="hint">Keep them offline: on paper or in a password manager, not next to your phone.</p>
+ </div>
 </section>
 </main>
 <script type="module" src="js/boot.js"></script>

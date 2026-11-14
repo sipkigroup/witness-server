@@ -76,6 +76,8 @@ REASONS = {
     "WITNESS_NOT_CONFIGURED": ("deny", "the hook has no agent key (set DEUS_WITNESS_KEY)"),
     "WITNESS_UNAVAILABLE": ("deny", "the witness cannot be reached; the call does not run without it"),
     "WITNESS_TIMEOUT": ("deny", "the witness did not answer in time; the call does not run without it"),
+    "WITNESS_BUSY": ("deny", "the witness is busy at this moment (too many calls of this agent at once, or the server is full); nothing ran, the witness itself is fine: retry the same call in a few seconds"),     # r0285
+    "WITNESS_QUOTA": ("deny", "the daily limit of this account at the witness is used up (the text says when it frees up); nothing ran: reading files of the project still works, tell the user"),     # r0285
     "WITNESS_KEY_CHANGED": ("deny", "the witness key is not the one pinned on this machine"),
     "REQUEST_MISMATCH": ("deny", "the receipt is for a different call than the one being run"),
     "HOOK_ERROR": ("deny", "the hook failed; the call does not run (fail-closed)"),

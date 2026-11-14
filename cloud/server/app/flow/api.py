@@ -95,8 +95,15 @@ async def approvals_batch(req: Request):
     res = await run_in_threadpool(batch.do_batch, ctx, acc, b.get("rids"), b.get("approved"), env, b.get("views"),   # pv2: per-item views
                                   getattr(req.state, "user", None))
     from app import uxstat                      # 0.2.96: "approved without reading" counts a batch item as a decision too
-    for x in (res.get("results") or []) if isinstance(res, dict) else []:
-        if isinstance(x, dict) and x.get("verdict") in ("allow", "refused"):
+    rs_ = [x for x in (res.get("results") or []) if isinstance(x, dict)] if isinstance(res, dict) else []
+    in_ = {x.get("rid") for x in rs_}
+    for x in rs_:
+        # r0281 (blind evaluation B8): a part of a call (line_lead) decided with its lead in this batch is the SAME human decision:
+        # one passkey prompt, one question on the page; it is not counted a second time
+        ll_ = ctx.db.one("SELECT line_lead FROM actions WHERE rid=? AND account_id=?", (x.get("rid"), acc["id"])) if isinstance(x.get("rid"), str) else None
+        if ll_ is not None and ll_["line_lead"] and ll_["line_lead"] in in_:
+            continue
+        if x.get("verdict") in ("allow", "refused"):
             uxstat.record(ctx, acc["id"], x.get("rid"), "once" if res.get("approved") is True else "deny", b)
     return res
 

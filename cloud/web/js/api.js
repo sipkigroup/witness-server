@@ -17,16 +17,22 @@ async function stepUp() {
 // 0.2.75: the build of this code (the server writes it in place of the placeholder). The server tells a page that does NOT send it (an older
 // copy kept by the browser) to drop its cache (server main._stale_page).
 export const BUILD = '__DW_BUILD__';
+// r0288: the witness' status page (js/boot.js keeps what GET /api/build said; none = no link). Only a plain https URL is ever shown.
+export function statusHint() {
+  let u = null;
+  try { u = localStorage.getItem('dw_status_url'); } catch (e) { u = null; }
+  return u && /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?$/.test(u) ? '. Status of the witness: ' + u : '';
+}
 export async function api(method, path, body, retried) {
   const opt = { method, credentials: 'same-origin', headers: { 'x-dw-build': BUILD } };
   if (body !== undefined) { opt.headers['content-type'] = 'application/json'; opt.body = JSON.stringify(body); }
   let r;
-  try { r = await fetch(path, opt); } catch (e) { throw new ApiError(0, 'NETWORK', 'Cannot reach the server'); }
+  try { r = await fetch(path, opt); } catch (e) { throw new ApiError(0, 'NETWORK', 'Cannot reach the server' + statusHint()); }
   if (r.status === 204) return null;
   let j = null;
   try { j = await r.json(); } catch (e) { /* not JSON */ }
   if (r.status === 403 && j && j.error === 'STEPUP_REQUIRED' && !retried) { await stepUp(); return api(method, path, body, true); }
-  if (!r.ok) throw new ApiError(r.status, (j && j.error) || 'HTTP_' + r.status, (j && j.detail) || '');
+  if (!r.ok) throw new ApiError(r.status, (j && j.error) || 'HTTP_' + r.status, ((j && j.detail) || '') + (!j && r.status >= 502 && r.status <= 504 ? statusHint() : ''));
   return j;
 }
 export const get = (p) => api('GET', p);

@@ -6,7 +6,7 @@ import { anchorText } from './anchors.js';
 import { revokeMandate } from './revoke.js';
 import { explainError } from './webauthn.js';
 import { mountChannels, frozenText } from './channels.js';
-import { askOf } from './ask.js';
+import { askOf, reasonWords } from './ask.js';
 import { inspectFields } from './honest.js';
 
 const msg = $('#msg');
@@ -20,19 +20,24 @@ async function coverageOf(a) {
 
 async function revoke(a, btn) {
   const row = state.mandates.find((x) => x.id === a.active_mandate_id);
-  if (!row) { notice(msg, 'err', 'The active mandate was not found; reload the page.'); return; }
-  if (!confirm('Revoke the mandate of "' + a.name + '"? Every action of the agent is refused until a new mandate is signed. Your passkey signs the revocation; one signature of any signer is enough.')) return;
+  if (!row) { notice(msg, 'err', 'The rules in force were not found; reload the page.'); return; }
+  if (!confirm('Revoke the rules of "' + a.name + '"? Every action of the agent is refused until you sign new rules. Face ID (your passkey) signs the revocation; one signature of any signer is enough.')) return;
   btn.disabled = true;
-  try { await revokeMandate(row, state.me); notice(msg, 'ok', 'Mandate revoked. The agent is refused until a new mandate is signed.'); await refreshAll(); }
+  try { await revokeMandate(row, state.me); notice(msg, 'ok', 'Rules revoked. The agent is refused until you sign new rules.'); await refreshAll(); }
   catch (e) { notice(msg, 'err', e.code ? failText(e) : explainError(e)); btn.disabled = false; }
 }
 
 // 0.2.17 (R9-04): the Claude Code hook's judge rounds that ended without an action (the witness asked for file facts, or refused the call)
+// r0281 (blind evaluation #23): said only when it means something to the person (many refused rounds); the plain count is not shown
 function hookRounds(r) {
-  if (!r || !(r.need || r.refuse)) return '';
-  const text = 'Claude Code hook, last 24 h: ' + r.need + ' file-fact rounds and ' + r.refuse + ' refused calls (they count toward the quota).';
-  return h('p', { class: r.suspicious ? 'notice warn' : 'hint', text: r.suspicious ? text + ' Unusually many: someone may be probing the witness with this agent key.' : text });
+  if (!r || !r.suspicious) return '';
+  return h('p', { class: 'notice warn', text: 'Claude Code hook, last 24 h: ' + r.need + ' file-fact rounds and ' + r.refuse + ' refused calls. Unusually many: someone may be probing the witness with this agent key.' });
 }
+// r0281 (blind evaluation #24): what each button does, and whether it can be undone, next to them
+// r0283 (third blind evaluation Н-7 #29 #30, decisions 5, 6, 10): Freeze says what the SERVER does (it refuses the agent's calls; the agent's
+// program is not stopped); "rules", not "mandate"; Disable is under "More" with its own words (DISABLE_HELP)
+export const AGENT_BUTTONS_HELP = 'Freeze: Witness refuses every call of this agent until you unfreeze it. Revoke: ends the rules you signed; the agent is refused until you sign new ones.';
+export const DISABLE_HELP = 'Disable switches this agent\'s key off for good; it cannot be undone (a new agent needs a new key). You type its name, then confirm with Face ID (your passkey).';
 
 // 0.2.25: freeze / unfreeze on the agent card (the server asks for a fresh passkey touch; api.js requests it and retries)
 function frozenNote(a) { const t = frozenText(a); return t ? h('p', { class: 'notice warn', text: t }) : ''; }
@@ -45,9 +50,9 @@ async function freeze(a, btn) {
 }
 
 async function unfreeze(a, btn) {
-  if (!confirm('Unfreeze "' + a.name + '"? Its calls are judged by the mandate again. Only the owner can do this; your passkey confirms it.')) return;
+  if (!confirm('Unfreeze "' + a.name + '"? Its calls are judged by your rules again. Only the owner can do this; your passkey confirms it.')) return;
   btn.disabled = true;
-  try { await post('/api/agents/' + encodeURIComponent(a.id) + '/unfreeze'); notice(msg, 'ok', 'Agent unfrozen. Its calls are judged by the mandate again.'); await refreshAll(); }
+  try { await post('/api/agents/' + encodeURIComponent(a.id) + '/unfreeze'); notice(msg, 'ok', 'Agent unfrozen. Its calls are judged by your rules again.'); await refreshAll(); }
   catch (e) { notice(msg, 'err', e.code ? failText(e) : explainError(e)); btn.disabled = false; }
 }
 
@@ -63,25 +68,32 @@ async function loadAgents() {
     const m = a.active_mandate_id;
     const cat = cats[i];
     box.append(h('div', { class: 'card' },
-      h('div', { class: 'row' }, h('strong', { text: a.name }), h('span', { class: 'mono hint', text: a.id + ' / ' + a.key_prefix + '...' }),
-        h('span', { class: 'pill ' + (m ? 'allow' : 'defer'), text: m ? 'mandate active' : 'no mandate' }),
+      h('div', { class: 'row' }, h('strong', { text: a.name, title: a.id + ' / ' + a.key_prefix + '...' }),       // r0281 (#23): ids only on hover
+        h('span', { class: 'pill ' + (m ? 'allow' : 'defer'), text: m ? 'rules active' : 'no rules' }),
         a.frozen_at ? h('span', { class: 'pill deny', text: 'frozen' }) : ''),
       frozenNote(a),
-      m ? h('p', { class: 'hint' }, 'Mandate ', h('span', { class: 'mono', text: m })) : h('p', { class: 'hint', text: 'Without a signed mandate every action is denied (NO_MANDATE).' }),
+      m ? '' : h('p', { class: 'hint', text: 'Without rules you signed every action is refused.' }),
       cat && !(isHookAgent(a) && !cat.coverage) ? h('div', {}, ...coverageView(cat.coverage)) : '',      // r0278 (find 5): no proxy line for a hook agent
       cat && cat.drift ? h('p', { class: 'notice warn', text: 'The MCP tools of this agent changed; new arguments are refused until you review the catalog.' }) : '',
       hookRounds(a.hook_rounds_24h),
       h('div', { class: 'row' },
-        h('a', { class: 'btn', href: 'mandate.html?agent=' + encodeURIComponent(a.id) }, m ? 'New mandate' : 'Create mandate'),
-        m ? h('button', { class: 'btn danger', type: 'button', onclick: (ev) => revoke(a, ev.target) }, 'Revoke mandate') : '',
+        h('a', { class: 'btn', href: 'mandate.html?agent=' + encodeURIComponent(a.id) }, m ? 'New rules' : 'Create rules'),
+        m ? h('button', { class: 'btn danger', type: 'button', onclick: (ev) => revoke(a, ev.target) }, 'Revoke rules') : '',
         cat && cat.catalog_sha256 && safeId(a.id) ? h('a', { class: 'btn ghost', href: 'catalog.html?agent=' + encodeURIComponent(a.id) }, 'Tool catalog') : '',
         a.frozen_at
           ? h('button', { class: 'btn', type: 'button', onclick: (ev) => unfreeze(a, ev.target) }, 'Unfreeze')
-          : h('button', { class: 'btn ghost', type: 'button', onclick: (ev) => freeze(a, ev.target) }, 'Freeze'),
-        h('button', { class: 'btn danger ghost', type: 'button', onclick: async () => {
-          if (!confirm('Disable agent "' + a.name + '"? Its API key stops working.')) return;
-          try { await del('/api/agents/' + a.id); await refreshAll(); } catch (e) { fail(e); }
-        } }, 'Disable'))));
+          : h('button', { class: 'btn ghost', type: 'button', onclick: (ev) => freeze(a, ev.target) }, 'Freeze')),
+      h('p', { class: 'hint btnhelp', text: AGENT_BUTTONS_HELP }),
+      // r0283 (#30, decision 6): the one action that cannot be undone is folded under "More", looks unlike Revoke, and asks for the agent's
+      // name typed in full; the server then asks for a fresh passkey touch (step-up) before it switches the key off
+      h('details', { class: 'agentmore' }, h('summary', { text: 'More' }),
+        h('p', { class: 'hint', text: DISABLE_HELP }),
+        h('button', { class: 'btn quietdanger', type: 'button', onclick: async () => {
+          const typed = prompt('This cannot be undone. Type the agent name "' + a.name + '" to disable it for good:');
+          if (typed === null) return;
+          if (typed.trim() !== a.name) { notice(msg, 'err', 'The name did not match: nothing was disabled.'); return; }
+          try { await del('/api/agents/' + a.id); notice(msg, 'ok', 'Agent "' + a.name + '" disabled: its key no longer works.'); await refreshAll(); } catch (e) { fail(e); }
+        } }, 'Disable this agent for good'))));
   });
   const sel = $('#ff'), cur = sel.value;
   clear(sel).append(h('option', { value: '' }, 'all agents'), ...state.agents.map((a) => h('option', { value: a.id }, a.name)));
@@ -101,7 +113,7 @@ function showToolmap() {
 async function loadBudget() {
   const rows = await get('/api/budget');
   const box = clear($('#budget'));
-  if (!rows.length) { box.append(h('p', { class: 'hint', text: 'No purchase budget yet. It appears once a mandate with purchases is signed.' })); return; }
+  if (!rows.length) { box.append(h('p', { class: 'hint', text: 'No purchase budget yet. It appears once you sign rules with purchases.' })); return; }
   for (const r of rows) {
     const pct = r.budget ? Math.min(100, Math.round((r.committed / r.budget) * 100)) : 0;
     box.append(h('div', {},
@@ -115,13 +127,53 @@ function bar(pct) {
   return h('div', { class: 'bar' + (pct >= 90 ? ' hot' : ''), role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(pct) }, i);
 }
 
+// r0281 (blind evaluation #21, #22, B10, B11): one row per call (the parts of a call fold into their lead), the outcome and the reason in
+// words, the codes only on hover; the target is the address or the file, the tool its own column
+export function targetText(x) {
+  const rc = String((x && x.recipient) || '');
+  if (rc.startsWith('(network) ')) return rc.slice(10);
+  if (x && x.class === 'command') return rc ? 'command: ' + rc : 'a command';
+  return rc;
+}
+export function outcomeText(x) {
+  const st = String((x && x.status) || ''), v = String((x && x.verdict) || ''), rs = String((x && x.reason) || '');
+  if (x && x.gave_up_at && st === 'pending_approval') return 'Open: your agent gave up';      // r0283: one wording with the question page
+  if (x && x.gave_up_at && st === 'expired') return 'Not run: nobody answered in time';
+  if (st === 'pending_approval' || st === 'held') return 'Waiting for you';
+  if (st === 'consumed') return rs === 'OK_APPROVED' || v === 'allow' ? 'Ran: you allowed it' : 'Ran';
+  if (st === 'approved') return 'Allowed by you (not run yet)';
+  // r0281b (second blind evaluation #1): a `covered` row allowed NOTHING: the first touch set aside the call that waited for it (the agent's
+  // repeat is judged by the signed rules), or a "from now on" rule answered the question (the agent's repeat runs under that rule)
+  if (st === 'covered') return rs === 'ESCALATE_TRIAL_CLAIM' ? 'Not run: set aside when you set up the account' : 'Not run here: your "from now on" rule answers its repeat';
+  if (st === 'refused' || v === 'deny') return 'Refused';
+  if (st === 'expired') return 'Expired: nothing ran';
+  if (st === 'cancelled') return 'Cancelled';
+  if (v === 'allow') return 'Allowed by your rules';
+  return 'Other';
+}
+export function reasonText(code, x) {
+  const c = String(code || '');
+  if (!c) return '';
+  if (c === 'ESCALATE_COMMAND_DANGER' && x && String(x.recipient || '').startsWith('(network) ')) return 'it sends data out of this computer';   // r0281 (B4): not "can delete"
+  if (c === 'OK_APPROVED') return 'you approved it';
+  if (c === 'ESCALATE_TRIAL_CLAIM') return 'it waited for you to set up the account';
+  if (/^OK_/.test(c)) return 'within your rules';
+  return reasonWords(c);
+}
 function feedRow(x) {
-  const target = [x.recipient, x.amount != null ? fmtMoney(x.amount, x.currency) : ''].filter(Boolean).join(' / ');
+  const target = [targetText(x), x.amount != null ? fmtMoney(x.amount, x.currency) : ''].filter(Boolean).join(' / ');
+  const out = outcomeText(x), cls = /^(Ran|Allowed)/.test(out) ? 'allow' : /^Refused/.test(out) ? 'deny' : 'defer';
   return h('tr', {},
     h('td', { 'data-l': 'Time', text: fmtTime(x.t) }), h('td', { 'data-l': 'Agent', text: name(x.agent_id) }),
-    h('td', { 'data-l': 'Tool', title: x.args_preview || '', text: x.tool }), h('td', { 'data-l': 'Target', text: target }),
-    h('td', { 'data-l': 'Verdict' }, h('span', { class: 'pill ' + x.verdict, text: x.verdict }), ' ', x.status && x.status !== x.verdict ? h('span', { class: 'hint', text: statusText(x) }) : null),
-    h('td', { 'data-l': 'Reason', text: x.reason || '' }));
+    h('td', { 'data-l': 'Tool', title: x.args_preview || '', text: String(x.tool || '').split('.')[0] }), h('td', { 'data-l': 'Target', text: target }),
+    h('td', { 'data-l': 'Outcome', title: [x.verdict, x.status].filter(Boolean).join(' / ') }, h('span', { class: 'pill ' + cls, text: out })),
+    h('td', { 'data-l': 'Reason', title: x.reason || '', text: reasonText(x.reason, x) }));
+}
+// the parts of a call (line_lead) fold into their lead when the lead is on the same page; the lead keeps the network target of its part
+export function foldParts(items) {
+  const L = Array.isArray(items) ? items : [];
+  const leads = new Set(L.map((x) => x && x.rid));
+  return L.filter((x) => !(x && x.line_lead && leads.has(x.line_lead)));
 }
 
 // 0.2.43b (C): the hook said its wait ended (timeout): the agent was refused and did not run the call; it stays approvable until it expires
@@ -138,7 +190,7 @@ async function loadFeed(more) {
   const r = await get('/api/feed?' + q);
   const body = $('#feed');
   if (!more) clear(body);
-  for (const x of r.items) body.append(feedRow(x));
+  for (const x of foldParts(r.items)) body.append(feedRow(x));
   if (!body.children.length) body.append(h('tr', {}, h('td', { colspan: '6', class: 'hint', text: 'No actions yet. Send one with curl or through the MCP proxy.' })));
   state.before = r.next_before;
   $('#more').hidden = !r.next_before;
@@ -147,9 +199,11 @@ async function loadFeed(more) {
 let lastPending = -1;
 // the hook's wait ended: approving now runs nothing at once; it only records the decision for a repeat of the same call
 // 06.11 (owner at the phone: too many words): one short line
-export const GONE_TEXT = 'the agent stopped waiting: if you approve, it runs when the agent tries again';
+// r0283 (third blind evaluation #27 #28): said ONCE, here, per question (the count is a number, the heading does not say it again)
+export const GONE_TEXT = 'your agent gave up; your answer applies if it asks again';
 // 0.2.76: the waiting call in words ("wants to run python3 hello.py"), through the honest filter, cut to one short line
 function askLine(x) {
+  if (typeof x.what === 'string' && x.what) return inspectFields([['What', x.what]], []).rows[0][1];     // r0281 (#20): the signed words of its page
   const a = askOf(x);
   const w = inspectFields([['What', String(a.what || '')]], []).rows[0][1];
   return a.verb.replace(/^Your agent /, '') + (w ? ' ' + (w.length > 90 ? w.slice(0, 90) + '…' : w) : '');
@@ -159,13 +213,16 @@ async function loadPending() {
   const [pend, held] = await Promise.all([get('/api/approvals?status=pending'), get('/api/approvals?status=held').catch(() => [])]);
   const items = [...pend, ...held.map((x) => ({ ...x, held: true }))];
   document.title = (items.length ? '(' + items.length + ') ' : '') + 'Dashboard - Deus Witness';
-  $('#pcount').replaceChildren(items.length ? h('span', { class: 'pending-dot', text: items.length + ' waiting' }) : '');
+  // r0281 (blind evaluation B6): "waiting" counts only questions whose agent still waits; the others are open questions
+  const goneN = items.filter((x) => !!x.gave_up_at || x.agent_waiting === false).length, waitN = items.length - goneN;
+  $('#pcount').replaceChildren(items.length ? h('span', { class: 'pending-dot', title: [waitN ? waitN + ' waiting now' : '', goneN ? goneN + ' whose agent gave up' : ''].filter(Boolean).join(', '), text: String(items.length) }) : '');
   $('#pending-card').hidden = !items.length;
+  if ($('#pendhead')) $('#pendhead').textContent = 'Waiting for your answer';      // r0283 (#27): one heading; whether the agent still waits is said per question
   const box = clear($('#pending'));
   for (const x of items) {
-    const gone = !!x.gave_up_at && !x.held;            // 04.11 (L3): the agent stopped waiting: Review is not the main action, and the text says what a decision does
+    const gone = (!!x.gave_up_at || x.agent_waiting === false) && !x.held;            // 04.11 (L3): the agent stopped waiting: Review is not the main action, and the text says what a decision does
     box.append(h('div', { class: 'row' },
-      h('span', { class: 'pendtext' }, h('strong', { text: name(x.agent_id) }), ' ' + askLine(x), h('span', { class: 'hint', text: ' (' + (x.held ? 'held, you decide; ' : '') + (gone ? GONE_TEXT + '; ' : '') + until(x.expires) + ')' })),
+      h('span', { class: 'pendtext' }, h('strong', { text: name(x.agent_id) + ': ' }), askLine(x), h('span', { class: 'hint', text: ' (' + (x.held ? 'held, you decide; ' : '') + (gone ? GONE_TEXT + '; ' : '') + until(x.expires) + ')' })),
       h('a', { class: gone ? 'btn ghost' : 'btn big', href: 'approve.html?rid=' + encodeURIComponent(x.rid) }, 'Review')));
   }
   if (items.length > 1) box.append(h('p', {}, h('a', { href: 'approve.html' }, 'All waiting items and batches')));
@@ -209,6 +266,16 @@ async function main() {
   if (!me) return;
   state.me = me;
   loadUx();
+  // 0.2.109: "Later" on the sign-up codes screen leaves this reminder until the owner has codes (devices.html makes them)
+  try {
+    if (localStorage.getItem('dw_codes_later') === '1') {
+      const c = await get('/api/auth/recovery-codes');
+      if (c.total) localStorage.removeItem('dw_codes_later');
+      else msg.after(h('p', { class: 'notice warn' }, 'You have no recovery codes yet: if you lose your passkey you cannot get back in. ', h('a', { href: 'recovery-codes.html' }, 'Make 10 codes')));
+    }
+  } catch (e) { /* the reminder is a convenience */ }
+  // r0288: the account was warned (push) that it is unused; opening this page used it, so it stays
+  if (me.idle && me.idle.warned_at && Date.now() / 1000 - me.idle.warned_at < 30 * 86400) msg.after(h('p', { class: 'notice' }, 'We warned on ' + fmtTime(me.idle.warned_at) + ' that this account was unused and would be erased. You are using it now, so it stays. It is erased only after ' + (me.idle.days || 90) + ' days with no call from your hook and no sign-in.'));
   try { const org = await get('/api/org'); const t = anchorText((org.settings || {}).profile || 'smb'); $('#anchor').textContent = t.lead; clear($('#anchormore')).append(...t.more.map((x) => h('p', { class: 'hint', text: x }))); $('#anchorsum').textContent = t.moreTitle; } catch (e) { $('#anchorbox').hidden = true; }
   // 0.2.41: the key box is filled FIRST and never cleared by a list refresh; the button is locked during the request (a double submit made a second
   // agent / a 429 and the box was lost); an error is shown next to the button (#newerr), not at the top of the page

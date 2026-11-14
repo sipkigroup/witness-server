@@ -55,7 +55,8 @@ MAX_CMD = 32 * 1024
 WEIGHT_UNIT = 32 * 1024         # a request takes 1 + len(body) // WEIGHT_UNIT of the key's window
 MAX_CONCURRENT = 2              # judge requests of one account classified at the same time; more wait (ENTER_WAIT_S), then 429
 ENTER_WAIT_S = 5.0              # 0.2.18: how long a request waits for a slot; at most MAX_WAITING wait per account, the rest -> 429 at once
-MAX_WAITING = 2
+MAX_WAITING = 16                # r0285: was 2. A key brings at most main.PER_KEY_INFLIGHT (8) into the judge at once and an account has a few agents
+#                                 (Claude Code + subagents: 10 calls at once each); waiting costs a coroutine and a parsed body, not a thread
 _WAITING = {}
 _RUNNING = {}
 _RUNNING_LOCK = threading.Lock()
@@ -420,7 +421,7 @@ def refused_text(ctx, agent, tool, res):
             "asked again after that" % (t, tool, (x["recipient"] or "-")[:160], ": " + shown if shown else "", until))
 
 
-LATEST_CLIENT = "0.2.71"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
+LATEST_CLIENT = "0.2.72"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
 
 
 def notify_view(ctx, agent) -> dict:
@@ -513,7 +514,9 @@ def judge(ctx, agent, body: dict, capable=True) -> dict:
     nonce = body.get("nonce")
     if nonce is not None and (not isinstance(nonce, str) or not NONCE.fullmatch(nonce)):
         _bad("nonce: base64url, 22..86 characters")
-    act.check_quota(ctx, agent)                          # 0.2.17 (R9-02): the quota first, the classifier (the costly part) after
+    qnear = act.check_quota(ctx, agent)                  # 0.2.17 (R9-02): the quota first, the classifier (the costly part) after
+    from app import stats
+    stats.day7(ctx, agent["account_id"])                 # r0285: the hook still comes on day 7 (one dict lookup once counted / too early)
     r = classify_event(body)
     if r[0] == "need":
         _round(ctx, agent, "need")
@@ -550,7 +553,10 @@ def judge(ctx, agent, body: dict, capable=True) -> dict:
     pl_ = _LAST_PLACE.get()
     ptok_ = _sp.PLACE.set(pl_ if isinstance(pl_, dict) else None)
     try:
-        return _judge_parts(ctx, agent, body, parts, only, capable, created, sid, out)
+        res = _judge_parts(ctx, agent, body, parts, only, capable, created, sid, out)
+        if qnear and isinstance(res, dict):
+            res["quota"] = qnear                         # r0285: near a daily limit (outside the signed statement; decides nothing)
+        return res
     finally:
         _sp.PLACE.reset(ptok_)
 

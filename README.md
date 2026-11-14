@@ -110,8 +110,11 @@ To have only accounts you make yourself:
 5. On your machine: `export DEUS_WITNESS_URL=https://<your witness>` and `export DEUS_WITNESS_KEY=dwk_...`
    (or keep using the key file of `try`).
 
-A trial account you already claimed with a passkey is a normal account: it stays. An unclaimed trial account and everything
-in it is erased after `DW_TRIAL_TTL_DAYS` (7 by default). To drop a trial account for good: Devices page, "Delete account".
+An account in use is kept. An unclaimed trial account whose hook never called is erased after `DW_TRIAL_TTL_DAYS` (7 by
+default); while its hook calls, it stays until `DW_IDLE_DAYS` (90) after the last call. An account with a passkey is erased only
+after `DW_IDLE_DAYS` with no call from its hook and no sign-in, and only `DW_IDLE_WARN_DAYS` (14) after a push to its devices;
+teams and people who sign for a team never. `DW_IDLE_DAYS=0` turns this off. To drop an account yourself: Devices page,
+"Delete account".
 
 Limits per account: `DW_RATE_PER_MIN`, `DW_QUOTA_PER_DAY`, `DW_MAX_AGENTS` (`env.example`).
 
@@ -168,6 +171,43 @@ python3 cloud/selfhost/e2e_check.py --base http://localhost:8787
 # check an evidence pack (downloaded from the dashboard) on any machine, no network
 unzip deus-witness-evidence-*.zip -d pack && python3 pack/verify/verify_pack.py pack --offline
 ```
+
+### Continuous copy (profile `replica`)
+
+The archive above is a point in time. For a copy that is at most seconds behind, start the profile `replica`:
+`docker compose --profile replica up -d`. Two services: **Litestream** streams `db.sqlite` (its WAL) to `DW_REPLICA_DB_URL`
+within about a second; **replica** (`python -m app.replica`) copies every other file of `/data` (the ledgers) every 10 s. Both
+write to `/replica`: a named volume by default; put it on a **second disk** (`DW_REPLICA_DIR=/mnt/disk2/witness` in `.env`), or
+send the database to any S3-compatible store (`DW_REPLICA_DB_URL=s3://bucket/witness/db?endpoint=...&region=...`,
+`LITESTREAM_ACCESS_KEY_ID` / `LITESTREAM_SECRET_ACCESS_KEY`, `DW_REPLICA_NETWORK=bridge`) and copy `/replica/files` off the
+machine with your own tool. The secrets are never in it: keep them offline as above.
+
+Restore on a clean machine (the order matters: the database is taken **as of the last complete files pass**, never newer than
+the ledgers; a ledger ahead of the database is repaired by the server on start, the opposite is not):
+
+```sh
+docker compose stop witness litestream replica                     # if anything still runs
+# put the OFFLINE secrets back into the "secrets" volume first (as in the backup above); the "data" volume must be empty
+docker compose run --rm --no-deps -T replica-restore python -m app.replica restore --from /replica/files --data /data
+export DW_REPLICA_DB_URL=file:///replica/db                          # the same value as in .env
+docker compose run --rm --no-deps -T litestream ltx -level all -json "$DW_REPLICA_DB_URL" > ltx.json
+TX=$(docker compose run --rm --no-deps -T replica-restore python -m app.replica pick --from /replica/files < ltx.json)
+docker compose run --rm --no-deps litestream restore -txid "$TX" -o /data/db.sqlite "$DW_REPLICA_DB_URL"
+docker compose up -d witness && curl -fs http://localhost:8787/checkpoint     # 200, the same tree size as before the loss
+```
+
+What can be lost: the last files pass (≤ 10 s) plus Litestream's lag. If a batch of the public log was signed in that window,
+the restored witness signs a different leaf at that size: your status page (below) shows "alarm", and you must say so publicly.
+The steps were drilled with processes (crash, data dir lost, restore: same records, Merkle roots, key, `/checkpoint` 200, the
+chain goes on); the `docker compose` form above was not run in that drill.
+
+### Status page off this server
+
+`.github/workflows/status.yml` checks `/healthz` and `/checkpoint` from GitHub every ~10 minutes and publishes a status page with
+the history on GitHub Pages: it still answers when your server does not. In your copy of this repository: Settings -> Pages ->
+Source "GitHub Actions"; Settings -> Secrets and variables -> Actions -> Variables: `WITNESS_URL=https://<your witness>`. Then
+put the page's address into `.env` as `DW_STATUS_URL`: the proxy's "not answering" page and the dashboard show it, and your
+users can set `DEUS_WITNESS_STATUS_URL` for the hook's "cannot be reached" message.
 
 ## 6. Run the tests
 

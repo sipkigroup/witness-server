@@ -141,6 +141,15 @@ class TestUnits(unittest.TestCase):
         self.assertEqual(bad(lambda p: p.update(extra=1)), "POLICY_MALFORMED")
         self.assertEqual(q.validate_policy("x"), "POLICY_MALFORMED")
 
+    def test_revocation_rule_must_be_any_one(self):
+        """Law Z3: stopping is easy -- any ONE signer. A third-party verifier rejects a policy with any other revocation rule."""
+        import copy
+        for rule in ({"role": "owner", "k": 1}, {"role": "any", "k": 2}, {"role": "budget", "k": 1}):
+            p = copy.deepcopy(self.p2)
+            p["rules"]["revocation"] = rule
+            self.assertEqual(q.validate_policy(p), "POLICY_MALFORMED", rule)
+        self.assertIsNone(q.validate_policy(self.p2))
+
     def test_requirements_mandate(self):
         big = {"permissions": {"purchase": {"budget": 200000, "max_per_action": 1}}}
         self.assertEqual(q.requirements(self.p2, wa.TYP_MANDATE, big), [("budget", 2)])

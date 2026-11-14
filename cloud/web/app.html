@@ -2,11 +2,12 @@
 <html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Witness"><title>Dashboard - Deus Witness</title></head>
 <body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
 <main class="wrap">
+<p id="homeplate" class="notice err homeplate" role="alert" hidden></p>
 <h1>Dashboard <span id="pcount"></span></h1>
 <div id="msg" class="notice" hidden></div>
 
 <section class="card" id="pending-card" hidden>
- <h2>Waiting for your approval</h2>
+ <h2 id="pendhead">Waiting for your approval</h2>
  <div id="pending"></div>
 </section>
 
@@ -18,7 +19,7 @@
 
 <section class="card" id="push-card">
  <h2>Notifications on this device</h2>
- <p class="hint">Get a push when an agent waits for your approval. Tapping it opens the approval page; approving still needs Face ID, a fingerprint or a security key (your passkey). The notification says only that something is waiting: no agent, action or recipient. Delivery is not guaranteed and not instant; the <a href="approve.html">Approvals page</a> is the source of truth.</p>
+ <p class="hint">Get a push when an agent waits for your approval. Tapping it opens the approval page; approving still needs Face ID, a fingerprint or a security key (your passkey). The notification says only that something is waiting: no agent, action or recipient. Delivery is not guaranteed and not instant: everything that waits for you is always listed at the top of this Dashboard.</p>
  <div id="pushmsg" class="notice" hidden></div>
  <div id="push-ios" hidden>
   <h3>iPhone / iPad: add Witness to the Home Screen to get approval requests</h3>
@@ -39,7 +40,7 @@
 <section class="card">
  <h2>Activity</h2>
  <div class="row"><label for="ff" class="inline">Agent</label><select id="ff" class="inline"><option value="">all agents</option></select></div>
- <div class="tablewrap"><table class="stack"><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Target</th><th>Verdict</th><th>Reason</th></tr></thead><tbody id="feed"></tbody></table></div>
+ <div class="tablewrap"><table class="stack"><thead><tr><th>Time</th><th>Agent</th><th>Tool</th><th>Target</th><th>Outcome</th><th>Reason</th></tr></thead><tbody id="feed"></tbody></table></div>
  <p><button id="more" class="btn ghost" type="button" hidden>Show more</button></p>
 </section>
 
@@ -51,6 +52,7 @@
 <!-- r0278 (L3 13.11 with the owner, find 5): a one-agent Claude Code account sees how it decides, notifications and activity first;
      the rest is folded here (open by itself for any other account: app.js) -->
 <details id="advanced" class="advanced"><summary>Advanced: more channels, agents, budget, tool map, closed data, evidence</summary>
+<p class="row"><a class="btn ghost" href="team.html">Invite a person</a> <span class="hint">Add someone who can approve with you (opens the team page).</span></p>
 <section class="card" id="chan-card">
  <h2>Other notification channels</h2>
  <p class="hint">For agents that work while you are away: get a message in Telegram, Slack or by e-mail when an agent waits for your approval. The message has only a link to the request (no agent, action or recipient); approving is still done on the approval page with your passkey. The token, webhook or address is stored encrypted and never shown again.</p>
@@ -107,4 +109,5 @@
 <script type="module" src="js/boot.js"></script>
 <script type="module" src="js/app.js"></script>
 <script type="module" src="js/push.js"></script>
+<script type="module" src="js/homeplate.js"></script>
 </body></html>

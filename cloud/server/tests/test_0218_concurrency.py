@@ -53,6 +53,16 @@ def _write(p, i):
     return {"v": 1, "event": {"tool_name": "Write", "tool_input": {"file_path": p + "/f%d.txt" % i, "content": "x"}, "cwd": p}, "facts": f, "part": None}
 
 
+def _write_full(p, i):
+    """r0285: a Write with every fact the classifier asks for already in it (classify_event is pure: no quota, no round)."""
+    b = _write(p, i)
+    while True:
+        r = hj.classify_event(b)
+        if r[0] != "need":
+            return b
+        b["facts"]["fs"]["realpath"].update({x: x for x in r[1].get("realpath", [])})
+
+
 def _need(p, i):
     f = {"home": "/home/u", "proc_cwd": p, "env": {"CLAUDE_PROJECT_DIR": p}, "fs": {"realpath": {p: p, "/home/u": "/home/u"}}, "exec": "off"}
     return {"v": 1, "event": {"tool_name": "Bash", "tool_input": {"command": "cat a%d > /tmp/zz%d" % (i, i)}, "cwd": p}, "facts": f, "part": None}
@@ -93,16 +103,31 @@ def test_parallel_judges_never_spend_more_than_the_quota(client, hook_agent, tmp
         monkeypatch.setattr(ctx.cfg, "quota_per_day", q)
     else:
         monkeypatch.setattr(act, "QUOTA_PER_AGENT_DAY", q)
-    out = _race(3 * N, lambda i: hj.judge(ctx, agent, (_need if i % 2 else _write)(p, i)))       # rounds (`need`) and actions, mixed
+    bodies = [(_need if i % 2 else _write_full)(p, i) for i in range(3 * N)]       # r0285: even ones end in an action at once
+    out = _race(3 * N, lambda i: hj.judge(ctx, agent, bodies[i]))       # rounds (`need`) and actions, mixed
     bad = [x for x in out if isinstance(x, Exception) and not (isinstance(x, Err) and x.code == "QUOTA")]
     assert not bad, bad
     ok = [x for x in out if not isinstance(x, Exception)]
     t0 = int(time.time())
     n_act = ctx.db.one("SELECT COUNT(*) AS n FROM actions WHERE agent_id=? AND created_at>?", (agent["id"], t0 - 86400))["n"]
     n_rnd = ctx.db.one("SELECT COUNT(*) AS n FROM hook_rounds WHERE agent_id=? AND t>?", (agent["id"], t0 - 86400))["n"]      # the buffer is written first
-    assert n_act + n_rnd <= q, (n_act, n_rnd)
-    assert n_act + n_rnd == len(ok) == q                       # every answered judge took exactly one unit; the rest got 429 QUOTA
-    assert sum(1 for x in out if isinstance(x, Err)) == 3 * N - q
+    # r0285: only actions spend the quota (rounds share the reads' ceiling): never more than q actions, every answer is an action or a round
+    assert n_act == q, (n_act, n_rnd)
+    assert n_act + n_rnd == len(ok)
+    assert sum(1 for x in out if isinstance(x, Err)) == 3 * N - len(ok)
+
+
+def test_parallel_rounds_never_pass_the_reads_ceiling(client, hook_agent, tmp_path, monkeypatch):
+    """r0285: the hook's `need` rounds left the action quota; under their own ceiling (cfg.pass_per_agent_day) they stay atomic."""
+    ctx = client.app.state.ctx
+    agent, _ = hook_agent
+    p = os.path.realpath(str(tmp_path))
+    q = 9
+    monkeypatch.setattr(ctx.cfg, "pass_per_agent_day", q)
+    out = _race(3 * N, lambda i: hj.judge(ctx, agent, _need(p, i)))
+    assert not [x for x in out if isinstance(x, Exception) and not (isinstance(x, Err) and x.code == "QUOTA")]
+    n_rnd = ctx.db.one("SELECT COUNT(*) AS n FROM hook_rounds WHERE agent_id=?", (agent["id"],))["n"]
+    assert n_rnd == q == sum(1 for x in out if not isinstance(x, Exception))
 
 
 def test_waiting_phone_under_concurrent_cancels_and_level_checks(app):
@@ -220,11 +245,12 @@ def test_rounds_are_counted_before_they_are_written_and_kept_when_written(client
     for i in range(5):
         assert "need" in hj.judge(ctx, agent, _need(p, i))
     assert len(ctx.db.rounds) == 5
-    used, mine = act.quota_used(ctx, agent, int(time.time()))
+    used, mine = act.rounds_used(ctx, agent, int(time.time()))      # r0285: rounds_used (they left quota_used)
     assert used == mine == 5                                   # counted from the buffer
+    assert act.quota_used(ctx, agent, int(time.time())) == (0, 0)
     assert ctx.db.one("SELECT COUNT(*) AS n FROM hook_rounds WHERE agent_id=?", (agent["id"],))["n"] == 5     # a read of the table writes it first
     assert len(ctx.db.rounds) == 0
-    assert act.quota_used(ctx, agent, int(time.time())) == (5, 5)
+    assert act.rounds_used(ctx, agent, int(time.time())) == (5, 5)
 
 
 def test_overload_is_shed_with_503_and_retry_after(cfg):
@@ -269,7 +295,7 @@ def test_one_key_cannot_fill_the_server(cfg):
         await asyncio.sleep(0.2)
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})
-    s = Shed(slow, limit=10, per_key=3)
+    s = Shed(slow, limit=10, per_key=3, per_key_queue=0)      # r0285: without the per-key queue (as before it); the queue: test_1311_r0285
     got = []
 
     async def call(key):

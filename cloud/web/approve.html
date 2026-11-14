@@ -40,7 +40,7 @@
  <dl class="kv simple" id="qw_cmd"><dt id="what_dt">Command</dt><dd id="what_dd"><pre id="what" class="what"></pre><div id="what_parts" hidden></div></dd></dl>
  <button id="tech_btn" class="btn ghost detbtn" type="button" aria-expanded="false" aria-controls="qw_tech" hidden>More technical &#9656;</button>
  <div id="qw_tech" class="qwtech" hidden>
- <p id="boxlead" class="lead">Your rules do not clearly allow this, so you decide.</p>
+ <p id="boxlead" class="lead" hidden></p>
  <div id="must">
   <p id="dangerline" class="notice err" role="alert" hidden></p>
   <p id="advmark" class="notice warn" hidden></p>
@@ -49,7 +49,7 @@
   <div id="pvblock" hidden><p class="hint" id="pvlabel">What it sends:</p><pre id="pvtext"></pre></div>
  </div>
  <p id="mustend" class="mustend" aria-hidden="true"></p>
- <pre id="qw_det"></pre>
+ <div id="qw_det" class="qwdet"></div>
  <div id="qw_parts"></div>
  <p id="allow_trust" hidden></p>
  <details id="more_opts" open><summary id="more_sum" hidden>More options: a longer time, or this agent's later runs</summary>
@@ -80,8 +80,9 @@
  </section>
  </details>
  <p class="hint" id="later_why" hidden></p>
- <dl class="kv simple" id="qw_simple"><dt>Agent</dt><dd id="sx_who"></dd><dt>Target</dt><dd id="sx_where"></dd><dt>Action</dt><dd id="sx_act"></dd><dt>Rollback</dt><dd id="sx_undo"></dd></dl>
- <details id="more" class="more"><summary>Technical details</summary>
+ <dl class="kv simple" id="qw_simple"><dt>Agent</dt><dd id="sx_who"></dd></dl>
+ <details id="more" class="more"><summary>Technical details: full paths, hashes, the exact bytes</summary>
+ <div id="more_paths"></div>
  <p id="level" class="notice" hidden></p>
  <h3 class="small">The action</h3>
  <dl class="kv" id="act"></dl>
@@ -104,7 +105,7 @@
  </details>
  </div>
  </div>
- <div class="row stickybar" id="decide"><p id="stale" class="barnote hint stale" hidden></p><p id="left" class="barnote hint"></p><p id="gate" class="barnote gate" hidden>The command is long: read all of it in Details to unlock Allow.</p><button id="yes" class="btn big" type="button">Allow once</button><button id="allow24" class="btn big later" type="button" hidden><span aria-hidden="true">&#8635;</span> Allow this from now on</button><button id="no" class="btn danger big" type="button">Deny</button><p id="later_note" class="barnote hint" hidden></p></div>
+ <div class="row stickybar" id="decide"><p id="stale" class="barnote hint stale" hidden></p><p id="left" class="barnote hint"></p><p id="gate" class="barnote gate" hidden>The command is long: read all of it in Details to unlock Allow.</p><button id="yes" class="btn big" type="button"><span id="yes_t">Allow once</span><small id="yes_sub" class="btnsub" hidden>if it asks again</small></button><button id="allow24" class="btn big later" type="button" hidden><span>Allow this from now on</span><small id="later_sub" class="btnsub" hidden></small></button><button id="no" class="btn danger big" type="button">Deny</button><p id="later_note" class="barnote hint" hidden></p></div>
  <section class="card" id="later_confirm" hidden aria-live="polite"><h2>Allow this from now on?</h2>
   <p>You are about to allow exactly this, with your passkey:</p><ul id="lc_rows"></ul>
   <p><strong>Agent:</strong> <span id="lc_agent"></span> &middot; <strong>until</strong> <span id="lc_until"></span></p>

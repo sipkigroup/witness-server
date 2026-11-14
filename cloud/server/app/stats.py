@@ -25,8 +25,12 @@ from app.context import Err
 from app.log import log
 
 STEPS = ("demo_visit", "registration", "agent", "mandate", "first_call", "first_approval",
-         "trial", "hook_touch", "hook_touch_day2")      # 0.2.38 (app/trial.py): a trial account; the first passkey touch on a call of the Claude
+         "trial", "hook_touch", "hook_touch_day2",       # 0.2.38 (app/trial.py): a trial account; the first passkey touch on a call of the Claude
                                                          # Code hook; another such touch on a later UTC day (internal / demo / own accounts never count)
+         "day7", "day7_proba")                           # r0285: the hook still calls the witness DAY7_AFTER UTC days after the account was made
+                                                         # (proba accounts apart, PROBA_RE); internal / demo / own accounts never count
+DAY7_AFTER = 6                   # r0285: created on day 1 -> a judge request on day 7 or later
+PROBA_RE = re.compile(r"^proba[-_ ]", re.I)     # r0285: accounts of the trial on acquaintances (display name "proba-<anything>"), a cohort apart
 ACCOUNT_STEPS = STEPS[1:]
 OWN_RE = re.compile(r"^(test|demo|smoke|e2e|probe|owner|deus|sipki|tmp)", re.I)     # same rule as deploy/voronka.py EXCL
 BOT_RE = re.compile(r"bot|crawl|spider|slurp|preview|monitor|curl|wget|python|httpx|go-http|headless|scan", re.I)
@@ -109,6 +113,52 @@ def first(ctx, account_id, step, t=None):
         return False
 
 
+_day7_from = {}                  # r0285: account -> the UTC day number from which a call counts as day7 (None: never counted)
+
+
+def is_proba(ctx, account_id):
+    """r0285: an account of the trial on acquaintances: its display name (or the person's, for a solo account) starts with "proba-"."""
+    for q in ("SELECT display_name AS n FROM accounts WHERE id=?", "SELECT display_name AS n FROM users WHERE id=?"):
+        r = ctx.db.one(q, (account_id,))
+        if r is not None and PROBA_RE.match((r["n"] or "").strip()):
+            return True
+    return False
+
+
+def day7(ctx, account_id, t=None):
+    """r0285 (PARALLEL-I-KVOTA-1311 p.3): the Claude Code hook of this account asked the witness (POST /v1/hook/judge) on the 7th UTC day after
+    the account was made or later: counted ONCE per account, as `day7`, or `day7_proba` for a proba account. Internal, demo and own accounts
+    never count. Only a number per day (funnel_daily) and the account's own row in funnel_seen; nothing about the person. Never raises."""
+    try:
+        if not isinstance(account_id, str) or not account_id:
+            return False
+        t = time.time() if t is None else t
+        if account_id not in _day7_from:
+            from app import trial
+            r = ctx.db.one("SELECT created_at FROM accounts WHERE id=?", (account_id,))
+            done = ctx.db.one("SELECT 1 AS k FROM funnel_seen WHERE account_id=? AND step IN ('day7','day7_proba')", (account_id,))
+            if len(_day7_from) > 100000:
+                _day7_from.clear()
+            _day7_from[account_id] = None if (r is None or done is not None or trial.excluded(ctx, account_id)) else \
+                int(r["created_at"]) // 86400 + DAY7_AFTER
+        start = _day7_from[account_id]
+        if start is None or int(t) // 86400 < start:
+            return False
+        _day7_from[account_id] = None
+        return first(ctx, account_id, "day7_proba" if is_proba(ctx, account_id) else "day7", t)
+    except Exception as e:  # noqa - counting never breaks a call
+        log("ERROR", "day7 count failed: " + type(e).__name__)
+        return False
+
+
+def kept(ctx, proba):
+    """r0285: accounts (outside ones, or the proba cohort) that passed day7 and also hook_touch (a passkey decision on a hook call): the
+    "kept the plugin on day 7 and got a real question" of the trial's thresholds. A count, no ids."""
+    step = "day7_proba" if proba else "day7"
+    return ctx.db.one("SELECT COUNT(*) AS n FROM funnel_seen a JOIN funnel_seen b ON b.account_id=a.account_id AND b.step='hook_touch' "
+                      "WHERE a.step=?", (step,))["n"]
+
+
 def uncount(ctx, step, own, t=None):
     """0.2.39: take back one count of `step` on the day of t (a trial account replaced by the same person's next `deus-witness try`; an
     account marked internal afterwards, deploy/mark-internal). hook_touch* of an own account were never in n_all."""
@@ -127,6 +177,7 @@ def forget(account_id):
     with _seen_lock:
         for s in ACCOUNT_STEPS:
             _seen.discard((account_id, s))
+    _day7_from.pop(account_id, None)
 
 
 def report(ctx, days=30, t=None):
@@ -147,10 +198,13 @@ def report(ctx, days=30, t=None):
              "confirmed_at": r["confirmed_at"], "flood": bool(r["flood"])}
             for r in ctx.db.q("SELECT id, t, email, text, confirmed_at, flood FROM team_requests WHERE t>=? ORDER BY id", (int(t) - days * 86400,))]
     return {"since": since, "days": [{"day": d, "steps": rows[d]} for d in sorted(rows)], "total": tot, "steps": list(STEPS),
+            "kept_day7_with_touch": {"outside": kept(ctx, False), "proba": kept(ctx, True)},      # r0285: all time, not only `days`
             "team_requests": team, "team_confirmed_n": sum(1 for x in team if x["confirmed"]),
             "note": "demo_visit = page loads of /demo/ (robots by user agent left out), not people; a Team request counts only once the "
                     "owner confirmed it (POST /internal/team-requests/{id}/confirm); hook_touch / hook_touch_day2 = a passkey decision on a "
-                    "call of the Claude Code hook, first ever / again on a later day, internal, demo and own accounts left out (not in n_all)"}
+                    "call of the Claude Code hook, first ever / again on a later day, internal, demo and own accounts left out (not in n_all); day7 = the hook "
+                    "still asked the witness on the 7th UTC day after the account was made, day7_proba = the same for accounts named proba-..., "
+                    "kept_day7_with_touch = accounts with day7 and hook_touch"}
 
 
 def confirm_team(ctx, rid, real=True, t=None):

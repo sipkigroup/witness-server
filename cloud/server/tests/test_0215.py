@@ -382,7 +382,8 @@ def _policy(app, uid):
 def test_delegation_moves_into_the_signed_policy_and_then_changes_only_by_a_version(app, tmp_path):
     owner, bob, carol, ag, hdr = _team_agent(app)
     r0 = _defer(owner, hdr, "before")
-    assert owner.approve(r0["rid"]).json()["verdict"] == "allow"                # an approval before any delegation (pack: trust line)
+    assert owner.approve(r0["rid"]).json()["error"] == "SELF_APPROVAL"          # r0284: the creator of the agent is its operator by default
+    assert bob.approve(r0["rid"]).json()["verdict"] == "allow"                  # an approval before any delegation (pack: trust line)
     owner.stepup()
     v = owner.c.put("/api/agents/%s/delegation" % ag["id"], json={"operator_user_id": carol.uid, "approvers": [bob.uid]}, headers=H).json()
     assert v["in_signed_policy"] is False and v["current"]["operator_user_id"] == carol.uid     # period before the transfer: at once
@@ -405,6 +406,7 @@ def test_delegation_moves_into_the_signed_policy_and_then_changes_only_by_a_vers
     assert bob.approve(r["rid"]).json()["verdict"] == "allow"
     # an operator's wq built by hand (the server cache wiped) is refused by the contract itself
     ctx_of(app).db.x("UPDATE agent_delegations SET ended_at=1 WHERE agent_id=?", (ag["id"],))
+    ctx_of(app).db.x("UPDATE agents SET created_by=NULL WHERE id=?", (ag["id"],))       # r0284: nor the creator rule: only the contract is under test
     r2 = _defer(owner, hdr, "hand")
     gg = owner.c.get("/api/approvals/" + r2["rid"]).json()
     pay = approval_payload(gg["mandate"], gg["action"], r2["rid"], True)

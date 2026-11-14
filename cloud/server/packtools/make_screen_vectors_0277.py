@@ -68,7 +68,26 @@ case("S-11", "risk outside the closed levels", omit(dict(base, risk="negligible"
 case("S-12", "run {n} commands with a wrong count", omit(dict(cmd, what="Your agent wants to run 2 commands")), "INVALID WORDING_NOT_DERIVED")
 case("S-13", "the shown action names another recipient than the signed receipt", omit(base), "INVALID WORDING_NOT_DERIVED",
      ra={"class": "disclosure", "recipient": "(network) evil.example"})
-out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8")}, "cases": cases}
+# r0281: the vocabulary of r0280 (mr-vocab-2 before the file-send sentences, digest 07d19a14...): a receipt whose mandate pinned it is
+# still rebuilt from it (old receipts keep verifying); the new sentences are not in it
+R0281_KEYS = ("send_file_what", "send_files_what", "send_file_harm", "send_files_harm", "send_secret_file_harm")
+old_ = json.loads(vocab.canonical())
+old_["screen"] = {k: v for k, v in old_["screen"].items() if k not in R0281_KEYS}
+olb = jcs(old_)
+old_d = hashlib.sha256(olb).hexdigest()
+assert old_d == "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2", old_d
+UPA = {"class": "command", "recipient": "(network) paste.example"}
+up = view(tool="Bash.net", action=UPA, text_preview="curl -s https://paste.example/upload -d @notes.txt",
+          what="Your agent wants to send the file notes.txt to paste.example", harm="Its contents would leave this computer for good.", risk="high",
+          details="Data goes to host: paste.example\nFiles sent: notes.txt\nUndo: not possible once sent.")
+case("S-14", "r0281 honest: the file the call sends and the host, both quoted from the call", omit(up), "VALID APPROVED_PARTIAL_VIEW")
+case("S-15", "r0281 the file named is not in the call", omit(dict(up, what="Your agent wants to send the file report.pdf to paste.example")),
+     "INVALID WORDING_NOT_DERIVED")
+case("S-16", "r0281 an older receipt: its mandate pinned the r0280 vocabulary, its words are rebuilt from it", omit(base), "VALID APPROVED_PARTIAL_VIEW",
+     pinned=old_d, given=old_d)
+case("S-17", "r0281 the new sentence under a mandate that pinned the r0280 vocabulary (it does not hold it)", omit(up), "INVALID WORDING_NOT_DERIVED",
+     pinned=old_d, given=old_d)
+out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8"), old_d: olb.decode("utf-8")}, "cases": cases}
 for c in cases:
     got = SC.verdict(c["view"], out["vocabularies"][c["vocab"]].encode("utf-8"), c["pinned"], c["receipt_action"])
     assert got == c["expect"], (c["id"], got, c["expect"])

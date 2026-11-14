@@ -240,11 +240,13 @@ def _approvers(r, now=None):
     return set(users)
 
 
-def check_approval(ctx, acc_id, agent_id, kids, approved):
+def check_approval(ctx, acc_id, agent_id, kids, approved, action=None):
     """Before an approval of an action of `agent_id` is applied. -> (signer user ids, operator or None). Err 409 SELF_APPROVAL / NOT_DELEGATE."""
     signers = [user_of_kid(ctx, k) for k in kids]
     r = current(ctx, agent_id) if org.current_policy(ctx, acc_id) is not None else None
     if r is None:
+        if approved and _creator_self_approves(ctx, acc_id, agent_id, signers, action):
+            raise Err(409, "SELF_APPROVAL", "you made this agent: in a team another member confirms its actions")
         return signers, None
     if not approved:
         return signers, r["operator_user_id"]          # a refusal is accepted from anyone who may sign, the operator too
@@ -255,6 +257,28 @@ def check_approval(ctx, acc_id, agent_id, kids, approved):
         raise Err(409, "NOT_DELEGATE", "this agent's actions are confirmed only by the approvers the owner named" +
                   (" (their term ran out: the owner must renew it)" if not ap else ""))
     return signers, r["operator_user_id"]
+
+
+def _creator_self_approves(ctx, acc_id, agent_id, signers, action=None):
+    """r0284 (law Z2): with no delegation the agent's operator is the member who made it (agents.created_by). True when that member is among
+    the signers, the approval rule for this action asks one signature (k = 1 everywhere: a quorum needs the others anyway), AND another active signing member of the policy exists (a one-person team is not locked). Agents made before r0284 have no
+    creator: unchanged."""
+    a = ctx.db.one("SELECT created_by FROM agents WHERE id=?", (agent_id,))
+    mk = a["created_by"] if a is not None and "created_by" in a.keys() else None
+    cur = org.current_policy(ctx, acc_id)
+    if not mk or mk not in signers or cur is None:
+        return False
+    reqs = wq.requirements(cur[0], wa.TYP_APPROVAL, None, {"class": (action or {}).get("class"), "amount": (action or {}).get("amount")}) or [("any", 1)]
+    if any(k >= 2 for _, k in reqs):
+        return False            # a quorum: other members must sign anyway, the creator's signature alone decides nothing
+    for m in cur[0]["members"]:
+        uid = user_of_kid(ctx, m["kid"])
+        if uid is None or uid == mk or not set(m["roles"]) & set(org.SIGNERS):
+            continue
+        mm = org.member(ctx, acc_id, uid)
+        if mm is not None and mm["status"] == "active" and not org.revoked_kid(ctx, m["kid"]):
+            return True
+    return False
 
 
 def _candidates(ctx, acc_id, r, pol, need_phone):

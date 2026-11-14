@@ -23,6 +23,13 @@
 <li>In the interface (profile <code>smb</code>) it is shown under "Details -&gt; internal guarantee": it is a free layer that protects the evidence</li>
 </ul>
 <p>  against our own later edits, not a headline feature for a small business.</p>
+<h2>1a. Long-term (post-quantum) check (r0286)</h2>
+<p><strong>Post-quantum (honest status):</strong> signatures are classical today (Ed25519 witness, ES256 passkeys); every 30 minutes the log is hash-anchored to Bitcoin via OpenTimestamps, so a receipt anchored in a Bitcoin block before a large quantum computer exists cannot be back-dated or forged later -- <em>when checked with</em> <code>--pq-cutoff=YYYY-MM-DD</code> (only entries under a Bitcoin block before that day count; a calendar's <code>pending</code> promise and RFC 3161 tokens do not; otherwise <code>RESULT: NOT PROVEN</code>, exit 3); traffic to the hosted witness already uses hybrid post-quantum TLS (X25519MLKEM768), the self-host kit's Caddy &gt;= 2.10 too; a post-quantum server signature (ML-DSA) is in progress.</p>
+<ul>
+<li><code>verify_pack.py &lt;pack&gt; --pq-cutoff=2030-01-01 [--pq-headers=&lt;json {"&lt;height&gt;": "&lt;80-byte header hex&gt;"}&gt;]</code>: per batch <code>pq anchor &lt;batch&gt;: PROVEN before &lt;date&gt; (bitcoin block H, &lt;time&gt;; ...)</code> or <code>NOT PROVEN (&lt;why&gt;)</code>, then <code>pq: N of M receipt entries ...</code>.</li>
+<li>Block date: from headers you give (Merkle root and proof of work checked locally, &gt;= 2^74 hashes; compare the printed block hash with your own node) or online (both explorers must confirm the block and agree on its time). Offline without headers: NOT PROVEN.</li>
+<li>What is proven of a receipt is its ledger entry (action, verdict, mandate) under the hash chain; the <code>.aar.cose</code> signature itself is classical. A header's time can run ~2 h ahead: a block counts if its time + 2 h is before the cutoff.</li>
+</ul>
 <h2>2. RFC 3161 timestamps (0.2, second anchor)</h2>
 <ul>
 <li>What: the same batch root is sent as a timestamp request to each Time-Stamping Authority that is enabled (see section 3); the signed</li>
@@ -81,10 +88,10 @@
 <p>  qualified); <strong>DigiCert</strong> is off (<code>terms: "unconfirmed"</code>) until it confirms in writing. <strong>Sectigo, Apple, GlobalSign, Entrust</strong> are</p>
 <p>  excluded in the server (by name and by host): their free endpoints are for code signing only.</p>
 <ul>
-<li><strong>In fact no live TSA is asked yet</strong>: the FreeTSA root <code>ca/freetsa.pem</code> is not in the repository (the build sessions had no route to</li>
+<li>r0269 (13.11.2026): the FreeTSA root <code>ca/freetsa.pem</code> is in the repository (file SHA-256 2151b611... checked on freetsa.org and on</li>
 </ul>
-<p>  freetsa.org), so the anchor job writes <code>tsa=0</code> and a WARN line. A person with a browser has to add the root (fingerprint checked over</p>
-<p>  two channels), check the provider's terms and make one live stamp.</p>
+<p>  the web.archive.org copy), its terms are quoted first-hand in <code>lib/tsa/USLOVIYA.md</code> (commercial use allowed, 1 request/s per IP,</p>
+<p>  no SLA), one live stamp verified offline. It is asked once a day for the log checkpoint (section 3a) and, with <code>DW_TSA=on</code>, per batch.</p>
 <ul>
 <li>Even then there is ONE free TSA, not two: there is no promise of two free independent TSAs. A</li>
 </ul>
@@ -94,6 +101,37 @@
 </ul>
 <p>  (19.10.2026) printed <code>tsa 20261019T020441Z-b2995c14: OK (tsa-a, tsa-b)</code> and, for the Bitcoin anchor with <code>DW_ANCHOR=off</code>,</p>
 <p>  <code>anchor 20261019T020441Z-b2995c14: pending (inclusion in batch root proven; not stamped)</code>.</p>
+<h2>3a. Public log of batches and its daily stamp (r0269)</h2>
+<ul>
+<li>Every batch (section 1) is also appended, in order, to ONE public append-only log (leaf = <code>deus-witness/batch/v1</code>, batch id, batch</li>
+</ul>
+<p>  root; no account ids). <code>GET /checkpoint</code> serves its C2SP tlog-checkpoint (signed note, Ed25519, key name = origin</p>
+<p>  <code>&lt;DW_ISS host&gt;/batches</code>, the witness key; <code>GET /tlog/vkey</code>). Proofs: <code>/tlog/proof/inclusion?index=&amp;size=</code>,</p>
+<p>  <code>/tlog/proof/consistency?old=&amp;new=</code> (RFC 9162), <code>/tlog/leaf?batch=</code>, old checkpoints at <code>/tlog/checkpoint/&lt;size&gt;</code>.</p>
+<ul>
+<li>Why: with per-account batches alone the witness could show two people two batch histories (split view, RFC 9162 11.3). Anyone can</li>
+</ul>
+<p>  now keep the checkpoint they saw: the same size with another root, or a larger size without a consistency proof, proves a fork</p>
+<p>  (<code>verify_pack.py --checkpoint=&lt;note&gt; [--consistency=&lt;json&gt;]</code>, <code>verify/tlogcheck.py fork|consistency</code>).</p>
+<ul>
+<li>Second witness: the checkpoint is ready for c2sp.org/tlog-witness (<code>add-checkpoint</code> = old size + consistency proof + this note);</li>
+</ul>
+<p>  a returned type-0x04 cosignature is checked and stored with <code>tlog.store_cosigned()</code>. No second witness runs yet.</p>
+<ul>
+<li>Daily stamp: once a day (<code>DW_TLOG_STAMP_EVERY</code>, default 86400 s) and on request (<code>python -m app.jobs tlog-stamp</code>) SHA-256 of the</li>
+</ul>
+<p>  checkpoint TEXT is stamped by OpenTimestamps (<code>DW_ANCHOR=on</code>) and by every allowed TSA (<code>DW_TLOG_TSA=on</code> by default: FreeTSA,</p>
+<p>  1 request a day; plus <code>DW_TSA_URL</code>). A service that is down never blocks an agent: the stamp row stays <code>queued</code>/<code>partial</code> and is</p>
+<p>  retried (30 min, doubling, at most 6 h); a later stamped checkpoint supersedes older queued ones (it covers them by consistency).</p>
+<ul>
+<li>Receipts carry an unsigned member <code>anchor</code>: <code>{"status": "queued"}</code> until a stamped log checkpoint covers their batch, then</li>
+</ul>
+<p>  <code>{"status": "stamped", "batch", "log_index", "stamp": {"size", "tsa", "ots"}}</code>. The window "action exists, time not yet proven"</p>
+<p>  is up to ~24 h + 30 min by design; until then the time is the witness's clock only.</p>
+<ul>
+<li>In the pack: <code>tlog/checkpoint.note</code>, <code>tlog/vkey</code>, <code>tlog/inclusion/&lt;batch&gt;.json</code>, <code>tlog/stamps/&lt;size&gt;.note|.ots|.tsr.&lt;tsa&gt;</code>;</li>
+</ul>
+<p>  checker lines <code>tlog ...</code>.</p>
 <h2>4. Which anchor answers which question</h2>
 <table><tr><th>question</th><th>ledger + witness signature</th><th>Bitcoin (OTS)</th><th>RFC 3161 (each enabled TSA)</th></tr><tr><td>was entry N changed or removed later?</td><td>yes (hash chain, checkpoints)</td><td>yes, against our own later edits too</td><td>yes, for the batch time</td></tr><tr><td>did the root exist by time T?</td><td>no (the witness's own clock)</td><td>yes, block time, trustless</td><td>yes, <code>genTime</code>, trusting the TSA</td></tr><tr><td>how soon is it checkable?</td><td>at once</td><td>hours (<code>pending</code> first)</td><td>at once</td></tr><tr><td>who must be trusted?</td><td>the witness</td><td>nobody (Bitcoin consensus)</td><td>each TSA</td></tr><tr><td>what the action was, whether it was good</td><td>receipt + mandate + approvals</td><td>no</td><td>no</td></tr><tr><td>calls that bypassed the witness</td><td>no</td><td>no</td><td>no</td></tr></table>
 </main></body></html>

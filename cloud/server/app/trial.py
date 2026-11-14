@@ -27,6 +27,15 @@ IP is not stored); DW_TRIAL_QUOTA actions a day per trial account (instead of th
 touch; the account and everything in it are erased DW_TRIAL_TTL_DAYS after it was made unless the person keeps it (expire_due, hourly; an
 expired key is refused at once).
 
+r0288 (owner 13.11, RESHENIYA p.2): an account that is USED is not erased by time. "Used" = its agents called the witness (any /v1 call
+with the agent key: the hook, the MCP proxy) or a person signed in / signed with a passkey, within DW_IDLE_DAYS (90).
+  - a quick start account without a passkey: each call moves its end to (the call + DW_IDLE_DAYS); one the hook never called still ends
+    DW_TRIAL_TTL_DAYS after it was made (nobody can be warned: it has no passkey, no push, no page);
+  - an account with a passkey (solo, not a team): DW_IDLE_WARN_DAYS before the end a push goes to its devices (sw.js text "i"); it is
+    erased (account_delete.erase_unasked: the journal becomes the hash skeleton) only when the idle time is over AND that push is at
+    least DW_IDLE_WARN_DAYS old AND nothing happened since; a team, a person who signs for another team and the demo account never.
+  Days count from IDLE_FROM at the earliest (the rule's start), so no account made before the rule loses a day of notice.
+
 Counting (the 04.11 criterion, app/stats.py): `trial` once per trial account; `hook_touch` = the first passkey decision of an account on a
 call that came from the Claude Code hook (/v1/hook/judge: actions.via = 'hook'), `hook_touch_day2` = another such touch on a later UTC day.
 Accounts marked internal (made from DW_STATS_INTERNAL_NETS, or by our own scripts), the demo account and accounts with our names never count."""
@@ -44,9 +53,15 @@ from app import refusals
 from app.log import log
 
 TRIAL_NAME = "Trial"
+IDLE_FROM = 1794528000             # r0288: 2026-11-13 00:00 UTC, the day the idle rule began (no account is idle from before it)
+_SEEN = {}                         # r0288: account -> last use not yet written (flush_seen, hourly with the sweep)
 PENDING_MAX = 20
 REASON = "ESCALATE_TRIAL_CLAIM"
 FORM_MAX = 16 * 1024
+# r0288 (owner 13.11): the one wording of "free" (privacy.html, terms.html, trial.html, index.html, docs say the same; a test checks)
+FREE_TEXT = "Free for one person. If this ever changes, existing accounts stay free and we announce it in advance."
+KEEP_TEXT = ("A quick start account without a passkey is erased after %d days if your hook never calls; an account in use is kept: it is "
+             "erased only after %d days with no call from your hook and no sign-in, and with a passkey you get a push 14 days before.")
 SENT = ["the tool name and its full input of every call the hook sees (shell commands, file paths, URLs; the text written by Write/Edit is "
         "kept only as a short masked preview while a call waits)", "the working directory and the project directory",
         "answers to the witness' questions about paths of that call (does it exist, where does a link point) and SHA-256 fingerprints of the "
@@ -75,7 +90,65 @@ def info(ctx, account_id):
 def expired(ctx, account_id, t=None):
     r = info(ctx, account_id)
     # 04.11 Open Core: an account with a passkey is the person's own and never expires; only a quick start account nobody claimed does
-    return r is not None and r["trial_claimed_at"] is None and r["trial_until"] <= (now() if t is None else t)
+    if r is None or r["trial_claimed_at"] is not None or r["trial_until"] > (now() if t is None else t):
+        return False
+    return not (idle_days(ctx) and account_id in _SEEN)       # r0288: used within the last hour (not written yet): not expired
+
+
+def idle_days(ctx):
+    return int(getattr(ctx.cfg, "idle_days", 90) or 0)
+
+
+def seen(ctx, account_id, t=None):
+    """r0288: an agent key of this account called the witness (or its owner opened the dashboard). Kept IN MEMORY only (no write on the
+    request path, which runs in the event loop); flush_seen() writes them, hourly (expire_due) and before every sweep. Never raises."""
+    t = now() if t is None else t
+    if _SEEN.get(account_id, 0) < t:
+        if len(_SEEN) > 200000:
+            _SEEN.clear()
+        _SEEN[account_id] = t
+    return True
+
+
+def flush_seen(ctx):
+    """Write the uses kept by seen(): last_hook_at, and the end of a quick start account without a passkey moves to (use + DW_IDLE_DAYS)."""
+    if not _SEEN:
+        return 0
+    items = list(_SEEN.items())
+    d = idle_days(ctx)
+    try:
+        with ctx.db.tx() as db:
+            for aid, t in items:
+                db.x("UPDATE accounts SET last_hook_at=MAX(COALESCE(last_hook_at,0),?), trial_until=CASE WHEN trial_until IS NOT NULL AND "
+                     "trial_claimed_at IS NULL AND ?>0 AND trial_until<? THEN ? ELSE trial_until END WHERE id=? AND erased_at IS NULL",
+                     (t, d, t + d * 86400, t + d * 86400, aid))
+    except Exception as e:  # noqa - kept for the next flush
+        log("ERROR", "uses not written: " + type(e).__name__)
+        return 0
+    for aid, t in items:
+        if _SEEN.get(aid) == t:
+            _SEEN.pop(aid, None)
+    return len(items)
+
+
+def last_use(ctx, account_id):
+    """-> when the account was last used (r0288): its agents' last call, a passkey of its owner, its creation, the rule's start."""
+    r = ctx.db.one("SELECT MAX(COALESCE(a.last_hook_at,0), a.created_at, ?, COALESCE((SELECT MAX(last_used_at) FROM credentials c "
+                   "WHERE c.user_id=a.id), 0)) AS t FROM accounts a WHERE a.id=?", (IDLE_FROM, account_id))
+    return r["t"] if r is not None else None
+
+
+def idle_view(ctx, account_id, t=None):
+    """r0288, for /api/me: None, or {erase_at, warned_at} of an account that was warned in its present idle time (a sign-in ends it)."""
+    d = idle_days(ctx)
+    if not d:
+        return None
+    r = ctx.db.one("SELECT idle_warned_at, trial_until FROM accounts WHERE id=?", (account_id,))
+    if r is None or r["trial_until"] is not None or r["idle_warned_at"] is None:
+        return None
+    last = last_use(ctx, account_id) or 0
+    return {"warned_at": r["idle_warned_at"], "last_use": last, "days": d, "erase_at": max(last + d * 86400,
+            r["idle_warned_at"] + int(getattr(ctx.cfg, "idle_warn_days", 14)) * 86400), "kept": last > r["idle_warned_at"]}
 
 
 def internal_ip(ctx, ip):
@@ -172,7 +245,7 @@ def create(ctx, b, ip):
             "quota_per_day": cfg.trial_quota, "sent": SENT, "privacy_url": cfg.origin + "/privacy.html",
             "coverage_url": cfg.origin + "/dl/docs/coverage.html", "form": form,
             "note": "Nothing is signed yet and nothing is allowed: the first call that needs you waits for your first touch on the page "
-                    "(a passkey: Touch ID / Windows Hello / phone). Until you make the passkey, the quick start account is erased after %d days; with a passkey it stays for good, free." % cfg.trial_ttl_days}
+                    "(a passkey: Touch ID / Windows Hello / phone). " + FREE_TEXT + " " + KEEP_TEXT % (cfg.trial_ttl_days, idle_days(ctx) or 90)}
 
 
 def _unclaimed(ctx, claim):
@@ -363,6 +436,7 @@ def expire_due(ctx, t=None):
     (trial_until=NULL, an ordinary Free account), the person no longer has to press "Keep"."""
     from app import account_delete, stats
     t = now() if t is None else t
+    flush_seen(ctx)                                   # r0288: the uses of the last hour first: a used account is never swept
     n = 0
     for r in ctx.db.q("SELECT * FROM accounts WHERE trial_until IS NOT NULL AND trial_until<=? AND erased_at IS NULL LIMIT 500", (t,)):
         try:
@@ -380,6 +454,63 @@ def expire_due(ctx, t=None):
             log("WARN", "trial not erased: " + e.code, account=r["id"])
         except Exception as e:  # noqa - one account must not stop the sweep
             log("ERROR", "trial erase failed: " + type(e).__name__, account=r["id"])
+    try:
+        n += idle_due(ctx, t)
+    except Exception as e:  # noqa - the idle sweep must not stop the trial sweep
+        log("ERROR", "idle sweep failed: " + type(e).__name__)
+    return n
+
+
+def _team_bound(ctx, aid):
+    """A team (other people attached) or a person who signs for another team is never erased for idleness."""
+    if ctx.db.one("SELECT 1 AS k FROM members WHERE account_id=? AND user_id<>? AND status<>'removed' LIMIT 1", (aid, aid)):
+        return True
+    for m in ctx.db.q("SELECT roles, status FROM members WHERE user_id=? AND account_id<>? AND status<>'removed'", (aid, aid)):
+        if m["status"] == "active" and json.loads(m["roles"] or "[]") != ["observer"]:
+            return True
+    return False
+
+
+def idle_due(ctx, t=None):
+    """r0288: accounts with a passkey unused for DW_IDLE_DAYS: first a push (idle_warned_at), then, not sooner than DW_IDLE_WARN_DAYS after
+    it and only if nothing happened since, the erase. -> number erased."""
+    from app import account_delete
+    d = idle_days(ctx)
+    if not d:
+        return 0
+    t = now() if t is None else t
+    warn = int(getattr(ctx.cfg, "idle_warn_days", 14))
+    demo = getattr(ctx.cfg, "demo_account", "") or ""
+    n = 0
+    rows = ctx.db.q("SELECT a.id, a.idle_warned_at, MAX(COALESCE(a.last_hook_at,0), a.created_at, ?, COALESCE((SELECT MAX(last_used_at) "
+                    "FROM credentials c WHERE c.user_id=a.id), 0)) AS last FROM accounts a WHERE a.erased_at IS NULL AND a.trial_until IS NULL "
+                    "AND a.id<>?", (IDLE_FROM, demo))
+    for r in rows:
+        last = r["last"]
+        if last > t - (d - warn) * 86400:
+            continue
+        aid = r["id"]
+        try:
+            if _team_bound(ctx, aid):
+                continue
+            w = r["idle_warned_at"]
+            if w is None or w < last:
+                ctx.db.x("UPDATE accounts SET idle_warned_at=? WHERE id=?", (t, aid))
+                push = getattr(ctx, "push", None)
+                if push is not None and hasattr(push, "notify_idle"):
+                    push.notify_idle(aid)
+                log("INFO", "idle account warned", account=aid)
+                continue
+            if last > t - d * 86400 or w > t - warn * 86400:
+                continue
+            acc = ctx.db.one("SELECT * FROM accounts WHERE id=?", (aid,))
+            account_delete.erase_unasked(ctx, aid, acc, "unused for %d days" % d)
+            n += 1
+            log("INFO", "idle account erased", account=aid)
+        except Err as e:
+            log("WARN", "idle account not erased: " + e.code, account=aid)
+        except Exception as e:  # noqa - one account must not stop the sweep
+            log("ERROR", "idle erase failed: " + type(e).__name__, account=aid)
     return n
 
 

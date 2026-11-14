@@ -10,13 +10,16 @@ vocab/<digest>.json, so a checker can rebuild the words offline.
 r0277 (mr-vocab-2): member "screen" holds the sentences that were written inline before (send a request, git settings, quiet mode,
 "run {n} commands", "You said No ... {when}"); packtools/screencheck.py rebuilds what / harm / risk of each signed view from the
 vocabulary the mandate pinned. A mandate that pinned mr-vocab-1 is checked as before (its words are reported as not rebuildable).
+r0294 (mr-vocab-3): + screen "net_code_run" / "net_code_now" (law "origin of code"). A mandate that pinned mr-vocab-2 keeps its words: the
+question shows that vocabulary's own sentence (actions._pinned_has) and the checker rebuilds both versions.
 
 Honest limit: pinning says WHICH dictionary was in force; it does not stop the witness from choosing the reason code (profile, risk 2).
 """
 import hashlib
 import json
 
-V = "mr-vocab-2"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
+V = "mr-vocab-3"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
+#                     r0294: + screen net_code_run / net_code_now (a run of code from the network); mr-vocab-2 receipts check as before
 
 
 def doc():

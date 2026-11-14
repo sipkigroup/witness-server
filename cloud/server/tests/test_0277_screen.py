@@ -166,7 +166,7 @@ def _voc():
 
 def test_every_first_screen_sentence_of_the_server_is_a_vocabulary_template():
     v = _voc()
-    assert v["v"] == "mr-vocab-2" and set(qwords.SCREEN) <= set(v["screen"])
+    assert v["v"] == "mr-vocab-3" and set(qwords.SCREEN) <= set(v["screen"])
     leaves = SC.vocab_leaves(v)
     for k, s in qwords.SCREEN.items():
         assert s in leaves, k
@@ -223,7 +223,8 @@ def test_screen_vectors_file():
     levels, a wrong count, another recipient than the receipt)."""
     path = os.path.join(os.path.dirname(SC.__file__), "screen-vectors-0277.json")
     n, bad = SC.run_vectors(path)
-    assert n == 17 and bad == []          # r0281: + S-14..S-17 (the file-send sentences; an older receipt under the r0280 vocabulary)
+    assert n == 24 and bad == []          # r0281: + S-14..S-17 (the file-send sentences; an older receipt under the r0280 vocabulary)
+    #                                       r0294: + S-18..S-24 (a run of code from the network under mr-vocab-3; mr-vocab-2 receipts as before)
     d = json.load(open(path, encoding="utf-8"))
     for c in d["cases"]:
         assert hashlib.sha256(signview.jcs(c["view"])).hexdigest() == c["view_sha256"]
@@ -231,7 +232,9 @@ def test_screen_vectors_file():
     want = {"S-03": "INVALID WORDING_NOT_DERIVED", "S-06": "INVALID WORDING_NOT_DERIVED", "S-07": "INVALID VOCAB_MISMATCH",
             "S-08": "INVALID OMITTED_MISMATCH", "S-09": "INVALID OMITTED_MISMATCH", "S-10": "VALID OMITTED_UNDECLARED",
             "S-14": "VALID APPROVED_PARTIAL_VIEW", "S-15": "INVALID WORDING_NOT_DERIVED", "S-16": "VALID APPROVED_PARTIAL_VIEW",
-            "S-17": "INVALID WORDING_NOT_DERIVED"}
+            "S-17": "INVALID WORDING_NOT_DERIVED", "S-18": "VALID APPROVED_PARTIAL_VIEW", "S-19": "VALID APPROVED_PARTIAL_VIEW",
+            "S-20": "INVALID WORDING_NOT_DERIVED", "S-21": "VALID APPROVED_PARTIAL_VIEW", "S-22": "VALID APPROVED_PARTIAL_VIEW",
+            "S-23": "INVALID WORDING_NOT_DERIVED", "S-24": "INVALID WORDING_NOT_DERIVED"}
     assert {c["id"]: c["expect"] for c in d["cases"] if c["id"] in want} == want
 
 

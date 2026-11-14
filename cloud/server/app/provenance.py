@@ -378,3 +378,483 @@ def detail(rb):
     k = KIND_WORDS.get(rb.get("key") if isinstance(rb, dict) else None, "the same effect")
     t = rb.get("tool") if isinstance(rb, dict) and isinstance(rb.get("tool"), str) else "another tool"
     return "You refused %s when the agent asked through %s. This request reaches the same effect another way." % (k, t or "another tool")
+
+
+# ---- 3. code from the network (r0294, red team 13.11 "take-home task": ISPYTANIE-BINANCE-GEMINI-1311, not closed p.1) -----------------
+# The law: when the agent runs code that came from the network in this agent's session (curl / wget -o, git clone, gh repo clone, a file a
+# shell line wrote from a download, what an extraction / copy / rename of such a file wrote), the question about that run says so on the
+# first screen, in one line of harm with the host and how long ago ("Runs code downloaded from github.com 3 min ago -- it can do anything
+# you can."). A line that fetches and runs in one go (`npx github:o/r`, `uvx --from git+URL`, `pip install git+URL`, `git clone URL && make`)
+# says "Runs code from <host>". Only WORDS change: no call is asked that was not asked before (friction is unchanged), nothing is allowed.
+# The record is the server's own parse of the line the agent sent ("nf": {path: host} on the rows of the line), never the agent's words.
+# Honest limits: an extraction into a folder marks the whole folder (the server does not see the archive's members), so a later run of any
+# file under it is said as downloaded (an upper bound); code fetched by a program the parser does not know (a script that downloads) is
+# not seen; the host is the URL's, not where a redirect ended.
+FETCH_LOOKBACK_S = 24 * 3600
+NF_MAX = 64
+_WRAP = {"sudo", "doas", "env", "nohup", "nice", "time", "command", "exec", "builtin", "caffeinate", "stdbuf", "chronic"}
+_SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "mksh"}
+_INTERP = {"node", "nodejs", "ruby", "perl", "php", "lua", "tclsh", "Rscript", "ts-node", "tsx", "osascript", "pwsh", "julia"}
+_DIR_RUNNERS = {"pytest", "py.test", "tox", "nox", "cargo", "go", "just", "rake", "gradle", "mvn", "ant", "bazel", "meson", "ninja", "cmake",
+                "poetry", "pipenv", "hatch", "pdm", "npx", "bunx", "direnv", "pre-commit", "mix", "dotnet", "swift", "composer", "bundle"}
+_PKG = {"npm", "yarn", "pnpm", "bun"}
+_PKG_RUN = {"test", "t", "tst", "run", "run-script", "rum", "urn", "start", "restart", "stop", "install", "i", "in", "ins", "inst", "insta",
+            "instal", "isnt", "isnta", "isntal", "add", "ci", "clean-install", "install-clean", "it", "cit", "install-test", "exec", "x",
+            "rebuild", "rb", "build", "dlx", "pack", "publish", "link", "ln", "prepare", "dev"}
+_GH_SHORT = {"github": "github.com", "gitlab": "gitlab.com", "bitbucket": "bitbucket.org", "gist": "gist.github.com"}
+_URL_HOST = re.compile(r"^(?:git\+)?(?:https?|ftp|git|ssh|git\+ssh|git\+https)://(?:[^/@\s]*@)?([A-Za-z0-9.\-]+|\[[0-9A-Fa-f:.]+\])(?::\d+)?(?:[/?#]|$)", re.I)
+_SCP_HOST = re.compile(r"^(?:git\+)?[A-Za-z0-9._\-]+@([A-Za-z0-9.\-]+):[^/]")
+
+
+def host_of(spec):
+    """-> the host a package / repository spec fetches from (a URL, git+URL, user@host:path, github:o/r), or None"""
+    if not isinstance(spec, str) or not spec:
+        return None
+    s = spec.split("=", 1)[1] if spec.startswith(("--from=", "--spec=")) else spec
+    s = s.split("@", 1)[1].strip() if re.match(r"^[A-Za-z0-9_.\-]+ @ ", s) else s
+    m = _URL_HOST.match(s) or _SCP_HOST.match(s)
+    if m:
+        return m.group(1).lower()
+    m = re.match(r"^(github|gitlab|bitbucket|gist):[A-Za-z0-9_.\-]", s)
+    return _GH_SHORT[m.group(1)] if m else None
+
+
+def _segs(cmd):
+    """the simple commands of a line, in order (the parser's split; a subshell's `( ... )` and `;` inside it split here too)"""
+    try:
+        from app.hookjudge.bashparse import line_texts
+        segs = [t for t, _f in line_texts(cmd)]
+    except Exception:      # noqa: BLE001
+        segs = [cmd]
+    out = []
+    for s in segs:
+        for p in re.split(r"\s*(?:;|&&|\|\||\n)\s*", s.strip().lstrip("(").rstrip(")")):
+            p = p.strip().lstrip("(").rstrip(")").strip()
+            if p:
+                out.append(p)
+    return out
+
+
+def _toks(seg):
+    try:
+        t = shlex.split(seg, comments=True)
+    except ValueError:
+        t = seg.split()
+    while t and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t[0]) or t[0].rsplit("/", 1)[-1] in _WRAP):
+        w = t.pop(0).rsplit("/", 1)[-1]
+        if w in ("timeout", "nice", "stdbuf") and t and not t[0].startswith("-") and re.match(r"^[0-9.]+[smhd]?$", t[0]):
+            t.pop(0)
+        while w in ("env", "sudo", "nice", "nohup", "stdbuf", "doas") and t and t[0].startswith("-"):
+            o = t.pop(0)
+            if o in ("-n", "-u", "-g", "-C") and w in ("nice", "sudo", "doas", "stdbuf") and t:
+                t.pop(0)                          # `nice -n 5 make`, `sudo -u bob x`: the option's value is no program
+    if t and t[0].rsplit("/", 1)[-1] == "timeout":
+        t = t[1:]
+        while t and t[0].startswith("-"):
+            t.pop(0)
+        t = t[1:] if t else t
+    return t
+
+
+def _abs(p, cwd):
+    if not isinstance(p, str) or not p or "$" in p or p.startswith("~") or p == "-":
+        return None
+    return _canon(p if p.startswith("/") else posixpath.join(cwd or "/", p))
+
+
+def _url_base(u):
+    b = re.sub(r"[?#].*$", "", u).rstrip("/").rsplit("/", 1)[-1]
+    return b if b and "." not in b[:1] and not _URL_HOST.match(b) and b != u else None
+
+
+def _redirect(toks):
+    for i, t in enumerate(toks):
+        if t in (">", ">>", "1>", "&>") and i + 1 < len(toks):
+            return toks[i + 1]
+        m = re.match(r"^(?:1|&)?>>?(.+)$", t)
+        if m and not m.group(1).startswith("&"):
+            return m.group(1)
+    return None
+
+
+def _fetch_of(toks, cwd):
+    """-> ({abs path: host} a fetch writes, the new cwd or None) for one simple command"""
+    if not toks:
+        return {}, None
+    p = toks[0].rsplit("/", 1)[-1]
+    out = {}
+    if p == "cd":
+        d = next((t for t in toks[1:] if not t.startswith("-")), None)
+        return {}, _abs(d, cwd) if d else None
+    if p in ("curl", "wget"):
+        urls = [t for t in toks[1:] if _URL_HOST.match(t)]
+        if not urls:
+            return {}, None
+        h = _URL_HOST.match(urls[0]).group(1).lower()
+        dests, odir, remote = [], None, False
+        i = 1
+        while i < len(toks):
+            t = toks[i]
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            if p == "curl":
+                if t in ("-o", "--output") and nxt:
+                    dests.append(nxt)
+                    i += 1
+                elif t.startswith("--output="):
+                    dests.append(t.split("=", 1)[1])
+                elif t == "--output-dir" and nxt:
+                    odir = nxt
+                    i += 1
+                elif t in ("-O", "--remote-name", "--remote-name-all") or (re.match(r"^-[A-Za-z]+$", t) and "O" in t):
+                    remote = True
+                elif re.match(r"^-[A-Za-z]*o.+$", t) and not t.startswith("--"):
+                    dests.append(t.split("o", 1)[1])
+            else:
+                if t in ("-O", "--output-document") and nxt:
+                    dests.append(nxt)
+                    i += 1
+                elif t.startswith("--output-document="):
+                    dests.append(t.split("=", 1)[1])
+                elif t.startswith("-O") and len(t) > 2:
+                    dests.append(t[2:])
+                elif t in ("-P", "--directory-prefix") and nxt:
+                    odir = nxt
+                    i += 1
+                elif t.startswith("--directory-prefix="):
+                    odir = t.split("=", 1)[1]
+            i += 1
+        if p == "wget" and not dests:
+            remote = True
+        rd = _redirect(toks)
+        if rd:
+            dests.append(rd)
+        if remote:
+            for u in urls:
+                b = _url_base(u)
+                dests.append(b if b else "index.html")
+        base = _abs(odir, cwd) if odir else cwd
+        for d in dests:
+            a = _abs(d, base)
+            if a and d != "-":
+                out[a] = h
+        return out, None
+    if p == "git" and "clone" in toks[1:]:
+        args = toks[toks.index("clone") + 1:]
+        vals = {"-b", "--branch", "--depth", "-o", "--origin", "-c", "--config", "--reference", "--reference-if-able", "--filter", "-j",
+                "--jobs", "--separate-git-dir", "--template", "-u", "--upload-pack", "--shallow-since", "--shallow-exclude", "--bundle-uri",
+                "--server-option", "--revision"}
+        pos, i = [], 0
+        while i < len(args):
+            if args[i] in vals:
+                i += 2
+                continue
+            if not args[i].startswith("-"):
+                pos.append(args[i])
+            i += 1
+        if pos:
+            h = host_of(pos[0])
+            if h:
+                d = pos[1] if len(pos) > 1 else re.sub(r"\.git$", "", pos[0].rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1])
+                a = _abs(d, cwd)
+                if a:
+                    out[a] = h
+        return out, None
+    if p == "gh" and toks[1:3] == ["repo", "clone"]:
+        pos = [t for t in toks[3:] if not t.startswith("-")]
+        if pos and not pos[0].startswith("-"):
+            h = host_of(pos[0]) or "github.com"
+            d = pos[1] if len(pos) > 1 else re.sub(r"\.git$", "", pos[0].rstrip("/").rsplit("/", 1)[-1])
+            a = _abs(d, cwd)
+            if a:
+                out[a] = h
+        return out, None
+    return {}, None
+
+
+def _run_of(toks, cwd):
+    """-> [(abs path, True when a folder's code runs)] the code one simple command runs (a script, ./prog, a build / test / package
+    runner in a folder); [] for a command that runs no file"""
+    if not toks:
+        return []
+    p = toks[0].rsplit("/", 1)[-1]
+    a = toks[1:]
+    first = next((t for t in a if not t.startswith("-")), None)
+    if "/" in toks[0] and p not in ("python", "python3"):
+        r = _abs(toks[0], cwd)
+        return [(r, False)] if r else []
+    if p in ("source", "."):
+        r = _abs(first, cwd)
+        return [(r, False)] if r else []
+    if p in _SHELLS:
+        if "-c" in a or "-s" in a:
+            return []
+        r = _abs(first, cwd)
+        return [(r, False)] if r else []
+    if re.fullmatch(r"(python|pypy)[0-9.]*", p):
+        i = 0
+        while i < len(a) and a[i].startswith("-"):
+            if a[i] in ("-m", "-c") or a[i].startswith(("-m", "-c")):
+                if a[i:i + 2][-1:] == ["pip"] or a[i] == "-mpip":
+                    return _pip_runs(a[i + 2:] if a[i] == "-m" else a[i + 1:], cwd)
+                return [(cwd, True)] if cwd else []              # -m / -c: the current folder is first on the import path
+            if a[i] in ("-W", "-X", "--check-hash-based-pycs"):
+                i += 1
+            i += 1
+        r = _abs(a[i], cwd) if i < len(a) else None
+        return [(r, False)] if r else []
+    if p in _INTERP or p in ("deno", "bun") and first in ("run",) or p == "bun" and first and first.endswith((".js", ".ts", ".mjs", ".cjs", ".tsx")):
+        rest = a[a.index("run") + 1:] if p in ("deno", "bun") and "run" in a else a
+        f = next((t for t in rest if not t.startswith("-")), None)
+        if p == "bun" and f and "/" not in f and "." not in f:
+            return [(cwd, True)] if cwd else []                  # `bun run dev`: a script of the folder's package.json
+        if p in ("node", "nodejs") and ("-e" in a or "--eval" in a or "-p" in a):
+            return [(cwd, True)] if cwd else []
+        r = _abs(f, cwd)
+        return [(r, False)] if r else []
+    if p in ("make", "gmake", "bmake"):
+        d = cwd
+        for i, t in enumerate(a):
+            if t == "-C" and i + 1 < len(a):
+                d = _abs(a[i + 1], cwd)
+            elif t.startswith("--directory="):
+                d = _abs(t.split("=", 1)[1], cwd)
+            elif t.startswith("-C") and len(t) > 2:
+                d = _abs(t[2:], cwd)
+        return [(d, True)] if d else []
+    if p in _PKG:
+        d = cwd
+        for i, t in enumerate(a):
+            if t in ("--prefix", "-C", "--dir", "--cwd") and i + 1 < len(a):
+                d = _abs(a[i + 1], cwd)
+            elif t.startswith(("--prefix=", "--dir=", "--cwd=")):
+                d = _abs(t.split("=", 1)[1], cwd)
+        sub = first
+        if sub is None and p in ("yarn", "pnpm", "bun"):
+            sub = "install"
+        return [(d, True)] if d and (sub in _PKG_RUN or (p in ("yarn", "pnpm") and sub not in ("info", "why", "list", "ls", "view",
+                                                                                           "outdated", "audit", "config", "help", "-v"))) else []
+    if p in ("pip", "pip3") or re.fullmatch(r"pip[0-9.]+", p):
+        return _pip_runs(a, cwd)
+    if p == "uv":
+        if first in ("run", "sync", "build") or a[:2] == ["pip", "install"]:
+            return _pip_runs(a[2:], cwd) if a[:2] == ["pip", "install"] else ([(cwd, True)] if cwd else [])
+        return []
+    if p in _DIR_RUNNERS:
+        return [(cwd, True)] if cwd else []
+    return []
+
+
+def _pip_runs(a, cwd):
+    if not a or a[0] not in ("install", "wheel", "download") and "install" not in a[:1]:
+        return []
+    out = []
+    i = 1
+    while i < len(a):
+        t = a[i]
+        if t in ("-e", "--editable", "-r", "--requirement", "-c", "--constraint") and i + 1 < len(a):
+            r = _abs(a[i + 1], cwd)
+            if r:
+                out.append((r, t in ("-e", "--editable")))
+            i += 2
+            continue
+        if not t.startswith("-") and not host_of(t) and (t in (".", "..") or t.startswith(("./", "../", "/")) or t.endswith((".whl", ".tar.gz", ".zip", ".tgz"))):
+            r = _abs(t, cwd)
+            if r:
+                out.append((r, not t.endswith((".whl", ".tar.gz", ".zip", ".tgz"))))
+        i += 1
+    return out
+
+
+def _remote_now(toks):
+    """-> the host when this one command fetches code and runs it itself (npx github:o/r, uvx --from git+URL, pip install git+URL,
+    npm i URL, pipx run --spec URL, go run host/x@v), else None"""
+    if not toks:
+        return None
+    p = toks[0].rsplit("/", 1)[-1]
+    a = toks[1:]
+    specs = []
+    if p in ("npx", "bunx") or (p in ("pnpm", "yarn") and a[:1] == ["dlx"]) or (p == "npm" and a[:1] in (["exec"], ["x"])):
+        specs = [t.split("=", 1)[1] if t.startswith("--package=") else t for t in a if not t.startswith("-") or t.startswith("--package=")]
+        specs = specs[:3]
+    elif p in ("uvx", "pipx") or (p == "uv" and a[:2] == ["tool", "run"]):
+        for i, t in enumerate(a):
+            if t in ("--from", "--spec", "--with") and i + 1 < len(a):
+                specs.append(a[i + 1])
+            elif t.startswith(("--from=", "--spec=", "--with=")):
+                specs.append(t)
+        specs += [t for t in a if not t.startswith("-")][:2]
+    elif p in ("pip", "pip3") or re.fullmatch(r"(python|pypy)[0-9.]*", p) and a[:2] == ["-m", "pip"] or (p == "uv" and a[:1] == ["pip"]):
+        specs = [t for t in a if not t.startswith("-")]
+    elif p in _PKG and a[:1] and a[0] in ("install", "i", "add", "in", "ins", "isntall"):
+        specs = [t for t in a[1:] if not t.startswith("-")]
+    elif p == "go" and a[:1] in (["run"], ["install"]):
+        for t in a[1:]:
+            m = re.match(r"^([a-z0-9.\-]+\.[a-z]{2,})/[^@\s]+@", t)
+            if m:
+                return m.group(1).lower()
+    elif p in ("cargo",) and "install" in a[:1]:
+        for i, t in enumerate(a):
+            if t == "--git" and i + 1 < len(a):
+                specs.append(a[i + 1])
+    for s in specs:
+        h = host_of(s)
+        if h:
+            return h
+    return None
+
+
+def line_fetch(cmd, cwd):
+    """-> ({abs path: host} the line downloads into, [(abs path, is folder, cwd at that point)] what it runs AFTER a fetch in the same
+    line that lies in what it fetched -> host, host of a command that fetches and runs at once or None). Never raises."""
+    try:
+        if not isinstance(cmd, str) or len(cmd) > 20000:
+            return {}, None
+        got, now, c = {}, None, cwd
+        for seg in _segs(cmd):
+            t = _toks(seg)
+            if not t:
+                continue
+            f, nc = _fetch_of(t, c)
+            if nc:
+                c = nc
+                continue
+            for r, _d in _run_of(t, c):
+                for fp, h in got.items():
+                    if r and _within(r, fp):
+                        now = now or h
+            now = now or _remote_now(t)
+            got.update(f)
+        return dict(list(got.items())[:NF_MAX]), now
+    except Exception:      # noqa: BLE001
+        return {}, None
+
+
+def line_runs(cmd, cwd):
+    """-> [(abs path, is folder)] every file / folder whose code the line runs (cd inside the line followed). Never raises."""
+    out = []
+    try:
+        c = cwd
+        for seg in _segs(cmd):
+            t = _toks(seg)
+            if t and t[0] == "cd":
+                d = next((x for x in t[1:] if not x.startswith("-")), None)
+                c = _abs(d, c) or c
+                continue
+            out += [x for x in _run_of(t, c) if x[0]]
+    except Exception:      # noqa: BLE001
+        pass
+    return out
+
+
+def fetch_marks(ctx, agent_id, tool, args, t0):
+    """-> {path: host} for the row of a shell part: the paths the line downloads into, and -- for a shell write part -- the paths it writes
+    while it names a downloaded path (an extraction, a copy, a rename: the provenance moves on). {} for anything else."""
+    if not (isinstance(tool, str) and tool.split(".", 1)[0] == "Bash" and isinstance(args, dict) and isinstance(args.get("command"), str)):
+        return {}
+    w = _w(args)
+    cwd = w.get("cwd") if isinstance(w.get("cwd"), str) else w.get("project")
+    cwd = cwd if isinstance(cwd, str) else None
+    out, _now = line_fetch(args["command"], cwd)
+    if tool == "Bash.write":
+        wr = [_canon(p) for p in (w.get("writes") or []) if isinstance(p, str) and p.startswith("/")]
+        if wr:
+            known = fetches(ctx, agent_id, t0)
+            known.update(out)
+            if known:
+                named = [_canon(p) for p in _line_paths(args["command"], cwd)]
+                h = next((known[k] for n in named if n for k in known if _within(n, k) or _within(k, n)), None)
+                if h:
+                    for p in wr:
+                        if p and p not in out:
+                            out[p] = h if not isinstance(h, tuple) else h[0]
+    return {k: (v[0] if isinstance(v, tuple) else v) for k, v in list(out.items())[:NF_MAX]}
+
+
+def fetches(ctx, agent_id, t0):
+    """-> {path: (host, at)} of what this agent downloaded (or extracted / copied from a download) within FETCH_LOOKBACK_S, from rows that
+    ran; a whole-file Write the witness judged after it ends the mark of that path (its text is the agent's now, judged as such)."""
+    out = {}
+    try:
+        rows = ctx.db.q("SELECT rowid AS n, rid, agent_id, status, created_at, exec_json, tool, recipient FROM actions WHERE agent_id=? AND "
+                        "created_at>? AND status IN (%s) AND exec_json LIKE '%%\"nf\"%%' ORDER BY rowid LIMIT 2000"
+                        % ",".join("?" * len(SEEN)), (agent_id, t0 - FETCH_LOOKBACK_S) + SEEN)
+        if not rows:
+            return {}                     # the common case: nothing downloaded in this session (one indexed query, no more)
+        rows = list(rows) + list(ctx.db.q(
+            "SELECT rowid AS n, rid, agent_id, status, created_at, NULL AS exec_json, tool, recipient FROM actions WHERE agent_id=? AND "
+            "rowid>? AND status IN (%s) AND tool IN ('Write','Write.danger') ORDER BY rowid LIMIT 2000" % ",".join("?" * len(SEEN)),
+            (agent_id, rows[0]["n"]) + SEEN))
+        rows.sort(key=lambda r: r["n"])
+    except Exception:      # noqa: BLE001
+        return {}
+    from app.actions import unrun_write
+    for r in rows:
+        if r["tool"] in ("Write", "Write.danger"):
+            cp = _canon(r["recipient"])
+            if cp:
+                out.pop(cp, None)
+            continue
+        try:
+            nf = json.loads(r["exec_json"]).get("nf")
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not isinstance(nf, dict) or unrun_write(ctx, r) or _waits(ctx, r):
+            continue
+        for p, h in nf.items():
+            cp = _canon(p)
+            if cp and isinstance(h, str) and (cp not in out or out[cp][0] != h):
+                out[cp] = (h, r["created_at"] or 0)
+    return out
+
+
+def net_code(ctx, agent_id, args, t0):
+    """-> {"host", "at" (0 = in this very line), "path"} when the shell line runs code downloaded in this agent's session (or downloads and
+    runs it itself), else None"""
+    cmd = args.get("command") if isinstance(args, dict) else None
+    if not isinstance(cmd, str):
+        return None
+    w = _w(args)
+    cwd = w.get("cwd") if isinstance(w.get("cwd"), str) else w.get("project")
+    cwd = cwd if isinstance(cwd, str) else None
+    _got, now = line_fetch(cmd, cwd)
+    if now:
+        return {"host": now[:253], "at": 0}
+    runs = line_runs(cmd, cwd)
+    if not runs:
+        return None
+    known = fetches(ctx, agent_id, t0)
+    best = None
+    for r, _d in runs:
+        for fp, (h, at) in known.items():
+            if _within(r, fp) and (best is None or at > best["at"]):
+                best = {"host": h[:253], "at": int(at), "path": fp[:1024]}
+    return best
+
+
+def net_code_words(nc, created_at, pinned_has=True):
+    """-> the one short line of harm for a run of downloaded code (vocabulary "screen" net_code_*), or the older vocabulary's own sentence
+    when the mandate pinned a vocabulary without it (r0294: an owner's signed words stay inside what they agreed to; the fact is under
+    Details), or None"""
+    from app.qwords import SCREEN as S, DANGER_WORDS
+    if not isinstance(nc, dict) or not isinstance(nc.get("host"), str):
+        return None
+    if not pinned_has:
+        return DANGER_WORDS["install"][1]
+    from app.qwords import _clean
+    h = _clean(nc["host"], 60)
+    at = nc.get("at")
+    if not at or not isinstance(at, int):
+        return S["net_code_now"].format(t=h)
+    mins = max(1, int(((created_at or at) - at) // 60)) if isinstance(created_at, int) else None
+    when = S["when_min"].format(n=mins) if mins is not None and mins < 120 else (S["when_h"].format(n=mins // 60) if mins is not None else S["when_earlier"])
+    return S["net_code_run"].format(t=h, when=when)
+
+
+def net_code_detail(nc):
+    """the line under Details: where the code came from (the host quoted here is what the first screen's {t} names)"""
+    from app.qwords import _clean
+    if not isinstance(nc, dict) or not isinstance(nc.get("host"), str):
+        return None
+    if nc.get("path"):
+        return "Downloaded from %s: %s" % (_clean(nc["host"], 60), _clean(nc["path"], 300))
+    return "Code from %s, fetched by this command" % _clean(nc["host"], 60)

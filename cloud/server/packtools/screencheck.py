@@ -4,7 +4,8 @@ Standard library only; no code of the server. Input: the shown objects (views/<k
 mandate_check.view_checks: SHA-256 over RFC 8785 = the signed `view`) and the reason vocabulary each approval's mandate pinned
 (MANDATE.toolmap_sha256 -> toolmaps/<hex>.cbor member "vocab" -> vocab/<digest>.json, its bytes hash to the name).
 
-P1 (words): a vocabulary "mr-vocab-2" holds EVERY sentence the first screen may show. For each signed view that carries the words:
+P1 (words): a vocabulary "mr-vocab-2" or later ("mr-vocab-3", r0294: + a run of code from the network) holds EVERY sentence the first
+screen may show; each receipt is rebuilt from the version ITS mandate pinned (a sentence added later is not in an older one). For each signed view that carries the words:
   - `what` and `harm` must each be one template of that vocabulary (a string leaf of the document) with its placeholders filled:
       {t}    a quote of the shown call: after the witness's cleaning (invisible characters as <U+XXXX> marks, control characters and
              backquote as a space, trimmed, cut with an ellipsis) it is a substring of a string the view itself carries (the action, the
@@ -30,7 +31,9 @@ import os
 import re
 import unicodedata
 
-VOCAB_STRICT = "mr-vocab-2"
+VOCAB_STRICT = "mr-vocab-3"      # the server's current vocabulary (r0294: + the sentences of a run of code from the network)
+VOCAB_REBUILT = ("mr-vocab-2", "mr-vocab-3")    # every version whose words are rebuilt; a mandate that pinned mr-vocab-2 checks as before
+VOCAB_FIRST = VOCAB_REBUILT[0]
 OMIT_RULE = "mr-omit-1"
 FIRST_SCREEN = ("rid", "status", "what", "harm", "risk")
 _PH = re.compile(r"\{(t|n|when)\}")
@@ -115,7 +118,9 @@ def _rx(tpl):
     for m in _PH.finditer(tpl):
         parts.append(re.escape(tpl[pos:m.start()]))
         nm = m.group(1)
-        parts.append("(?P<%s%d>%s)" % (nm, len(names), r"[0-9]+" if nm == "n" else ".+"))
+        # r0294: {when} is "<number> <unit> ago" or one word ("earlier"), never a bare "ago": a sentence with {t} right before it
+        # ("from {t} {when}") then has one split only (a greedy {t} cannot take "github.com 3 min" and leave "ago")
+        parts.append("(?P<%s%d>%s)" % (nm, len(names), r"[0-9]+" if nm == "n" else (r"[0-9]+ \S+ ago|(?!ago(?:\s|$))\S+" if nm == "when" else ".+")))
         names.append(nm)
         pos = m.end()
     parts.append(re.escape(tpl[pos:]))
@@ -276,9 +281,9 @@ def screen_checks(root, entries, views, cbor_loads, require=False, cap=50):
                     return lines, "WORDING_UNVERIFIABLE", warns
                 warns.append("WORDING_UNVERIFIABLE")
                 wl = "words not rebuilt (vocabulary %s missing)" % dg[:16]
-            elif voc is None or voc.get("v") != VOCAB_STRICT:
+            elif voc is None or voc.get("v") not in VOCAB_REBUILT:
                 warns.append("WORDING_LEGACY")
-                wl = "words not rebuilt (%s)" % ("no vocabulary pinned" if voc is None else "vocabulary %s, before %s" % (voc.get("v"), VOCAB_STRICT))
+                wl = "words not rebuilt (%s)" % ("no vocabulary pinned" if voc is None else "vocabulary %s, before %s" % (voc.get("v"), VOCAB_FIRST))
             else:
                 if not _action_same(view, rc.get("action")):
                     lines.append("%s: WORDING_NOT_DERIVED (the shown action's recipient / class is not the signed receipt's)" % label)
@@ -323,7 +328,7 @@ def verdict(view, vocab_bytes, pinned, receipt_action=None):
     if oc == "OMITTED_MISMATCH":
         return "INVALID OMITTED_MISMATCH"
     q = []
-    if isinstance(voc, dict) and voc.get("v") == VOCAB_STRICT:
+    if isinstance(voc, dict) and voc.get("v") in VOCAB_REBUILT:
         if "what" in view:
             if not _action_same(view, receipt_action):
                 return "INVALID WORDING_NOT_DERIVED"

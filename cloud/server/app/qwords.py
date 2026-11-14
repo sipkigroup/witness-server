@@ -70,6 +70,10 @@ SCREEN = {
     "send_file_harm": "Its contents would leave this computer for good.",
     "send_files_harm": "Their contents would leave this computer for good.",
     "send_secret_file_harm": "Your keys or passwords would leave this computer for good.",
+    # r0294 (mr-vocab-3, law "origin of code"; red team 13.11 "take-home task"): a run of code that came from the network in this session.
+    # {t} = the host the server parsed from the line that downloaded it (quoted under Details when not in this call), {when} = how long ago.
+    "net_code_run": "Runs code downloaded from {t} {when} — it can do anything you can.",
+    "net_code_now": "Runs code from {t} — it can do anything you can.",
 }
 
 # 05.11 (owner, the risk scale): the SERVER puts the level, from the reason code and the parsed target -- never from the agent's words. Four steps
@@ -654,6 +658,19 @@ def words(x):
         if isinstance(sc_, dict) and isinstance(sc_.get("src"), str):
             # r0275: the file is a copy the agent made of a credential: the credential is named under Details (provenance)
             long_harm = (long_harm + " " if long_harm else "") + "It is a copy of %s that the agent made earlier." % _clean(sc_["src"], 200)
+        dl_ = _exec_member(x, "dl")
+        dl_line_ = None
+        if isinstance(dl_, dict) and isinstance(dl_.get("host"), str) and ent is not None and kind != "host" and not persist \
+                and not secret_read and up_ is None and sent_ is None:
+            # r0294: the line runs code from the network (provenance.net_code): the one short line of harm says it, in place of the general
+            # "It runs a program" (not added to it); the host and the downloaded path go under Details
+            from app import provenance as _pv
+            h_ = _pv.net_code_words(dl_, x["created_at"] if "created_at" in x.keys() else None, dl_.get("pin") is not False)
+            if h_:
+                harm = h_
+                dl_line_ = _pv.net_code_detail(dl_)
+                if risk_max([risk, "high"]) != risk:
+                    risk = "high"
         rb_ = _refused_before(x)
         if rb_ is not None:
             # r0275 (Cursor 09.2025, Authorization Drift): the owner refused the same effect through another call in this session: the
@@ -668,6 +685,8 @@ def words(x):
             d.append("Why it matters: %s" % long_harm)
         if dmark_ or ac_mark:
             d.append("Why Witness asks: %s" % (dmark_ or ac_mark))
+        if dl_line_:
+            d.append(dl_line_)
         d.append("Tool: %s" % _clean(str(x["tool"] or "").split(".")[0], 80))     # r0264: "Bash", not the part code "Bash.danger"
         tp = x["text_preview"] if "text_preview" in x.keys() else ""
         if kind == "host" and up_ is not None:

@@ -72,7 +72,8 @@ case("S-13", "the shown action names another recipient than the signed receipt",
 # still rebuilt from it (old receipts keep verifying); the new sentences are not in it
 R0281_KEYS = ("send_file_what", "send_files_what", "send_file_harm", "send_files_harm", "send_secret_file_harm")
 old_ = json.loads(vocab.canonical())
-old_["screen"] = {k: v for k, v in old_["screen"].items() if k not in R0281_KEYS}
+old_["v"] = "mr-vocab-2"
+old_["screen"] = {k: v for k, v in old_["screen"].items() if k not in R0281_KEYS + ("net_code_run", "net_code_now")}
 olb = jcs(old_)
 old_d = hashlib.sha256(olb).hexdigest()
 assert old_d == "07d19a140ed3383288414bd36905d2fe3d3ddbec06a56999f71e7c05fafd48f2", old_d
@@ -87,7 +88,40 @@ case("S-16", "r0281 an older receipt: its mandate pinned the r0280 vocabulary, i
      pinned=old_d, given=old_d)
 case("S-17", "r0281 the new sentence under a mandate that pinned the r0280 vocabulary (it does not hold it)", omit(up), "INVALID WORDING_NOT_DERIVED",
      pinned=old_d, given=old_d)
-out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8"), old_d: olb.decode("utf-8")}, "cases": cases}
+# r0294: mr-vocab-3 (+ screen net_code_run / net_code_now). The vocabulary of 0.2.116 (mr-vocab-2, digest ab7d5418...) stays: receipts whose
+# mandate pinned it are rebuilt from it as before; the new sentence is not in it
+R0294_KEYS = ("net_code_run", "net_code_now")
+v2_ = json.loads(vocab.canonical())
+v2_["v"] = "mr-vocab-2"
+v2_["screen"] = {k: v for k, v in v2_["screen"].items() if k not in R0294_KEYS}
+v2b = jcs(v2_)
+v2d = hashlib.sha256(v2b).hexdigest()
+assert v2d == "ab7d541881db883871798bf498ba035859278c74e7a147b394ddd9af3ac74a3e", v2d
+assert voc["v"] == "mr-vocab-3"
+NCA = {"class": "command", "recipient": "./install.sh"}
+nc = view(tool="Bash", action=NCA, text_preview="./install.sh", line_commands=["./install.sh"],
+          what="Your agent wants to run a command that is not on your list: ./install.sh",
+          harm="Runs code downloaded from github.com 3 min ago — it can do anything you can.", risk="high",
+          details="Why it matters: It runs code on your computer. It could change or delete files in this project.\n"
+                  "Downloaded from github.com: /p/install.sh\nTool: Bash")
+case("S-18", "r0294 honest: a run of code downloaded earlier; the host is quoted from the witness's Details", omit(nc), "VALID APPROVED_PARTIAL_VIEW")
+NOW = {"class": "command", "recipient": "npx"}
+now_ = view(tool="Bash", action=NOW, text_preview="npx github:acme-hr/onboarding-task", line_commands=["npx"],
+            what="Your agent wants to run a command that is not on your list: npx", harm="Runs code from github.com — it can do anything you can.",
+            risk="high", details="Code from github.com, fetched by this command\nTool: Bash")
+case("S-19", "r0294 honest: a command that fetches code and runs it", omit(now_), "VALID APPROVED_PARTIAL_VIEW")
+case("S-20", "r0294 the new sentence under a mandate that pinned mr-vocab-2 (it does not hold it)", omit(nc), "INVALID WORDING_NOT_DERIVED",
+     pinned=v2d, given=v2d)
+case("S-21", "r0294 an older receipt: its mandate pinned mr-vocab-2, its words are rebuilt from it", omit(base), "VALID APPROVED_PARTIAL_VIEW",
+     pinned=v2d, given=v2d)
+nc_old = dict(nc, harm="Code downloaded from the internet would run on your computer.")
+case("S-22", "r0294 a run of downloaded code under mr-vocab-2: the older vocabulary's own sentence (what the server shows such an owner)",
+     omit(nc_old), "VALID APPROVED_PARTIAL_VIEW", pinned=v2d, given=v2d)
+case("S-23", "r0294 the host is not the one the witness states", omit(dict(nc, harm=nc["harm"].replace("github.com", "safe.example"))),
+     "INVALID WORDING_NOT_DERIVED")
+case("S-24", "r0294 {when} outside the time phrases", omit(dict(nc, harm=nc["harm"].replace("3 min ago", "long ago"))), "INVALID WORDING_NOT_DERIVED")
+out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8"), old_d: olb.decode("utf-8"),
+                                                   v2d: v2b.decode("utf-8")}, "cases": cases}
 for c in cases:
     got = SC.verdict(c["view"], out["vocabularies"][c["vocab"]].encode("utf-8"), c["pinned"], c["receipt_action"])
     assert got == c["expect"], (c["id"], got, c["expect"])

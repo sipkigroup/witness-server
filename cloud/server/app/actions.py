@@ -2098,6 +2098,15 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             if isinstance(ej_, dict):
                 ej_["gt"] = True       # RT-0270: this line changes git's objects / index / refs / remotes (git_tainted reads it)
                 ex_json = json.dumps(ej_, ensure_ascii=False)
+        try:
+            nf_ = provenance.fetch_marks(ctx, agent["id"], tool, args, t0)
+        except Exception:      # noqa: BLE001  no mark: the run's words stay the general ones
+            nf_ = None
+        if nf_:
+            ej_ = json.loads(ex_json) if ex_json else {}
+            if isinstance(ej_, dict):
+                ej_["nf"] = nf_            # r0294: these paths now hold code from the network: {path: host} (provenance.fetches)
+                ex_json = json.dumps(ej_, ensure_ascii=False)
         sec_ = provenance.carry(tool, args, hit_)
         if sec_:
             ej_ = json.loads(ex_json) if ex_json else {}
@@ -2418,6 +2427,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                                                              # exit is held for the owner, never OK_UNSPECIFIED under "allowed by default"
         if (gate is not None and gate[0] == "hold") or (gate is None and dv == "defer" and rp is None):
             _mark_refused_before(ctx, agent, row, act, args, t0, hit_)     # r0275: the owner refused the same effect through another call
+            _mark_net_code(ctx, agent, row, act, args, t0, m)          # r0294: the line runs code downloaded in this session
         if gate is not None and gate[0] == "deny":
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
@@ -2491,6 +2501,45 @@ def _mark_refused_before(ctx, agent, row, act, args, t0, hit=None):
             row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
     except Exception:      # noqa: BLE001  no mark: the question is asked as before
         log("ERROR", "refused-before mark not made", rid=row.get("rid"))
+
+
+def _mark_net_code(ctx, agent, row, act, args, t0, m=None):
+    """r0294 (law "origin of code"): a question about a shell line that runs code downloaded in this agent's session -- or that downloads
+    and runs it itself -- carries exec_json "dl" {"host", "at", "path"?, "pin"}: qwords says it in the one short line of harm. "pin" False:
+    the vocabulary the agent's mandate pinned has no such sentence (a mandate signed before mr-vocab-3): its own nearest sentence is shown
+    (signed words stay inside what the owner agreed to) and the fact goes under Details; a new mandate gets the new words."""
+    if act.get("class") != "command" or not isinstance(args, dict) or not isinstance(args.get("command"), str):
+        return
+    try:
+        nc = provenance.net_code(ctx, agent["id"], args, t0)
+        if nc is None:
+            return
+        nc["pin"] = _pinned_has(ctx, m, "net_code_run")
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["dl"] = nc
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except Exception:      # noqa: BLE001  no mark: the question is asked with the general words
+        log("ERROR", "net-code mark not made", rid=row.get("rid"))
+
+
+def _pinned_has(ctx, m, key):
+    """True when the vocabulary the mandate's signed tool map document pins holds screen sentence `key`, or the mandate pins none
+    (nothing to stay inside of); False when it pins an older vocabulary without it."""
+    try:
+        mid = m.get("id") if isinstance(m, dict) else (m["id"] if m is not None else None)
+        r = ctx.db.one("SELECT gateway_doc FROM mandates WHERE id=?", (mid,)) if mid else None
+        d = json.loads(r["gateway_doc"]) if r is not None and r["gateway_doc"] else None
+        dg = d.get("vocab") if isinstance(d, dict) else None
+        if not isinstance(dg, str):
+            return True
+        v = ctx.db.one("SELECT json FROM vocabs WHERE digest=?", (dg,))
+        if v is None:
+            return True
+        doc = json.loads(v["json"])
+        return isinstance(doc, dict) and isinstance(doc.get("screen"), dict) and key in doc["screen"]
+    except Exception:      # noqa: BLE001  unknown: the older sentence (honest in any vocabulary since mr-vocab-1)
+        return False
 
 
 def _ttl(ctx, account_id, verdict):

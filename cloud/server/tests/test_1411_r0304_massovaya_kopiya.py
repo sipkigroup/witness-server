@@ -50,7 +50,7 @@ def _marks(cmd, home=HOME, proj=PROJ):
     ("ln -s ~/dots/.config ~", HOME + "/.config"),       # a link of a whole folder
     ("cp -r dots ~/.config", HOME + "/.config"),         # no ~/.config yet: dots becomes it
     ("rsync -a --exclude .git dots/ ~", HOME),           # an option's value is no source
-    ("cp -r a/. /etc/", "/private/etc"),
+    ("cp -r a/. /etc/", os.path.realpath("/etc")),       # /private/etc on macOS, /etc on Linux (CI)
     ("cp -r tpl/. .", PROJ),                             # the project root: .claude/settings.json, hooks, .mcp.json, .git
 ])
 def test_contents_unknown_is_asked_once(cmd, land):

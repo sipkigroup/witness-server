@@ -4,7 +4,8 @@ Standard library only; no code of the server. Input: the shown objects (views/<k
 mandate_check.view_checks: SHA-256 over RFC 8785 = the signed `view`) and the reason vocabulary each approval's mandate pinned
 (MANDATE.toolmap_sha256 -> toolmaps/<hex>.cbor member "vocab" -> vocab/<digest>.json, its bytes hash to the name).
 
-P1 (words): a vocabulary "mr-vocab-2" or later ("mr-vocab-3", r0294: + a run of code from the network) holds EVERY sentence the first
+P1 (words): a vocabulary "mr-vocab-2" or later ("mr-vocab-3", r0294: + a run of code from the network; "mr-vocab-4", r0298: + a file that
+starts commands by itself, in a folder the witness cannot tell) holds EVERY sentence the first
 screen may show; each receipt is rebuilt from the version ITS mandate pinned (a sentence added later is not in an older one). For each signed view that carries the words:
   - `what` and `harm` must each be one template of that vocabulary (a string leaf of the document) with its placeholders filled:
       {t}    a quote of the shown call: after the witness's cleaning (invisible characters as <U+XXXX> marks, control characters and
@@ -31,8 +32,8 @@ import os
 import re
 import unicodedata
 
-VOCAB_STRICT = "mr-vocab-3"      # the server's current vocabulary (r0294: + the sentences of a run of code from the network)
-VOCAB_REBUILT = ("mr-vocab-2", "mr-vocab-3")    # every version whose words are rebuilt; a mandate that pinned mr-vocab-2 checks as before
+VOCAB_STRICT = "mr-vocab-4"      # the server's current vocabulary (r0294: + a run of code from the network; r0298: + autostart, folder unknown)
+VOCAB_REBUILT = ("mr-vocab-2", "mr-vocab-3", "mr-vocab-4")    # every version whose words are rebuilt; older mandates check as before
 VOCAB_FIRST = VOCAB_REBUILT[0]
 OMIT_RULE = "mr-omit-1"
 FIRST_SCREEN = ("rid", "status", "what", "harm", "risk")

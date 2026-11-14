@@ -74,7 +74,16 @@ SCREEN = {
     # {t} = the host the server parsed from the line that downloaded it (quoted under Details when not in this call), {when} = how long ago.
     "net_code_run": "Runs code downloaded from {t} {when} — it can do anything you can.",
     "net_code_now": "Runs code from {t} — it can do anything you can.",
+    # r0298 (mr-vocab-4, decision of Deus 14.11): a write in a folder Witness cannot tell to a file that starts programs by itself (shell
+    # start-up files, LaunchAgents, Claude Code's settings / hooks, git hooks): asked "once" or "no", never "from now on" (bashparse.AUTOSTART)
+    "autostart_what": "Your agent wants to change a file that starts commands by itself",
+    "autostart_harm": "It could make commands run on their own, without asking you.",
 }
+AUTOSTART_MARK = "autostart:"      # = hookjudge.bashparse.AUTOSTART + ":"
+AUTOSTART_LONG = ("Witness cannot tell which folder this line writes in (a cd or a script before it may not have run), but the file it "
+                  "names is one that starts programs by itself: a shell start-up file, a LaunchAgent, Claude Code's settings or hooks, "
+                  "git's hooks or settings. Whatever is written there would run later without asking you. Only \"Allow once\" is offered: "
+                  "this is never allowed from now on.")
 
 # 05.11 (owner, the risk scale): the SERVER puts the level, from the reason code and the parsed target -- never from the agent's words. Four steps
 # (no percent: false precision). Signed with the view (signview.KEYS "risk"); the page draws the bar and the word ("High risk").
@@ -561,6 +570,18 @@ def words(x):
             tp0_ = str(x["text_preview"] if "text_preview" in x.keys() and x["text_preview"] else "")
             cat0_, det0_ = t.split(":", 1)
             dmark_ = _clean(cat0_ if det0_.strip() and det0_.strip() in tp0_ else t, 300)     # the detail once: not when the text has it
+        as_risk = None
+        if kind == "command" and reason == "ESCALATE_COMMAND_DANGER" and str(t).startswith(AUTOSTART_MARK):
+            # r0298: a file that starts programs by itself, in a folder Witness cannot tell (bashparse.AUTOSTART). exec_json "as" {"pin"}:
+            # True = the vocabulary the mandate pinned holds the sentences (mr-vocab-4 or later); anything else (a mandate signed before,
+            # no mark) = the nearest sentence of the older vocabulary ("cannot fully check"), so a signed view stays rebuildable (VALID)
+            as_ = _exec_member(x, "as")
+            if isinstance(as_, dict) and as_.get("pin") is True:
+                what, harm, as_risk = SCREEN["autostart_what"], SCREEN["autostart_harm"], "critical"
+            else:
+                what, harm, as_risk = DANGER_WORDS["opaque"][0], DANGER_WORDS["opaque"][1], DANGER_WORDS["opaque"][3]
+            long_harm = AUTOSTART_LONG + ((" " + sl) if so else "")
+            dmark_ = _clean(t, 300)
         sp_, sent_ = _strict_words(t) if kind in ("command", "path") else (None, None)
         if sent_ is not None:                       # r0261: a reason of the strict closed list (its own words, not "dangerous command")
             tt_ = _clean(t[len(sp_.strip()):].strip(), 160) or SCREEN["unnamed"]
@@ -634,8 +655,10 @@ def words(x):
             dmark_ = ""                             # the secret mark ("secrets:<path>") said the same as the title, in the classifier's words
         heads = _heads(x)
         risk = RISK_BY_CODE.get(str(reason or ""), "high") if sent_ is None else sent_[3]
-        if dmark_ and sent_ is None:
+        if dmark_ and sent_ is None and dcat_ is not None:
             risk = DANGER_WORDS[dcat_][3]
+        if as_risk is not None and sent_ is None:
+            risk = as_risk                          # r0298: autostart (critical; under an older vocabulary the words and level of "opaque")
         if so and risk_max([risk, "high"]) != risk:
             risk = "high"                           # 10.11 (r0260): code could publish in the person's name
         if ac_risk is not None and not so:

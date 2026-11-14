@@ -13,10 +13,25 @@ from app import vocab  # noqa: E402
 from app.signview import jcs  # noqa: E402
 import screencheck as SC  # noqa: E402
 
-voc = json.loads(vocab.canonical())
-vb = vocab.canonical()
+# r0298: the server runs mr-vocab-4 (+ screen autostart_what / autostart_harm). Cases S-01..S-24 stay byte for byte: they are built on
+# mr-vocab-3, rebuilt here as mr-vocab-4 minus the new sentences -- its digest is the one 0.2.118-0.2.120 pinned (asserted below)
+R0298_KEYS = ("autostart_what", "autostart_harm")
+voc4 = json.loads(vocab.canonical())
+vb4 = vocab.canonical()
+vd4 = hashlib.sha256(vb4).hexdigest()
+assert voc4["v"] == "mr-vocab-4"
+V3 = dict(voc4, v="mr-vocab-3", screen={k: v for k, v in voc4["screen"].items() if k not in R0298_KEYS})
+
+
+def v3copy():
+    return json.loads(json.dumps(V3, ensure_ascii=False))
+
+
+voc = v3copy()
+vb = jcs(voc)
 vd = hashlib.sha256(vb).hexdigest()
-other = json.loads(vocab.canonical())
+assert vd == "8e70ef8893dd440b7df70228351390f68c6592dd3cc90f127b76d58dbe249ebc", vd
+other = v3copy()
 other["reason_words"] = {k: [w.replace("Your agent wants to", "Your helper would like to"), h] for k, (w, h) in other["reason_words"].items()}
 ob = jcs(other)
 od = hashlib.sha256(ob).hexdigest()
@@ -71,7 +86,7 @@ case("S-13", "the shown action names another recipient than the signed receipt",
 # r0281: the vocabulary of r0280 (mr-vocab-2 before the file-send sentences, digest 07d19a14...): a receipt whose mandate pinned it is
 # still rebuilt from it (old receipts keep verifying); the new sentences are not in it
 R0281_KEYS = ("send_file_what", "send_files_what", "send_file_harm", "send_files_harm", "send_secret_file_harm")
-old_ = json.loads(vocab.canonical())
+old_ = v3copy()
 old_["v"] = "mr-vocab-2"
 old_["screen"] = {k: v for k, v in old_["screen"].items() if k not in R0281_KEYS + ("net_code_run", "net_code_now")}
 olb = jcs(old_)
@@ -91,7 +106,7 @@ case("S-17", "r0281 the new sentence under a mandate that pinned the r0280 vocab
 # r0294: mr-vocab-3 (+ screen net_code_run / net_code_now). The vocabulary of 0.2.116 (mr-vocab-2, digest ab7d5418...) stays: receipts whose
 # mandate pinned it are rebuilt from it as before; the new sentence is not in it
 R0294_KEYS = ("net_code_run", "net_code_now")
-v2_ = json.loads(vocab.canonical())
+v2_ = v3copy()
 v2_["v"] = "mr-vocab-2"
 v2_["screen"] = {k: v for k, v in v2_["screen"].items() if k not in R0294_KEYS}
 v2b = jcs(v2_)
@@ -120,12 +135,27 @@ case("S-22", "r0294 a run of downloaded code under mr-vocab-2: the older vocabul
 case("S-23", "r0294 the host is not the one the witness states", omit(dict(nc, harm=nc["harm"].replace("github.com", "safe.example"))),
      "INVALID WORDING_NOT_DERIVED")
 case("S-24", "r0294 {when} outside the time phrases", omit(dict(nc, harm=nc["harm"].replace("3 min ago", "long ago"))), "INVALID WORDING_NOT_DERIVED")
+# r0298: mr-vocab-4 -- a relative write, in a folder the witness cannot tell, to a file that starts commands by itself
+ASA = {"class": "command", "recipient": "autostart:write to proj/.claude/settings.json in an unknown directory"}
+as_ = view(tool="Bash.danger", action=ASA, text_preview="false && cd /private/tmp\necho x > proj/.claude/settings.json",
+           line_commands=["false", "cd", "echo"], what="Your agent wants to change a file that starts commands by itself",
+           harm="It could make commands run on their own, without asking you.", risk="critical",
+           details="Why it matters: Witness cannot tell which folder this line writes in.\nTool: Bash")
+case("S-25", "r0298 honest: autostart in an unknown folder under mr-vocab-4", omit(as_), "VALID APPROVED_PARTIAL_VIEW", pinned=vd4, given=vd4)
+case("S-26", "r0298 the new sentence under a mandate that pinned mr-vocab-3 (it does not hold it)", omit(as_), "INVALID WORDING_NOT_DERIVED")
+as_old = dict(as_, what="Your agent wants to run a command Witness cannot fully check", harm="Part of it is hidden from Witness.", risk="medium")
+case("S-27", "r0298 the same call under mr-vocab-3: the older vocabulary's own sentence (what the server shows such an owner)", omit(as_old),
+     "VALID APPROVED_PARTIAL_VIEW")
+case("S-28", "r0298 the harm softened by one word", omit(dict(as_, harm="It could make commands run on their own, with your consent.")),
+     "INVALID WORDING_NOT_DERIVED", pinned=vd4, given=vd4)
+case("S-29", "r0298 an older receipt under mr-vocab-4 too: every earlier sentence is still a leaf", omit(base), "VALID APPROVED_PARTIAL_VIEW",
+     pinned=vd4, given=vd4)
 out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8"), old_d: olb.decode("utf-8"),
-                                                   v2d: v2b.decode("utf-8")}, "cases": cases}
+                                                   v2d: v2b.decode("utf-8"), vd4: vb4.decode("utf-8")}, "cases": cases}
 for c in cases:
     got = SC.verdict(c["view"], out["vocabularies"][c["vocab"]].encode("utf-8"), c["pinned"], c["receipt_action"])
     assert got == c["expect"], (c["id"], got, c["expect"])
 with open(os.path.join(HERE, "screen-vectors-0277.json"), "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=1, sort_keys=True)
     f.write("\n")
-print("screen vectors: %d cases, vocabulary %s" % (len(cases), vd[:16]))
+print("screen vectors: %d cases, vocabulary %s (mr-vocab-3 %s)" % (len(cases), vd4[:16], vd[:16]))

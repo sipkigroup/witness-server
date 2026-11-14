@@ -2435,6 +2435,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if (gate is not None and gate[0] == "hold") or (gate is None and dv == "defer" and rp is None):
             _mark_refused_before(ctx, agent, row, act, args, t0, hit_)     # r0275: the owner refused the same effect through another call
             _mark_net_code(ctx, agent, row, act, args, t0, m)          # r0294: the line runs code downloaded in this session
+            _mark_autostart(ctx, row, act, m)                          # r0298: autostart in an unknown folder: which words the mandate pinned
         if gate is not None and gate[0] == "deny":
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
@@ -2572,6 +2573,22 @@ def _mark_net_code(ctx, agent, row, act, args, t0, m=None):
             row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
     except Exception:      # noqa: BLE001  no mark: the question is asked with the general words
         log("ERROR", "net-code mark not made", rid=row.get("rid"))
+
+
+def _mark_autostart(ctx, row, act, m=None):
+    """r0298: a question whose recipient is the danger `autostart` (bashparse.AUTOSTART: a relative write, in a folder the witness cannot
+    tell, to a file that starts commands by itself) carries exec_json "as" {"pin"}: True = the vocabulary the agent's mandate pinned holds
+    qwords SCREEN autostart_* (mr-vocab-4 or later; or none pinned) -> those words; False = a mandate signed before -> its own nearest
+    sentence ("cannot fully check"): signed = shown, the evidence pack stays VALID. No mark (an error) -> the older words, as with False."""
+    if act.get("class") != "command" or not str(act.get("recipient") or "").startswith("autostart:"):
+        return
+    try:
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["as"] = {"pin": bool(_pinned_has(ctx, m, "autostart_harm"))}
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except Exception:      # noqa: BLE001  no mark: the older words
+        log("ERROR", "autostart mark not made", rid=row.get("rid"))
 
 
 def _pinned_has(ctx, m, key):

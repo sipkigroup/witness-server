@@ -12,14 +12,18 @@ r0277 (mr-vocab-2): member "screen" holds the sentences that were written inline
 vocabulary the mandate pinned. A mandate that pinned mr-vocab-1 is checked as before (its words are reported as not rebuildable).
 r0294 (mr-vocab-3): + screen "net_code_run" / "net_code_now" (law "origin of code"). A mandate that pinned mr-vocab-2 keeps its words: the
 question shows that vocabulary's own sentence (actions._pinned_has) and the checker rebuilds both versions.
+r0298 (mr-vocab-4): + screen "autostart_what" / "autostart_harm" (a relative write, in a folder the witness cannot tell, to a file that starts
+commands by itself: asked once, never "from now on"). A mandate that pinned mr-vocab-2 or -3 keeps "Your agent wants to run a command Witness
+cannot fully check" (actions._mark_autostart, exec_json "as".pin false); the checker rebuilds 2, 3 and 4.
 
 Honest limit: pinning says WHICH dictionary was in force; it does not stop the witness from choosing the reason code (profile, risk 2).
 """
 import hashlib
 import json
 
-V = "mr-vocab-3"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
+V = "mr-vocab-4"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
 #                     r0294: + screen net_code_run / net_code_now (a run of code from the network); mr-vocab-2 receipts check as before
+#                     r0298: + screen autostart_what / autostart_harm (a file that starts commands by itself, folder unknown); 2 and 3 as before
 
 
 def doc():

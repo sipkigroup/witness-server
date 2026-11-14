@@ -235,6 +235,22 @@ def is_persist_path(p: str) -> bool:
     return bool(PERSIST_PATH.search(p))
 
 
+# r0298 (decision of Deus 14.11, KLIENT-0.2.76-AUTO.md p.4): a RELATIVE write in an unknown directory (LOST_CWD: `false && cd x` + a line
+# feed, eval, source ...) whose tail names a place that starts programs by itself -- PERSIST_PATH (shell rc, LaunchAgents, Claude Code's
+# settings / hooks / plugins, .mcp.json, the witness, ~/.gitconfig ...) or git's own hooks / config -- carries the danger `autostart`
+# next to the opaque mark. Not a refusal (`persist`, Н4): which folder the file lands in is not known, so the article is not certain
+# (constitution: "a refusal is only for what is certain"). It is a question that says the truth: the words of qwords SCREEN
+# "autostart_*" (mr-vocab-4), "Allow once" / "No" only -- never "from now on" (allowances.offer, repeat.eligible: a dangerous command).
+# The mark stands FIRST in the line's danger list: the question's recipient is the first mark (toolmap.recipient_values).
+AUTOSTART = "autostart"
+AUTOSTART_GIT = re.compile(r"(^|/)\.git[. ]*/(.+/)?(hooks(/|$)|config(\.worktree)?$)", re.I)
+
+
+def is_autostart_tail(t) -> bool:
+    """r0298: a relative path whose tail is a place that starts programs by itself, wherever the unknown directory is."""
+    return isinstance(t, str) and bool(t) and (is_persist_path(t) or bool(AUTOSTART_GIT.search(t)))
+
+
 # 0.2.90: variables and aliases a line sets ONCE with a literal value (`D=/x; cat $D/f`, `alias ll='ls -la'; ll`) are read as bash would
 # substitute them: the path / command is then judged, not "unknown" (the fatigue of 03.11: 60+ `path from expansion: $f` on the owner's own
 # notes). One frame per command line (a nested `bash -c` / `$(..)` starts empty); a name set twice, read, unset or looped over is unknown
@@ -951,13 +967,23 @@ class Command:
     def add(self, cat: str, detail: str = "") -> None:
         d = "%s:%s" % (cat, " ".join(str(detail).split())[:DETAIL_MAX]) if detail else cat
         if d not in self.danger:
-            self.danger.append(d)
+            if cat == AUTOSTART:                    # r0298: first, after earlier autostart marks (the question's recipient)
+                k = 0
+                while k < len(self.danger) and self.danger[k].startswith(AUTOSTART + ":"):
+                    k += 1
+                self.danger.insert(k, d)
+            else:
+                self.danger.append(d)
         o = self.code_d if _CODE[0] > 0 else self.plain_d
         if d not in o:
             o.append(d)
 
     def delete(self, path: str) -> None:
-        self.write(path)
+        if isinstance(path, str) and path.startswith(LOST_CWD + "/"):
+            if path not in self.writes:             # r0298: a deletion starts nothing: no `autostart` mark (the opaque one stays)
+                self.writes.append(path)
+        else:
+            self.write(path)
         if path not in self.deletes:
             self.deletes.append(path)
 
@@ -968,7 +994,11 @@ class Command:
     def write(self, path: str) -> None:
         if path not in self.writes:
             self.writes.append(path)
-        if is_persist_path(path):
+        if isinstance(path, str) and path.startswith(LOST_CWD + "/"):
+            t_ = path[len(LOST_CWD) + 1:]           # r0298: under the unknown directory the place is not certain: asked (autostart), never Н4
+            if is_autostart_tail(t_):
+                self.add(AUTOSTART, "write to %s in an unknown directory" % t_)
+        elif is_persist_path(path):
             self.add("persist", path)               # 0.2.90: shell rc, LaunchAgents, crontab, the agent's settings / hooks, the witness's key
 
     def host(self, h: str) -> None:
@@ -3913,11 +3943,13 @@ def _read_target(t, cwd, home, c):
         c.add("opaque", "read from " + t)
 
 
-def _write_target(t, cwd, home, c, writes):
+def _write_target(t, cwd, home, c, writes, deleting=False):
     if t in SAFE_SINKS or t.startswith("/dev/fd/"):
         return
     if cwd == LOST_CWD and not t.startswith("/"):
         c.opaque = True                         # 0.2.12 (R7-02): after eval / source / a function neither the directory nor $HOME is known
+        if not deleting and is_autostart_tail(t):
+            c.add(AUTOSTART, "write to %s in an unknown directory" % t)     # r0298: a place that starts programs by itself (asked, once)
         c.add("opaque", "write to %s in an unknown directory" % t)
         return
     e = _expand(t, cwd, home)                   # 0.2.11 (R6-02): $HOME / $PWD resolved; any other expansion, ~user, a glob: unknown target
@@ -3947,7 +3979,7 @@ def _delete_targets(ops, cwd, home, c):
         if re.search(r"[*?[]", os.path.basename(o)) and d is not None and not re.search(r"[*?[]", d):
             c.write(_abspath(d, cwd, home))                               # glob: the directory it expands in
         else:
-            _write_target(o, cwd, home, c, c.writes)
+            _write_target(o, cwd, home, c, c.writes, deleting=True)       # r0298: a deletion starts nothing (no `autostart` mark)
         for p_ in c.writes[n0:]:
             if p_ not in c.deletes:
                 c.deletes.append(p_)                                      # 0.2.90: a deletion writes no code (execguard D8 marks)

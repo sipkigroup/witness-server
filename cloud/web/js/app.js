@@ -145,6 +145,8 @@ export function outcomeText(x) {
   if (st === 'pending_approval' || st === 'held') return 'Waiting for you';
   if (st === 'consumed') return rs === 'OK_APPROVED' || v === 'allow' ? 'Ran: you allowed it' : 'Ran';
   if (st === 'approved') return 'Allowed by you (not run yet)';
+  // r0297 (client 0.2.76): the hook reported that the call did not run after the witness allowed it (auto mode of Claude Code refused it)
+  if (st === 'not_executed') return 'Not run: allowed, then stopped before it ran';
   // r0281b (second blind evaluation #1): a `covered` row allowed NOTHING: the first touch set aside the call that waited for it (the agent's
   // repeat is judged by the signed rules), or a "from now on" rule answered the question (the agent's repeat runs under that rule)
   if (st === 'covered') return rs === 'ESCALATE_TRIAL_CLAIM' ? 'Not run: set aside when you set up the account' : 'Not run here: your "from now on" rule answers its repeat';

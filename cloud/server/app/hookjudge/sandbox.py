@@ -601,6 +601,12 @@ def contained(d, project, home=None, sid=None) -> bool:
         return (rel is not None and not _protected_rel(rel)) or in_temp(det, project, home, sid)
     if cat == "git-destroy":
         return GIT_DESTROY_CONTAINED
+    if cat == "autostart":
+        # r0298: a relative write in an unknown directory to a place that starts programs by itself: the same write the opaque mark next
+        # to it names. The sandbox lets a write land only in the project or the temp folders, and Seatbelt refuses .claude/settings*.json,
+        # .mcp.json and .git/hooks|config there; the places it does NOT hold (strict_policy.HOOK_UNHELD: .claude/hooks, .husky ...) stay asked.
+        from .strict_policy import HOOK_UNHELD
+        return not HOOK_UNHELD.search(det)
     if cat != "opaque":
         return False                                  # secrets, git-config, agent-config, git-force-push, pipe-to-shell, sql-drop, disk, new
     if CODE_SEARCH_OWN.match(det) and len(re.sub(r" \(search path\)$", "", det).split("=", 1)[1]) < 60:

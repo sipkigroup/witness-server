@@ -104,6 +104,12 @@ def eligible(ctx, acc, x, action=None):
                 if x["status"] == "expired" and x["verdict"] == "defer" else "only a request that waits for your approval")
     if org.current_policy(ctx, acc["id"]) is not None:
         return "a team's rules need their signatures for each call: approve once"
+    try:
+        rc_ = str((json.loads(x["action_json"]) if x["action_json"] else {}).get("recipient") or "")
+    except (TypeError, ValueError, AttributeError):
+        rc_ = ""
+    if rc_.startswith("autostart:"):
+        return "a file that starts commands by itself, in a folder Witness cannot tell, is asked every time"     # r0298
     if x["reason"] in NOT_OFFERED:
         return ("a dangerous command is asked every time" if x["reason"] == "ESCALATE_COMMAND_DANGER"
                 else "the command runs files that changed since you confirmed them: it is asked every time")

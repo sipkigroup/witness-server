@@ -1103,7 +1103,8 @@ def cover(L, mid, a, tool, args, v, now, amend_meta=None):
     if v0 == "allow" and why0 == "OK" and all(p == PUBLISH for p, _ in v.ask):
         return a                                      # the person listed this publishing command in the mandate
     ids = v.ids()
-    if amend_meta is not None:
+    as_ = any(isinstance(d, str) and d.startswith("autostart:") for d in _witness(args).get("danger") or [])
+    if amend_meta is not None and not as_:            # r0298: autostart in an unknown folder is never covered "from now on"
         for gid, g in sorted(L.S.allowances.items(), key=lambda kv: -kv[1]["seq"]):
             if g["mandate"] == mid and not g["ended"] and g["nbf"] <= now <= g["exp"] and g["project"] == amend_meta["project"] \
                     and all(i in g["commands"] for i in ids):

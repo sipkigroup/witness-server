@@ -39,7 +39,7 @@
  <div class="card" id="tryline">
   <h3>Try in Claude Code (about 2 minutes, no sign-up form)</h3>
   <p class="hint">Needs Claude Code 2.1.295+ and uv (<code>curl -LsSf https://astral.sh/uv/install.sh | sh</code>); macOS, Linux, WSL.</p>
-  <pre class="term">/plugin marketplace add sipkigroup/witness
+  <pre class="term" tabindex="0" role="region" aria-label="Commands to run in Claude Code">/plugin marketplace add sipkigroup/witness
 /plugin install deus-witness@sipkigroup
 /deus-witness:try</pre>
   <p class="hint">Then ask Claude anything; the first call that needs you waits on the page. &ldquo;3 userConfig options not yet set&rdquo; is expected: <code>/plugin install</code> opens a settings panel whose options can stay unset. If asked, run <code>/reload-plugins</code>.</p>
@@ -108,7 +108,7 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
 <section class="card" id="incidents">
  <h2>Why: what has gone wrong, as reported</h2>
  <p class="hint">Public reports, labelled by who confirmed them. We did not reproduce any of these, and cite them from public reports; check the source before relying on a detail. "Vendor-confirmed" means the company or maintainer acknowledged it; "user-reported" means it rests on the affected person's account.</p>
- <div class="tablewrap"><table class="stack" id="inc">
+ <div class="tablewrap" tabindex="0" role="region" aria-label="Reported incidents (scrolls sideways)"><table class="stack" id="inc">
   <thead><tr><th>When</th><th>Agent</th><th>What was reported</th><th>Status</th><th>Source</th></tr></thead>
   <tbody>
    <tr><td data-l="When">Jul 2025</td><td data-l="Agent">A coding agent</td><td data-l="What was reported">Deleted data in a production database during a code-freeze trial; the company's CEO publicly called it unacceptable and announced a post-mortem.</td><td data-l="Status"><span class="tag ok">vendor-confirmed</span></td><td data-l="Source">Major technology press, Jul 2025</td></tr>

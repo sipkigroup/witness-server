@@ -292,7 +292,7 @@ pre.term::before{content:"$ ";color:var(--term-mute)}
 
 /* ---------- approval page: a native-app feel on the phone ---------- */
 .single #title{font-size:1.5rem;line-height:1.2;letter-spacing:-.028em;font-weight:680}
-.backlink a{color:var(--mute);text-decoration:none;font-weight:500}
+.backlink a{color:var(--mute);text-decoration:none;font-weight:500;display:inline-block;min-height:24px;line-height:24px}   /* V4 14.11: a lone link is a target >= 24x24 px (WCAG 2.5.8) */
 .backlink a:hover{color:var(--ink)}
 pre.what{background:var(--term);color:var(--term-ink);border:1px solid var(--term-line);border-radius:12px;font-size:1rem;line-height:1.5;padding:12px 14px;box-shadow:var(--sh-1)}
 .decision .lead{font-size:.95rem}

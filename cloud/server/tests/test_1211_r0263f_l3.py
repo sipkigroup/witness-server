@@ -135,4 +135,5 @@ def test_agent_config_words_twins(rc, heads, pred_what):
 def test_strict_data_title_in_words(tags, pred):
     w = qwords.words(_row("(strict data) " + tags, "echo x > f", []))
     PRED = ("Your agent's command contains " + pred, True, "medium")
-    assert (w["what"], ("Why Witness asks: (strict data) " + tags) in w["details"], w["risk"]) == PRED, w
+    # r0299: the DLP tag is no longer quoted under Details ("Why Witness asks: (strict data) email_address"): the title says it in words
+    assert (w["what"], "(strict data)" not in w["details"] and tags not in w["details"], w["risk"]) == PRED, w

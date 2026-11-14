@@ -264,6 +264,35 @@ def _frame():
     return _FRAMES[-1] if _FRAMES else None
 
 
+# r0299 (AVTOZAPUSK-NEIZVESTNAYA-PAPKA.md, "what is left"): an unknown DIRECTORY makes only RELATIVE paths unknown. After `false && cd X` +
+# a line feed (a cd that may or may not have run, a cd in a pipeline) $HOME is still the hook's $HOME: `echo x > ~/.bashrc` writes the same
+# file in any directory, and is refused (Н4) exactly as without the prefix. Only what can change the meaning of HOME itself -- eval, source,
+# alias, trap ... (EVALISH) or a function defined in the line -- makes ~ / $HOME unknown as well ("home lost", sticky for the rest of the
+# line and inherited by its nested command lines); then such a write stays a question (autostart / opaque) as in r0298.
+def _lose_home():
+    f = _frame()
+    if f is not None:
+        f["home_lost"] = True
+
+
+def _home_lost() -> bool:
+    f = _frame()
+    return bool(f and f.get("home_lost"))
+
+
+def _known_without_cwd(t, cwd, home):
+    """r0299: -> True when the path word `t` names the same file in any directory: absolute after expansion ($HOME, $TMPDIR, a literal line
+    variable), or `~` / `~/...`, and $HOME has not been lost (_home_lost). `$PWD/...` and anything under the unknown directory are not."""
+    if _home_lost():
+        return False
+    e = _expand(t, cwd, home)
+    if e is None or not e:
+        return False
+    if e == "~" or e.startswith("~/"):
+        return True
+    return e.startswith("/") and not _in_project(os.path.normpath(e), LOST_CWD)
+
+
 def _set_var(name, value):
     f = _frame()
     if f is None:
@@ -3046,7 +3075,8 @@ def _outside(args, here, home, project) -> bool:
 
 def classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, project: str | None = None, _budget=None) -> Command:
     """0.2.90: one frame of line variables / aliases per command line (see _FRAMES); the rest is _classify."""
-    _FRAMES.append({"vars": {}, "aliases": {}, "links": {}})
+    # r0299: a nested command line (`bash -c`, `$(..)`, a runner's child) keeps "$HOME is not known" of the line that runs it
+    _FRAMES.append({"vars": {}, "aliases": {}, "links": {}, "home_lost": bool(_FRAMES and _FRAMES[-1].get("home_lost"))})
     try:
         return _classify(cmd, cwd, home, _depth, project, _budget)
     finally:
@@ -3125,6 +3155,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
         c.opaque = True                                    # 0.2.12 (R7-02): any later word may run the function: its effect is unknown
         c.add("opaque", "function defined in the line")
         here = LOST_CWD
+        _lose_home()                                       # r0299: a function may set HOME when it runs: ~ / $HOME unknown too
     # 0.2.12: where each simple command runs. A `cd` changes the directory for sure only when it runs in this shell (not in a pipeline, in the
     # background or in a `( )` subshell, which ends at its `)`), unconditionally (not after && / || / then / do ...) and into a directory that
     # exists (bash stays where it was when `cd` fails). Otherwise the commands after it in the same && chain run there, and the commands after
@@ -3313,6 +3344,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             c.opaque = True                                # 0.2.12 (R7-02): what the rest of the line means (its directory, its commands)
             c.add("opaque", "%s: the rest of the line cannot be judged" % name)     # is not known after eval / source / alias / trap ...
             here = LOST_CWD
+            _lose_home()                                   # r0299: eval / source may set HOME: ~ / $HOME unknown too (not after a lost `cd`)
         if name in ("cd", "pushd", "popd") and here == LOST_CWD:
             continue                                       # `cd` itself may be a function or alias by now: the directory stays unknown
         if name in ("cd", "pushd", "popd"):
@@ -3946,7 +3978,7 @@ def _read_target(t, cwd, home, c):
 def _write_target(t, cwd, home, c, writes, deleting=False):
     if t in SAFE_SINKS or t.startswith("/dev/fd/"):
         return
-    if cwd == LOST_CWD and not t.startswith("/"):
+    if cwd == LOST_CWD and not t.startswith("/") and not _known_without_cwd(t, cwd, home):
         c.opaque = True                         # 0.2.12 (R7-02): after eval / source / a function neither the directory nor $HOME is known
         if not deleting and is_autostart_tail(t):
             c.add(AUTOSTART, "write to %s in an unknown directory" % t)     # r0298: a place that starts programs by itself (asked, once)

@@ -61,7 +61,7 @@ def _marks(cmd):
 # ---- the parser: every autostart place the server knows, in an unknown folder ------------------------------------------------------------
 @pytest.mark.parametrize("tail", [
     "proj/.claude/settings.json", ".claude/settings.local.json", ".claude/hooks/pre.sh", ".claude/plugins/x/hooks.json", ".mcp.json",
-    ".claude.json", ".bashrc", ".zshrc", ".zprofile", ".profile", "~/.bashrc", ".config/fish/config.fish", "Library/LaunchAgents/x.plist",
+    ".claude.json", ".bashrc", ".zshrc", ".zprofile", ".profile", ".config/fish/config.fish", "Library/LaunchAgents/x.plist",
     "Library/LaunchDaemons/x.plist", ".config/autostart/x.desktop", ".config/systemd/user/x.service", ".git/hooks/pre-commit",
     ".git/config", ".gitconfig", ".config/git/config", ".ssh/authorized_keys", ".config/deus-witness/key",
 ])
@@ -103,7 +103,8 @@ def _question(rig, cmd):  # noqa: F811
     return rid, _page(rig, rid)
 
 
-@pytest.mark.parametrize("cmd", [PROBE, "ROW190", LOST + "echo x >> ~/.zshrc", LOST + "cp hook.sh .git/hooks/pre-commit",
+# r0299: "~/.bashrc" / "~/.zshrc" left these lists: a path through ~ names the same file in any folder (refused, Н4: test_1411_r0299_bashrc_metki)
+@pytest.mark.parametrize("cmd", [PROBE, "ROW190", LOST + "echo x >> .zshrc", LOST + "cp hook.sh .git/hooks/pre-commit",
                                  LOST + "cp a.plist Library/LaunchAgents/com.x.plist"])
 def test_question_says_the_truth_and_offers_once_only(rig, cmd):  # noqa: F811
     cmd = ROW190.replace("{P}", rig.proj) if cmd == "ROW190" else cmd

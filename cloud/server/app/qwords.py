@@ -367,6 +367,59 @@ def danger_category(t):
     return (cat, det) if cat in DANGER_WORDS else (None, t)
 
 
+# r0299 (R0299-BASHRC-I-METKI.md; owner 05.11 "ВОПРОС -- ПРОСТО": no internal names): the line "Why Witness asks" under Details said the
+# parser's mark ("autostart:write to ...", "opaque:eval: ...", "agent-config:(hook) git config", "(strict data) email_address"). Now the mark's
+# category in words (this table; one entry per DANGER_WORDS category + autostart + agent-config), then the parser's own detail when the text
+# of the call does not already show it. Details is signed with the view (signview "details"), never rebuilt from the vocabulary (screencheck
+# rebuilds the first screen only): the vocabulary document mr-vocab-4 and its digest do not change; views stored before stay as they were.
+MARK_WORDS = {
+    "install": "it installs packages from the internet",
+    "fetch": "it downloads from a repository",
+    "push": "it sends code to a server",
+    "exit": "a program in it reaches the internet",
+    "opaque": "Witness cannot read part of this line",
+    "secrets": "it touches your keys or passwords",
+    "rm-rf": "it deletes files for good",
+    "git-config": "it changes git settings that run programs",
+    "pipe-to-shell": "it runs a downloaded script at once",
+    "write-outside": "it writes outside the project",
+    "sql-drop": "it deletes database data",
+    "loopback-write": "it sends data to a program on this computer",
+    "git-destroy": "it throws away git work",
+    "disk": "it uses a disk tool",
+    "witness": "it touches Witness's own key or settings",
+    "git-force-push": "it overwrites history on the server",
+    "autostart": "it writes a file that starts commands by itself",
+    "agent-config": "it changes your agent's own settings",
+}
+
+
+def mark_said(m, shown=""):
+    """r0299: the internal mark of a danger ("<category>:<detail>") -> the words of the line "Why Witness asks": the category in words, then
+    the detail. None when nothing is left to say that the title and the text do not: no detail, or the text of the call shows it (the title
+    already says the category in words), or a "(strict data)" tag (the title names it in words). Never the category's internal name: an
+    unknown category says only its detail."""
+    m = str(m or "")
+    if not m or m.startswith("(strict "):
+        return None
+    cat, sep, det = m.partition(":")
+    if not sep or not re.fullmatch(r"[a-z][a-z-]{1,20}", cat):
+        return None              # not a mark of the parser: nothing of it is said (it could be an internal name)
+    det = det.strip()
+    det = det[len(HARNESS_MARK_):].strip() if det.startswith(HARNESS_MARK_) else det
+    if cat == "agent-config":
+        key = "git-config" if (det.startswith("git config") or re.search(r"(^|/)\.git/(hooks|config)|(^|/)\.gitconfig$", det)) else cat
+    elif cat == AUTOSTART_MARK[:-1]:
+        key = cat
+    else:
+        key = danger_category(m)[0] or cat      # net-out / exit -> install, push, fetch or exit
+    det = _clean(det, 300) if det and det not in str(shown or "") else ""
+    if not det:
+        return None              # the title already says the category in words, the text shows the rest: nothing more to say
+    words = MARK_WORDS.get(key)
+    return det if words is None else words + " — " + det
+
+
 HARNESS_MARK_ = "(hook) "           # = hookjudge.mapping.HARNESS_MARK (client 0.2.59+: the lock K1 found the agent's harness)
 QUIET_ON = "(quiet mode on) "      # = hookjudge.bashparse.QUIET_ON (r0262)
 TEMP_WRITE = "(write outside the project) "      # = hookjudge.mapping.OUTSIDE_WRITE (r0261f: a Write / Edit in shared temp)
@@ -706,8 +759,9 @@ def words(x):
         d = []
         if long_harm and long_harm != harm:
             d.append("Why it matters: %s" % long_harm)
-        if dmark_ or ac_mark:
-            d.append("Why Witness asks: %s" % (dmark_ or ac_mark))
+        why_ = mark_said(t if dmark_ else ac_mark, x["text_preview"] if "text_preview" in x.keys() else "") if (dmark_ or ac_mark) else None
+        if why_:
+            d.append("Why Witness asks: %s" % why_)     # r0299: the mark in words (MARK_WORDS), never its internal name
         if dl_line_:
             d.append(dl_line_)
         d.append("Tool: %s" % _clean(str(x["tool"] or "").split(".")[0], 80))     # r0264: "Bash", not the part code "Bash.danger"

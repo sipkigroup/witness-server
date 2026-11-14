@@ -34,7 +34,9 @@ def _row(rc, text, tool="Bash.danger", reason="ESCALATE_COMMAND_DANGER", heads=N
 def test_title_is_words_not_the_mark(rc, text, heads, pred_word, pred_risk):
     w = qwords.words(_row(rc, text, heads=heads))
     PRED = (True, False, True, pred_risk)
-    got = (pred_word in w["what"], any(m in w["what"] for m in MARKS) or w["harm"] == GENERIC, ("Why Witness asks: " + rc.split(":")[0]) in w["details"], w["risk"])
+    # r0299: under Details the mark is said in words (qwords.MARK_WORDS), never by its internal name ("Why Witness asks: exit" before)
+    got = (pred_word in w["what"], any(m in w["what"] for m in MARKS) or w["harm"] == GENERIC,
+           not any(m in w["details"] for m in MARKS) and ("Why Witness asks: " + rc.split(":")[0]) not in w["details"], w["risk"])
     assert got == PRED, w
 
 

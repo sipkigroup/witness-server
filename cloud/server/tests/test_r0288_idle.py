@@ -1,4 +1,4 @@
-"""r0288 (owner 13.11, RESHENIYA p.2; FABLE-OTVETY-7-1311 p.2): an account in use is never erased by time; an unused one is warned first;
+"""r0288 (13.11): an account in use is never erased by time; an unused one is warned first;
 one wording of "free" everywhere, no "for good" / "forever"; the status page link comes from DW_STATUS_URL only."""
 import os
 import re

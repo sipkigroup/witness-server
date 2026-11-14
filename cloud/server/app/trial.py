@@ -27,7 +27,7 @@ IP is not stored); DW_TRIAL_QUOTA actions a day per trial account (instead of th
 touch; the account and everything in it are erased DW_TRIAL_TTL_DAYS after it was made unless the person keeps it (expire_due, hourly; an
 expired key is refused at once).
 
-r0288 (owner 13.11, RESHENIYA p.2): an account that is USED is not erased by time. "Used" = its agents called the witness (any /v1 call
+r0288 (13.11): an account that is USED is not erased by time. "Used" = its agents called the witness (any /v1 call
 with the agent key: the hook, the MCP proxy) or a person signed in / signed with a passkey, within DW_IDLE_DAYS (90).
   - a quick start account without a passkey: each call moves its end to (the call + DW_IDLE_DAYS); one the hook never called still ends
     DW_TRIAL_TTL_DAYS after it was made (nobody can be warned: it has no passkey, no push, no page);

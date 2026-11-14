@@ -6,11 +6,11 @@ const $ = (s) => document.querySelector(s);
 const BASE = '/demo/';
 const PACK = BASE + 'pack/';
 const HARM = {
-  C1: 'Without Witness: the home address and phone go to a stranger (2 emails).',
-  C2: 'Without Witness: the production database is gone.',
-  C3: 'Without Witness: 300 USD spent against a 200 USD budget.',
-  C4: 'Without Witness: works. With it: works too (no false alarm).',
-  C5: 'Without Witness: published without the owner.',
+  C1: 'Without Deus Witness: the home address and phone go to a stranger (2 emails).',
+  C2: 'Without Deus Witness: the production database is gone.',
+  C3: 'Without Deus Witness: 300 USD spent against a 200 USD budget.',
+  C4: 'Without Deus Witness: works. With it: works too (no false alarm).',
+  C5: 'Without Deus Witness: published without the owner.',
 };
 const PILL = { allow: 'allow', deny: 'deny', defer: 'defer', approve: 'allow' };
 

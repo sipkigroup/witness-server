@@ -149,6 +149,7 @@ details.more h3.small{margin-top:.6em}
 .gobtn{margin:.8em 0 .2em}
 .gobtn #go{width:100%;min-height:52px;font-size:1.08rem}
 .pmhint{margin:.2em 0 .8em}
+.terms{margin:.3em 0 .2em;font-size:.8rem}   /* r0289: the one line of assent at the passkey button (trial, sign-up) */
 #claim .lead{margin:.2em 0 .3em}
 #waiting .notice{padding:8px 10px}
 #waiting pre{margin:.3em 0;padding:8px}

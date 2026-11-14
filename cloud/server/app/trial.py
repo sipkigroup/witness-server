@@ -59,7 +59,7 @@ PENDING_MAX = 20
 REASON = "ESCALATE_TRIAL_CLAIM"
 FORM_MAX = 16 * 1024
 # r0288 (owner 13.11): the one wording of "free" (privacy.html, terms.html, trial.html, index.html, docs say the same; a test checks)
-FREE_TEXT = "Free for one person. If this ever changes, existing accounts stay free and we announce it in advance."
+FREE_TEXT = "Free for one person. If this ever changes, existing accounts stay free on the limits in force at that time, and we announce it at least 30 days in advance."
 KEEP_TEXT = ("A quick start account without a passkey is erased after %d days if your hook never calls; an account in use is kept: it is "
              "erased only after %d days with no call from your hook and no sign-in, and with a passkey you get a push 14 days before.")
 SENT = ["the tool name and its full input of every call the hook sees (shell commands, file paths, URLs; the text written by Write/Edit is "
@@ -300,7 +300,7 @@ def claim_begin(ctx, claim):
     return o
 
 
-def claim_finish(ctx, flow_id, credential, claim, device=None):
+def claim_finish(ctx, flow_id, credential, claim, device=None, terms=None):
     """The first touch: the passkey becomes the account's first key. One conditional UPDATE decides who was first (a second claim, or a
     replay of this one, finds the claim gone: 409)."""
     from app import auth
@@ -314,7 +314,7 @@ def claim_finish(ctx, flow_id, credential, claim, device=None):
         if not db.n("UPDATE accounts SET trial_claimed_at=?, trial_claim=NULL, display_name=? WHERE id=? AND trial_claim=? AND trial_claimed_at IS NULL",
                     (t, st["display_name"], a["id"], claim_hash(claim))):
             raise Err(409, "TRIAL_CLAIMED", "this trial account already has its passkey")
-        principal, kid = auth.bind_identity(ctx, db, a["id"], st["display_name"], cid, pub, sign_count, device, t, new_account=False)
+        principal, kid = auth.bind_identity(ctx, db, a["id"], st["display_name"], cid, pub, sign_count, device, t, new_account=False, terms=terms)
     from app import stats
     stats.first(ctx, a["id"], "registration")
     ag = _agent(ctx, a["id"])
@@ -566,7 +566,7 @@ def make_router(ctx, client_ip, session_account, require_stepup, body):
         b = await body(req)
         if not isinstance(b.get("credential"), dict):
             raise Err(400, "BAD_REQUEST")
-        acc, keycard, extra = claim_finish(ctx, b.get("flow_id"), b["credential"], claim_of(req, b), b.get("device"))
+        acc, keycard, extra = claim_finish(ctx, b.get("flow_id"), b["credential"], claim_of(req, b), b.get("device"), b.get("terms"))
         resp = JSONResponse(dict(extra, account=acc, keycard=keycard, user={"id": acc["id"], "display_name": acc["display_name"]}))
         cr = ctx.db.one("SELECT id FROM credentials WHERE kid=?", (bytes.fromhex(keycard["kid_hex"]),))
         auth.start_session(ctx, resp, acc["id"], acc["id"], cr["id"] if cr else None)

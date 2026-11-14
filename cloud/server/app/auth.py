@@ -50,6 +50,18 @@ def take_flow(ctx, fid, purpose):
     return json.loads(r["state_json"])
 
 
+# r0289 (owner 13.11, TERMS-REVIEW #1): the version of terms.html / privacy.html in force. The pages that make an account (trial.html,
+# signup.html) show "By continuing you agree to the Terms and Privacy" next to the passkey button and send this version with the passkey
+# ceremony; the account keeps the version and the time (accounts.terms_version / terms_at), set in the transaction that binds its first
+# passkey. A test checks that terms.html, privacy.html, trial.html and signup.html name this same version.
+TERMS_VERSION = "2026-11-13"
+
+
+def terms_of(v):
+    """-> the version to record: only the version in force (a page cached from before the consent line sends nothing: nothing recorded)."""
+    return v if v == TERMS_VERSION else None
+
+
 def register_begin(ctx, display_name):
     chal = os.urandom(32)
     uid = os.urandom(16)
@@ -80,7 +92,7 @@ def verify_registration(ctx, st, credential):
     return v.credential_id, pub, v.sign_count
 
 
-def bind_identity(ctx, db, aid, display_name, cid, pub, sign_count, device, t, new_account=True):
+def bind_identity(ctx, db, aid, display_name, cid, pub, sign_count, device, t, new_account=True, terms=None):
     """The person + their first passkey + the registry entry, inside the caller's transaction. new_account=False (0.2.38, a trial account
     claimed by its first touch): the account row exists already (made by POST /v1/trial without a key) and gets its user and key now."""
     principal = "dw:" + aid
@@ -102,17 +114,19 @@ def bind_identity(ctx, db, aid, display_name, cid, pub, sign_count, device, t, n
     if device == "phone":
         db.x("UPDATE users SET phone_ever=1 WHERE id=?", (aid,))       # 0.2.14 (R8-06)
     org.add_owner(db, aid, aid, kid)
+    if terms_of(terms):                     # r0289: the terms the person agreed to by this passkey ceremony (user verification required)
+        db.x("UPDATE accounts SET terms_version=?, terms_at=? WHERE id=?", (terms, t, aid))
     reglog.append(db, aid, kid, ej, t)                 # 0.2.12 (R7-04): both chains (the row's seq is the one named in pin_source)
     return principal, kid
 
 
-def register_finish(ctx, flow_id, credential, device=None):
+def register_finish(ctx, flow_id, credential, device=None, terms=None):
     st = take_flow(ctx, flow_id, "register")
     cid, pub, sign_count = verify_registration(ctx, st, credential)
     aid = org.new_user_id()                 # the user's own (solo) account has the user's id
     t = now()
     with ctx.db.tx() as db:
-        principal, kid = bind_identity(ctx, db, aid, st["display_name"], cid, pub, sign_count, device, t)
+        principal, kid = bind_identity(ctx, db, aid, st["display_name"], cid, pub, sign_count, device, t, terms=terms)
     from app import stats
     stats.first(ctx, aid, "registration")                  # 0.2.28: after the commit (the display name is there for the "own" mark)
     return ({"id": aid, "principal": principal, "display_name": st["display_name"]},

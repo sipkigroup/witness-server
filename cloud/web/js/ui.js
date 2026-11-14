@@ -107,3 +107,6 @@ export const safeId = (s) => typeof s === 'string' && /^[A-Za-z0-9_-]{1,80}$/.te
 export const short = (hex) => String(hex || '').slice(0, 8);
 export function kv(rows) { return h('dl', { class: 'kv' }, ...rows.flatMap(([k, v]) => [h('dt', { text: k }), h('dd', { text: v })])); }
 export const failText = (e) => (e && e.code ? e.code + (e.detail ? ': ' + e.detail : '') : (e && e.message) || String(e));
+// r0289 (TERMS-REVIEW #1): the version of the Terms named by the consent line next to the passkey button (#terms data-terms); the server
+// records it with the account's first passkey. No line on the page (an older cached page) -> undefined: nothing is recorded.
+export function termsShown(doc) { const e = doc && doc.getElementById('terms'); return (e && e.dataset && e.dataset.terms) || undefined; }

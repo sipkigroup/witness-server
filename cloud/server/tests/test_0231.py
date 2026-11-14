@@ -24,7 +24,7 @@ def test_0231_pricing_page_and_link():
     assert 'href="/pricing/"' in idx and "Pricing after early access" not in idx
     pg = _read("web", "pricing", "index.html")
     # r0288 (owner 13.11): one person free, no "for good"; teams free during the beta
-    assert "If this ever changes, existing accounts stay free and we announce it in advance." in pg and "Teams: free during the beta" in pg
+    assert "If this ever changes, existing accounts stay free on the limits in force at that time, and we announce it at least 30 days in advance." in pg and "Teams: free during the beta" in pg
     assert "Pricing not published yet" not in pg and "Team and Enterprise" not in pg and 'id="teamreq"' in pg
     # 24.10 (ошибка ×2: пин версии ломался на каждом выпуске): не ниже 0.2.31, а не список
     assert tuple(map(int, _read("deploy", "VERSION").strip().split("."))) >= (0, 2, 31)

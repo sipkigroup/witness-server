@@ -36,7 +36,7 @@ function hookRounds(r) {
 // r0281 (blind evaluation #24): what each button does, and whether it can be undone, next to them
 // r0283 (third blind evaluation Н-7 #29 #30, decisions 5, 6, 10): Freeze says what the SERVER does (it refuses the agent's calls; the agent's
 // program is not stopped); "rules", not "mandate"; Disable is under "More" with its own words (DISABLE_HELP)
-export const AGENT_BUTTONS_HELP = 'Freeze: Witness refuses every call of this agent until you unfreeze it. Revoke: ends the rules you signed; the agent is refused until you sign new ones.';
+export const AGENT_BUTTONS_HELP = 'Freeze: Deus Witness refuses every call of this agent until you unfreeze it. Revoke: ends the rules you signed; the agent is refused until you sign new ones.';
 export const DISABLE_HELP = 'Disable switches this agent\'s key off for good; it cannot be undone (a new agent needs a new key). You type its name, then confirm with Face ID (your passkey).';
 
 // 0.2.25: freeze / unfreeze on the agent card (the server asks for a fresh passkey touch; api.js requests it and retries)

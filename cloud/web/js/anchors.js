@@ -13,7 +13,7 @@ export function anchorText(profile) {
     };
   }
   return {
-    lead: 'Independent timestamps: every hour your ledger is stamped outside Witness, so entries cannot be backdated without it showing.',
+    lead: 'Independent timestamps: every hour your ledger is stamped outside Deus Witness, so entries cannot be backdated without it showing.',
     more: [
       'Internal guarantee: the same hourly root is also committed to the Bitcoin blockchain (OpenTimestamps). You do not need to do anything with it; the evidence pack checker verifies it offline.',
     ],

@@ -107,7 +107,7 @@ def make_router(ctx):
         if inv is not None and not ctx.db.one("SELECT 1 AS k FROM invites WHERE token_hash=? AND used_by IS NULL AND expires>=?",
                                               (hashlib.sha256(str(inv).encode()).digest(), now())):
             raise Err(409, "INVITE_INVALID", "the invite is unknown, used or expired")      # before the passkey is registered
-        acc, keycard = auth.register_finish(ctx, b.get("flow_id"), b["credential"], b.get("device"))
+        acc, keycard = auth.register_finish(ctx, b.get("flow_id"), b["credential"], b.get("device"), b.get("terms"))
         if trial.internal_ip(ctx, client_ip(req)):
             db.x("UPDATE accounts SET internal=1 WHERE id=?", (acc["id"],))       # 0.2.38: made from our own network: never counted
         out = {"account": acc, "keycard": keycard, "user": {"id": acc["id"], "display_name": acc["display_name"]}}

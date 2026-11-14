@@ -224,7 +224,8 @@ class DB:
                                     ("actions", "push_state_at", "INTEGER"), ("actions", "push_tries", "INTEGER"),
                                     ("agents", "created_by", "TEXT"),    # r0284: the member who made the agent (no self-approval in a team); NULL = made before r0284
                                     ("push_subs", "acked", "INTEGER"),      # r0276b: this subscription's service worker has acked a push (no personal data)
-                                    ("accounts", "last_hook_at", "INTEGER"), ("accounts", "idle_warned_at", "INTEGER")):   # r0288: last call of the account's agents (hourly), the push before an idle erase
+                                    ("accounts", "last_hook_at", "INTEGER"), ("accounts", "idle_warned_at", "INTEGER"),   # r0288: last call of the account's agents (hourly), the push before an idle erase
+                                    ("accounts", "terms_version", "TEXT"), ("accounts", "terms_at", "INTEGER")):   # r0289: the terms agreed to with the first passkey, and when
                 cols = {r["name"] for r in self.c.execute("PRAGMA table_info(%s)" % table)}
                 if col not in cols:
                     self.c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, typ))

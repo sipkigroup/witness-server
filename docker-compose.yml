@@ -12,7 +12,7 @@ x-witness-image: &image
   build:
     context: .
     dockerfile: Dockerfile
-  image: deus-witness-open:${DW_VERSION:-0.2.112}
+  image: deus-witness-open:${DW_VERSION:-0.2.113}
 
 services:
   keys:

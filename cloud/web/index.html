@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="css/app.css"><link rel="manifest" href="manifest.webmanifest"><title>Deus Witness - Face ID, fingerprint or security key for your AI agent's risky actions</title>
 <meta name="description" content="A tamper-evident audit log for AI agents: a record that cannot be quietly changed, with timestamps, checkable offline. Approve risky actions with a passkey and cap what the agent can spend."></head>
-<body><header class="top"><a class="brand" href="index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<body><header class="top"><a class="brand" href="index.html">Deus Witness&trade;</a><nav id="nav" aria-label="Main"></nav></header>
 <main class="wrap landing">
 
 <section class="hero" id="developers">
@@ -47,7 +47,7 @@
  </div>
  <div class="why">
  <h2>Why not just Claude Code's own permissions?</h2>
- <p>A <code>permissions.deny</code> rule matches the command text and can only block; in <code>claude -p</code> nobody can answer a permission prompt, so calls that need one are refused. Witness adds your passkey approval of the exact call, from any device, and a signed receipt someone else can verify without trusting us. It is not a sandbox: run your agent inside one too (OpenShell, sandbox-runtime, a container). Guides: <a href="/dl/docs/claude-code-hooks-vs-permissions-deny.html">hooks vs permissions.deny</a>, <a href="/dl/docs/claude-code-permissions-deny-not-working.html">permissions.deny not working?</a>, <a href="/dl/docs/claude-code-dangerously-skip-permissions.html">--dangerously-skip-permissions</a>.</p>
+ <p>A <code>permissions.deny</code> rule matches the command text and can only block; in <code>claude -p</code> nobody can answer a permission prompt, so calls that need one are refused. Deus Witness adds your passkey approval of the exact call, from any device, and a signed receipt someone else can verify without trusting us. It is not a sandbox: run your agent inside one too (OpenShell, sandbox-runtime, a container). Guides: <a href="/dl/docs/claude-code-hooks-vs-permissions-deny.html">hooks vs permissions.deny</a>, <a href="/dl/docs/claude-code-permissions-deny-not-working.html">permissions.deny not working?</a>, <a href="/dl/docs/claude-code-dangerously-skip-permissions.html">--dangerously-skip-permissions</a>.</p>
  <p class="hint">Or set it up by hand for any MCP client:</p>
  <pre class="oneline" id="mcpline">claude mcp add witnessed --env DEUS_WITNESS_KEY=dwk_YOUR_KEY --env DEUS_WITNESS_URL=https://witness.sipkigroup.com -- deus-witness-mcp -- YOUR-MCP-SERVER-COMMAND</pre>
  <p class="hint">One line for any MCP client (Claude Code shown). For Claude Code's built-in tools (Bash, Edit, Write and also Read, Grep, Glob, web and MCP tools) there is a PreToolUse hook that blocks the call when a key is set and the witness cannot be reached. Without a key it is fail-open (it warns and lets calls pass) unless <code>strict</code> is on. See the <a href="/dl/docs/quickstart.html">quickstart</a>, <a href="/dl/docs/claude-code-pretooluse-hook-examples.html">PreToolUse hook examples</a> and <a href="/dl/docs/mcp-human-in-the-loop-tool-approval.html">human approval for MCP tool calls</a>.</p>
@@ -63,7 +63,7 @@ deus-witness-hook --doctor /path/to/project   # must say: OK: fail-closed
 claude -p "Run the tests, fix what fails. Do not push." --output-format json</pre>
  <p class="hint">Before that: an agent with the <code>claude-code</code> preset, its mandate, and our <code>settings.unattended.json</code> as the project's <code>.claude/settings.json</code> (pip needs Python 3.10+ in a venv outside the project). If the witness cannot be reached, the call is blocked, not run. Background: <a href="/dl/docs/claude-code-headless-mode-permissions.html">headless mode (claude -p): permissions and approvals</a>.</p>
  <p><strong>If nobody approves in time, the call does not run.</strong> The hook waits up to 10 minutes. Approve within that time and the call runs in the same run. Otherwise it is refused and that step is not done (through MCP the agent gets <code>Action NOT executed</code>). The agent may go on with other work or stop; our cron and CI templates then exit with code 3, so cron mail or a red job tells you.</p>
- <p><strong>Nothing re-runs the job for you.</strong> Witness does not restart your agent, and the templates do not retry. An approval you give later still counts until the request expires, 15 minutes after it was asked: if you re-run the job by then and it makes exactly the same call, that call passes once (for Claude Code's shell this needs the hook deus-witness&nbsp;0.2.33 or newer: older hooks send Claude Code's free-text description of the command, which differs on every try). Later, or with different arguments, it needs a new approval.</p>
+ <p><strong>Nothing re-runs the job for you.</strong> Deus Witness does not restart your agent, and the templates do not retry. An approval you give later still counts until the request expires, 15 minutes after it was asked: if you re-run the job by then and it makes exactly the same call, that call passes once (for Claude Code's shell this needs the hook deus-witness&nbsp;0.2.33 or newer: older hooks send Claude Code's free-text description of the command, which differs on every try). Later, or with different arguments, it needs a new approval.</p>
  <p><strong>For a job on a schedule, approve once for the next runs.</strong> When you approve, open &ldquo;More options&rdquo; and tick &ldquo;Also approve this exact call for this agent's later runs&rdquo;: the same call with exactly the same arguments then runs in the next runs without asking you, up to 1, 3 or 10 more times within 1, 24 or 72 hours. One passkey prompt signs it. The first use is reported to your channels at once; further uses are reported as one summary at most every 10 minutes (the number of calls, no arguments). Any other call is still asked, and you revoke it in one click on the Permissions page. For a shell command it approves the command line, not the script it runs: it ends as soon as the agent writes a script or source file that command runs. Needs the hook deus-witness&nbsp;0.2.33 or newer for Claude Code's shell.</p>
  <p class="row"><a class="btn" href="https://github.com/sipkigroup/witness/blob/main/python/UNATTENDED.md">Guide for unattended runs (GitHub)</a></p>
 </section>
@@ -84,7 +84,7 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
 <section class="card" id="security">
  <p class="eyebrow">For security teams</p>
  <h2>A black box for your agents: a tamper-evident audit log</h2>
- <p>When an agent sends mail, moves money, deletes or publishes, the usual record is the log of the party being judged. Witness keeps a separate, tamper-evident audit log: a log that cannot be quietly changed afterwards, with timestamps. It holds proof that the agent stayed within a signed mandate, or exactly where it did not.</p>
+ <p>When an agent sends mail, moves money, deletes or publishes, the usual record is the log of the party being judged. Deus Witness keeps a separate, tamper-evident audit log: a log that cannot be quietly changed afterwards, with timestamps. It holds proof that the agent stayed within a signed mandate, or exactly where it did not.</p>
  <ul>
   <li><strong>A tamper-evident, hash-chained log</strong> that cannot be quietly rewritten later, timestamped (see "How it is verified").</li>
   <li><strong>A human-signed mandate.</strong> What the agent was allowed to do, signed with a named person's passkey.</li>
@@ -114,12 +114,12 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
    <tr><td data-l="When">Jul 2025</td><td data-l="Agent">A coding agent</td><td data-l="What was reported">Deleted data in a production database during a code-freeze trial; the company's CEO publicly called it unacceptable and announced a post-mortem.</td><td data-l="Status"><span class="tag ok">vendor-confirmed</span></td><td data-l="Source">Major technology press, Jul 2025</td></tr>
    <tr><td data-l="When">Nov 2025</td><td data-l="Agent">An open-source coding agent</td><td data-l="What was reported">A user reported a forced push that overwrote history despite a project rule against destructive actions. A maintainer replied that command safety relied on a flag set by the model and that rules files are prompt instructions, not hard limits.</td><td data-l="Status"><span class="tag warn">user-reported</span> <span class="hint">(maintainer confirmed the mechanism)</span></td><td data-l="Source">Public issue on the project's tracker</td></tr>
   </tbody></table></div>
- <p class="hint">Witness helps only when such an action goes through it. It would not have seen a rogue action by another path (see the limits below).</p>
+ <p class="hint">Deus Witness helps only when such an action goes through it. It would not have seen a rogue action by another path (see the limits below).</p>
 </section>
 
 <section class="card" id="limits">
  <h2>Honest limits</h2>
- <p>Witness is a tool that helps you set limits and keeps a record. <strong>It does not guarantee that an agent will not cause loss, damage, data leakage, unauthorized payments, deletion or publication.</strong> You remain responsible for your agents and what they can reach.</p>
+ <p>Deus Witness is a tool that helps you set limits and keeps a record. <strong>It does not guarantee that an agent will not cause loss, damage, data leakage, unauthorized payments, deletion or publication.</strong> You remain responsible for your agents and what they can reach.</p>
  <ul>
   <li><strong>We only see what is routed through us.</strong> Shell commands, built-in tools, direct network calls and a misconfigured proxy are not seen and leave no receipt, unless you wire in the hook and deny the rest. A "coverage level" shown by the tool is the operator's own statement, not something we verify.</li>
   <li><strong>A mandate that allows an action will allow it.</strong> Decisions are only as good as the mandate, the tool map and the patterns you configure.</li>
@@ -128,14 +128,14 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
   <li><strong>Your passkey device does not display the mandate or the action.</strong> You read them on this page, so you trust its scripts. They are plain files with no build step (the server only writes the site's build into their addresses, <code>?v=</code>, so an older cached copy is never mixed in); hashes of the files as served are listed below. On the approval screen, invisible and direction-changing characters are shown as <code>&lt;U+202E&gt;</code> and mixed-script look-alikes are flagged, but a clean result does not prove an address is genuine.</li>
   <li><strong>The budget covers actions taken through tools</strong>, not your model's token spend.</li>
   <li><strong>A timestamp proves a hash existed by a time</strong>, not that the action was lawful, correct or authorized by a person. An evidence pack is a technical record, not legal advice, an audit report or a qualified timestamp (eIDAS).</li>
-  <li><strong>In this preview the witness operator is us</strong> (Sipki LLC, New York): one hosted server on an ordinary VPS, not in a TEE, and we register your key on our own site (no device attestation). The server is AGPL-3.0 and you can run your own; the receipt format, clients and verifiers are Apache-2.0 <a href="https://github.com/sipkigroup/witness">on GitHub</a>. Early 0.x, beta. The specification and implementations have not been reviewed by outside parties.</li>
+  <li><strong>In this preview the witness operator is us</strong> (Sipki LLC, New York): one hosted server on an ordinary VPS, not in a TEE, and we register your key on our own site (no device attestation). The receipt format, clients and verifiers are Apache-2.0 <a href="https://github.com/sipkigroup/witness">on GitHub</a>; the server code is AGPL-3.0 (<a href="https://github.com/sipkigroup/witness-server">witness-server</a>). Early 0.x, beta. The specification and implementations have not been reviewed by outside parties.</li>
   <li>The demo attacks are scripted. They show that the gateway enforces the mandate, not how often real agents are fooled.</li>
  </ul>
 </section>
 
 <section class="card" id="licence">
  <h2>Free for one person</h2>
- <p><strong>Free for one person.</strong> If this ever changes, existing accounts stay free and we announce it in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on.</p>
+ <p><strong>Free for one person.</strong> If this ever changes, existing accounts stay free on the limits in force at that time, and we announce it at least 30 days in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on.</p>
  <p>Teams: free during the beta; later a price per signing member (viewers free), announced in advance. No card. Checking receipts and evidence packs is always free. Self-hosting: the open server is free (Apache-2.0).</p>
  <p class="row"><a class="btn ghost" href="/pricing/">Details</a></p>
  <p class="hint">Preview software: not a finished product, no uptime promise. Beta limits: 25 agents and 10000 actions per day per account and 4000 per agent; a quick start account before its passkey, 2000 a day (reads such as Read, Grep and Glob do not count; the count is over the last 24 hours).</p>
@@ -158,7 +158,7 @@ claude -p "Run the tests, fix what fails. Do not push." --output-format json</pr
  <div id="hashes"><p class="hint">Loading...</p></div>
 </section>
 </main>
-<footer>Deus Witness preview by Sipki LLC. Clients, spec and verifiers: <a href="https://github.com/sipkigroup/witness">Apache-2.0 on GitHub</a>; the server: AGPL-3.0. Draft specification, not yet submitted to the IETF, not a standard. <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>
+<footer>Deus Witness preview by Sipki LLC. Clients, spec and verifiers: <a href="https://github.com/sipkigroup/witness">Apache-2.0 on GitHub</a>; server: <a href="https://github.com/sipkigroup/witness-server">AGPL-3.0</a>. Draft specification, not yet submitted to the IETF, not a standard. Deus Witness&trade; is a trademark of Sipki LLC. Not affiliated with or endorsed by Anthropic; Claude and Claude Code are trademarks of Anthropic. <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>
 <script type="module" src="js/boot.js"></script>
 <script type="module" src="js/index.js"></script>
 </body></html>

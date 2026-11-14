@@ -1,17 +1,17 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><link rel="icon" href="data:,"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/css/app.css"><link rel="manifest" href="/manifest.webmanifest"><title>Privacy summary - Deus Witness</title>
 <meta name="description" content="What data Deus Witness stores, what it does not, and how deletion works with an append-only journal."></head>
-<body><header class="top"><a class="brand" href="/index.html">Deus Witness</a><nav id="nav" aria-label="Main"></nav></header>
+<body><header class="top"><a class="brand" href="/index.html">Deus Witness&trade;</a><nav id="nav" aria-label="Main"></nav></header>
 <main class="wrap">
 <p><a href="/index.html">&larr; Home</a></p>
 <section class="card" id="privacy">
  <h1>Privacy summary</h1>
- <p class="notice"><strong>Summary, not legal terms. Full terms pending legal review. See also the <a href="/terms.html">short terms</a>.</strong></p>
+ <p class="hint">Version 2026-11-13. Part of the <a href="/terms.html">Terms of Use</a>.</p>
  <p><strong>Operator.</strong> Sipki LLC, New York, USA. Contact: support@sipkigroup.com.</p>
 
  <h3>What we store</h3>
  <ul>
-  <li><strong>Account:</strong> random id (<code>dw:…</code>) and the display name you type. No e-mail, phone, password or payment data.</li>
+  <li><strong>Account:</strong> random id (<code>dw:…</code>) and the display name you type. No e-mail, phone, password or payment data. When you make the account's first passkey: which version of the Terms you agreed to and when (kept after Delete account, with the opaque id, as the record of the agreement).</li>
   <li><strong>Passkeys:</strong> public key, credential id, signature counter, device label. Private keys and biometrics stay on your device.</li>
   <li><strong>Sessions:</strong> a SHA-256 hash of the cookie; expire after 7 days.</li>
   <li><strong>Agents:</strong> name; API key as a peppered hash plus short prefix.</li>
@@ -25,7 +25,7 @@
   <li><strong>Counters:</strong> daily totals; which onboarding steps an account passed and when (the day, to count "came back on another day"); whether an account is ours (internal).</li>
  </ul>
  <h3>Which accounts are erased by time</h3>
- <p>A quick start account nobody has claimed with a passkey, and everything in it, is erased 7 days after <code>deus-witness try</code> made it if its hook never called the witness (every row is deleted; there is no journal yet) and its agent key stops working; while its hook calls, it stays until 90 days after the last call. <strong>Free for one person.</strong> If this ever changes, existing accounts stay free and we announce it in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on. The erase of an unused account with a passkey is the same as <strong>Delete account</strong> below (the journal becomes its hash skeleton); a team, or a person who signs for another team, is never erased for being unused. Backups follow the 15-day rule below. Honest limit: until your first touch, whoever has the claim link can make the account theirs; the link goes only to your browser (in the part after <code>#</code>, which browsers do not send to any server), and it is not in the command's output or a file: with a browser it is opened there (the browser keeps it in its history until you claim the account), without one it is shown on your terminal only (written to /dev/tty).</p>
+ <p>A quick start account nobody has claimed with a passkey, and everything in it, is erased 7 days after <code>deus-witness try</code> made it if its hook never called the witness (every row is deleted; there is no journal yet) and its agent key stops working; while its hook calls, it stays until 90 days after the last call. <strong>Free for one person.</strong> If this ever changes, existing accounts stay free on the limits in force at that time, and we announce it at least 30 days in advance. Free limit: 10000 actions per day per account and 4000 per agent (reading the project's files does not count; a quick start account before its passkey: 2000). An account in use is kept: it is erased only after 90 days with no call from your hook and no sign-in, and 14 days before that we send a push to your devices that have notifications on. The erase of an unused account with a passkey is the same as <strong>Delete account</strong> below (the journal becomes its hash skeleton); a team, or a person who signs for another team, is never erased for being unused. Backups follow the 15-day rule below. Honest limit: until your first touch, whoever has the claim link can make the account theirs; the link goes only to your browser (in the part after <code>#</code>, which browsers do not send to any server), and it is not in the command's output or a file: with a browser it is opened there (the browser keeps it in its history until you claim the account), without one it is shown on your terminal only (written to /dev/tty).</p>
 
  <h3>What we do not store</h3>
  <p>IP addresses in the database (the rate limit keeps them in memory only and drops each at most 2 hours after its last request; they do appear in the reverse-proxy access logs, see Retention); request bodies in logs; third-party analytics or ad cookies. Unmasked text is never written to disk: to check risk, the server holds the unmasked text of the last 64 calls in memory only; newer calls push it out and a restart clears it.</p>
@@ -47,9 +47,13 @@
  <h3>Retention</h3>
  <p>While the account exists and is used (see above: 90 days after the last call of your hook or your last sign-in); an unclaimed quick start account its hook never called, at most 7 days. Sign-in challenges: 5 minutes. Push subscriptions: until gone or 5 failures. Application logs: ~50 MB rolling. Reverse-proxy access logs (these include the IP address of a request): up to 30 days, not in the database. Backups: at most 15 days. Anchored hashes: permanent.</p>
 
- <h3>Requests</h3>
- <p>Delete your account in the dashboard. "Download evidence pack" exports your journal and receipts, and the objects you signed in the last 30 days (not every table). Anything else: support@sipkigroup.com.</p>
- <p class="hint">Updated 2026-11-13.</p>
+ <h3>Your rights and requests</h3>
+ <p><strong>Your rights.</strong> You can see and export your data: &ldquo;Download evidence pack&rdquo; exports your journal and receipts, and the objects you signed in the last 30 days (not every table). You can delete your account in the dashboard at any time (what remains is said above). For a copy of anything else, a correction, or any other request, write to support@sipkigroup.com; we answer within 30 days. If you are in the EU or the UK, we process your data to provide the Service you asked for (contract) and to keep it secure (legitimate interest), and you may complain to your data protection authority.</p>
+ <p>We do not sell or share personal information, and we do not use it for advertising or to train AI models.</p>
+ <p><strong>Other people's data.</strong> Your agent's actions may contain other people's data (for example an e-mail address it writes to). You are responsible for having the right to send it to us; it is masked and kept as described above.</p>
+ <p><strong>Children.</strong> The Service is not for people under 18; we do not knowingly collect data of children under 13.</p>
+ <p><strong>Security incidents.</strong> If a breach affects your data, we will tell you without undue delay and as the law requires.</p>
+ <p><strong>Changes.</strong> We post a new version of this summary here with its date, and announce material changes at least 30 days in advance.</p>
 </section>
 </main>
 <footer>Deus Witness preview. Draft specification, not yet submitted to the IETF, not a standard. <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></footer>

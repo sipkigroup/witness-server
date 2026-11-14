@@ -386,7 +386,7 @@ function done(head, text, refused = false) {
   $('#box').hidden = true; $('#done').hidden = false; $('#donehead').textContent = head; $('#donetext').textContent = text;
   if (refused && agentOfThis) {
     markRefused(agentOfThis, keyOfThis);
-    $('#donetext').after(freezeRow(agentOfThis, 'donefreeze', 'Did not expect this call? Freeze: Witness refuses every call of this agent until you unfreeze it.'));
+    $('#donetext').after(freezeRow(agentOfThis, 'donefreeze', 'Did not expect this call? Freeze: Deus Witness refuses every call of this agent until you unfreeze it.'));
   }
   if (!refused) mountOffer(window, $('#pushoffer')).catch(() => {});     // 0.2.96: "Get questions on your phone" after the passkey touch
   if (!fromTrial) { watchNext(); return; }
@@ -643,7 +643,7 @@ async function single(me) {
       // r0281 (#9, #11, #12, #14): `curl -d @f host` is ONE command the witness checked two ways (the network, the command). The second check
       // says nothing the first screen does not: it is under Technical details (signed, shown), not "Part 2 of 2" with a second set of reasons
       box.className = 'hint lineparts-same'; for (const d of box.children) d.className = 'linepart';
-      const hd = document.createElement('p'); hd.textContent = 'Witness checked this one command a second way too; your one answer covers both. What that check shows (signed with your answer):';
+      const hd = document.createElement('p'); hd.textContent = 'Deus Witness checked this one command a second way too; your one answer covers both. What that check shows (signed with your answer):';
       box.prepend(hd);
       qwParts(r).forEach((p) => { const pre = document.createElement('pre'); pre.className = 'qpartdet'; pre.textContent = p.what + '\n' + p.harm + '\n' + p.details; box.append(pre); });
       $('#more').querySelector('summary').after(box);

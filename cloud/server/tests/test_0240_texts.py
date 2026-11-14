@@ -29,7 +29,7 @@ def test_node2_not_listed_when_page_is_404(client):
 
 def test_terms_and_privacy_pages(client):
     t = client.get("/terms.html")
-    assert t.status_code == 200 and "as is" in t.text and "Sipki LLC" in t.text
+    assert t.status_code == 200 and "AS IS" in t.text and "Sipki LLC" in t.text      # r0289: the disclaimer is conspicuous (capitals)
     p = client.get("/privacy.html").text
     assert "reverse-proxy access logs" in p and "/terms.html" in p
     assert "terms.html" in client.get("/v1/witness").json()["web_js_sha256"]

@@ -11,7 +11,7 @@ import { createCredential, explainError, supported, NO_PASSKEY_TEXT } from './we
 import { describeMandate, isTempPath } from './describe.js';
 import { mountHomePlate } from './homeplate.js';
 import { inspectFields } from './honest.js';
-import { h, $, clear, notice, mountNav, fmtTime, kv, safeId } from './ui.js';
+import { h, $, clear, notice, mountNav, fmtTime, kv, safeId, termsShown } from './ui.js';
 import { mountOffer } from './pushoffer.js';
 
 const KEY = 'dw_trial_claim';             // 0.2.38: one claim
@@ -319,7 +319,7 @@ $('#go').addEventListener('click', async () => {
   try {
     const b = await post('/api/trial/claim/begin', { claim });
     const credential = await createCredential(b.options);
-    r = await post('/api/trial/claim/finish', { flow_id: b.flow_id, credential, claim });
+    r = await post('/api/trial/claim/finish', { flow_id: b.flow_id, credential, claim, terms: termsShown(document) });
   } catch (e) {
     if (e && (e.code === 'TRIAL_UNKNOWN' || e.code === 'TRIAL_CLAIMED')) { btn.disabled = false; claimGone(); return; }
     btn.disabled = false; sayNear(btn, 'err', passkeyStepText(e, GO_TEXT)); return;

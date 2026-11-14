@@ -65,7 +65,7 @@ export function render(feed) {
   body.replaceChildren();
   for (const it of feed.items || []) {
     const d = describe(it), tr = document.createElement('tr');
-    tr.append(td('Time', d.time), td('Step', d.tool), td('To / amount', d.target), td('Witness', d.decision, 'pill ' + d.pill),
+    tr.append(td('Time', d.time), td('Step', d.tool), td('To / amount', d.target), td('Deus Witness', d.decision, 'pill ' + d.pill),
       td('Why', d.why), td('Outcome', d.status));
     body.append(tr);
   }

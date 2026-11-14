@@ -1,6 +1,6 @@
 import { post } from './api.js';
 import { createCredential, explainError, supported } from './webauthn.js';
-import { mountNav, notice, copyButton, failText, $ } from './ui.js';
+import { mountNav, notice, copyButton, failText, termsShown, $ } from './ui.js';
 import { codesFile } from './recovery.js';
 
 const msg = $('#msg');
@@ -15,7 +15,7 @@ $('#f').addEventListener('submit', async (ev) => {
     const name = $('#name').value.trim() || 'user';
     const b = await post('/api/auth/register/begin', { display_name: name });
     const credential = await createCredential(b.options);
-    const r = await post('/api/auth/register/finish', { flow_id: b.flow_id, credential });
+    const r = await post('/api/auth/register/finish', { flow_id: b.flow_id, credential, terms: termsShown(document) });
     $('#short').textContent = r.keycard.short;
     $('#kid').textContent = r.keycard.kid_hex;
     const next = new URLSearchParams(location.search).get('next');

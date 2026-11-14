@@ -108,6 +108,8 @@ def eligible(ctx, acc, x, action=None):
         rc_ = str((json.loads(x["action_json"]) if x["action_json"] else {}).get("recipient") or "")
     except (TypeError, ValueError, AttributeError):
         rc_ = ""
+    if rc_.startswith("autostart:copy into "):
+        return "files Witness cannot see, copied into a folder whose files start commands by themselves, are asked every time"   # r0304
     if rc_.startswith("autostart:"):
         return "a file that starts commands by itself, in a folder Witness cannot tell, is asked every time"     # r0298
     if x["reason"] in NOT_OFFERED:

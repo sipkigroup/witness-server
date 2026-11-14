@@ -460,6 +460,9 @@ NET_TEXT = re.compile(r"(?i)\b(?:https?|ftp|wss?|ssh|git|s3|gs)://|/dev/(?:tcp|u
 # Not here (contained, decided 01.11 on the measure): a read or a path the parser cannot resolve (`cat $f`, `< $f`, `cp $a $b`) and a
 # recursive read outside the project. A script run under the option reads the same files without the parser seeing it; asking the
 # one-liner would be a question for show (11.8 per 100 lines in setup D). A credential path the line SHOWS is still asked (`secrets`).
+# r0304: the detail of bashparse._mass_copy's `autostart` mark: "copy into <folder>: which files land there is not known" / "... brings <x>"
+MASS_COPY_PREFIX = "copy into "
+MASS_COPY_DET = re.compile(r"^copy into (/.*?)(?:: which files land there is not known| brings \S.*)$")
 ASK_OPAQUE = re.compile(r"(?i)network|remote service|host|socket|/dev/tcp|config-env|hard link|links than|outside the extraction|"
                         r"reserved|secret|credential|environ|code injected")
 # 10.11 (r0260): "code injected through VAR=..." (bashparse._env_inject / _env_more: LD_PRELOAD, DYLD_*, NODE_OPTIONS=--require, a pager /
@@ -601,6 +604,17 @@ def contained(d, project, home=None, sid=None) -> bool:
         return (rel is not None and not _protected_rel(rel)) or in_temp(det, project, home, sid)
     if cat == "git-destroy":
         return GIT_DESTROY_CONTAINED
+    if cat == "autostart" and det.startswith(MASS_COPY_PREFIX):
+        # r0304: a mass copy into the home folder / a parent of autostart places (bashparse._mass_copy). The sandbox lets a write land only
+        # in the project or the temp folders: a folder outside both is held (the copy fails). Into the project (its root: .claude/hooks,
+        # which the sandbox does not hold, could come with it) it stays asked. A detail cut short (no folder for sure) stays asked.
+        m_ = MASS_COPY_DET.match(det)
+        if m_ is None or not isinstance(project, str):
+            return False
+        L = posixpath.normpath(m_.group(1))
+        pr = posixpath.normpath(project)
+        return L != pr and _rel_in_project(L, pr) is None and not (pr + "/").startswith(L.rstrip("/") + "/") \
+            and not in_temp(L, project, home, sid)
     if cat == "autostart":
         # r0298: a relative write in an unknown directory to a place that starts programs by itself: the same write the opaque mark next
         # to it names. The sandbox lets a write land only in the project or the temp folders, and Seatbelt refuses .claude/settings*.json,

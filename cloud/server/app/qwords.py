@@ -84,6 +84,12 @@ AUTOSTART_LONG = ("Witness cannot tell which folder this line writes in (a cd or
                   "names is one that starts programs by itself: a shell start-up file, a LaunchAgent, Claude Code's settings or hooks, "
                   "git's hooks or settings. Whatever is written there would run later without asking you. Only \"Allow once\" is offered: "
                   "this is never allowed from now on.")
+# r0304: a mass copy (bashparse._mass_copy: `cp -r dotfiles/. ~`, `rsync -a dotfiles/ ~`, `cp -a cfg/. ~/.config/`): the folder IS known, the
+# files are not. "Why it matters" under Details (signed with the view, not rebuilt from the vocabulary): the first screen stays mr-vocab-4's.
+AUTOSTART_COPY_MARK = AUTOSTART_MARK + "copy into "
+AUTOSTART_COPY_LONG = ("This line copies a whole folder into {t}, and Witness cannot see which files it brings. That folder holds files that "
+                       "start programs by themselves: shell start-up files, LaunchAgents, Claude Code's settings or hooks, git's settings. "
+                       "A file copied there would run later without asking you. Only \"Allow once\" is offered: this is never allowed from now on.")
 
 # 05.11 (owner, the risk scale): the SERVER puts the level, from the reason code and the parsed target -- never from the agent's words. Four steps
 # (no percent: false precision). Signed with the view (signview.KEYS "risk"); the page draws the bar and the word ("High risk").
@@ -633,7 +639,11 @@ def words(x):
                 what, harm, as_risk = SCREEN["autostart_what"], SCREEN["autostart_harm"], "critical"
             else:
                 what, harm, as_risk = DANGER_WORDS["opaque"][0], DANGER_WORDS["opaque"][1], DANGER_WORDS["opaque"][3]
-            long_harm = AUTOSTART_LONG + ((" " + sl) if so else "")
+            if str(t).startswith(AUTOSTART_COPY_MARK):
+                f_ = re.split(r": which files land there is not known$| brings ", str(t)[len(AUTOSTART_COPY_MARK):], maxsplit=1)[0]
+                long_harm = AUTOSTART_COPY_LONG.format(t=_clean(f_, 160)) + ((" " + sl) if so else "")
+            else:
+                long_harm = AUTOSTART_LONG + ((" " + sl) if so else "")
             dmark_ = _clean(t, 300)
         sp_, sent_ = _strict_words(t) if kind in ("command", "path") else (None, None)
         if sent_ is not None:                       # r0261: a reason of the strict closed list (its own words, not "dangerous command")

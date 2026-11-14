@@ -61,6 +61,9 @@ TRUST_TEXT = ("Allowing a command for this project means trusting the project's 
 AUTOSTART_WHY = ("this changes a file that starts commands by itself, in a folder Witness cannot tell: it is asked every time, approve it "
                  "once")
 
+AUTOSTART_COPY_WHY = ("this copies files Witness cannot see into a folder whose files start commands by themselves: it is asked every "
+                      "time, approve it once")                           # r0304 (bashparse._mass_copy)
+
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "busybox", "csh", "tcsh", "pwsh", "powershell", "cmd"}
 INTERPRETERS = {"python", "python2", "python3", "node", "nodejs", "perl", "ruby", "php", "deno", "bun", "lua", "tclsh", "Rscript", "julia",
                 "osascript", "java", "jshell", "groovy", "irb", "ipython", "jupyter",
@@ -270,7 +273,7 @@ def offer(ctx, acc, x):
     if str(a.get("recipient") or "").startswith("autostart:"):
         # r0298 (decision of Deus 14.11): a file that starts commands by itself, in a folder Witness cannot tell: never "from now on" --
         # neither an allowance nor an amendment (checked before both; create() rebuilds this offer, so a forged request gets 409)
-        out["why_not"] = AUTOSTART_WHY
+        out["why_not"] = AUTOSTART_COPY_WHY if str(a.get("recipient")).startswith("autostart:copy into ") else AUTOSTART_WHY
         return out
     am = meta.get("amend") if isinstance(meta, dict) else None
     if isinstance(am, list) and am:                    # 06.11 (r0260): an amendment of a KIND of act (app/amend.py), planned when asked

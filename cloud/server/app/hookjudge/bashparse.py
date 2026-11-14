@@ -24,6 +24,7 @@ from __future__ import annotations
 import bisect
 import json
 import os
+import posixpath
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -4876,7 +4877,12 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
             _write_target(dest, cwd, home, c, c.writes)
             if not (name == "install" and ("d" in short or "--directory" in long_)):
                 tree = name == "mv" or bool(set(short) & {"r", "R", "a"}) or bool({"--recursive", "--archive"} & set(long_))
-                _into_persist(name, [o for o in ops if o != dest] if t else ops[:-1], dest, bool(t), cwd, home, c, tree=tree)
+                notgt = name == "cp" and ("T" in short or "--no-target-directory" in long_)     # r0304: `cp -rT dotfiles ~` = its contents
+                srcs_ = [o for o in ops if o != dest] if t else ops[:-1]
+                if name == "rsync":                  # r0304: `--exclude X` / `-e ssh` ...: X is the option's value, no source
+                    vals_ = {args[k + 1] for k, a in enumerate(args[:-1]) if a in RSYNC_VALUE_OPTS}
+                    srcs_ = [o for o in srcs_ if o not in vals_]
+                _into_persist(name, srcs_, dest, bool(t), cwd, home, c, tree=tree, project=project, notgt=notgt)
         if name == "mv":
             for p in ops[:-1]:
                 _write_target(p, cwd, home, c, c.writes)    # moving a file away changes the source path too
@@ -4906,7 +4912,7 @@ HOME_ONLY_NAME = re.compile(r"^\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc|ba
                             r"mkshrc|xinitrc|xprofile|xsession|pam_environment|hushlogin|gitconfig|claude\.json)$", re.I)
 
 
-def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False):
+def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False, project=None, notgt=False):
     """r0300 (Н4): `cp a.service ~/.config/systemd/user/`, `cp .bashrc ~`, `cp settings.json ~/.claude/`, `ln -s /tmp/e ~/.config/autostart/`:
     into a DIRECTORY the file lands as DIR/<its name>. When that path is a place that starts programs by itself (PERSIST_PATH) and the
     directory itself is not one, it is the same write as naming the file: `persist` (refused), not a question about the directory.
@@ -4923,10 +4929,18 @@ def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False):
         return                                      # the directory itself is refused already (`cp a ~/Library/LaunchAgents/`)
     every = is_persist_path(d.rstrip("/") + "/x")   # a directory whose every entry starts programs (systemd/user, autostart, cron.d ...)
     for s_ in srcs:
-        if ":" in s_ and name in ("rsync", "scp"):
+        remote = ":" in s_ and name in ("rsync", "scp")
+        if remote:
             base = os.path.basename(s_.split(":", 1)[1].rstrip("/")) or "x"
         else:
             base = os.path.basename(s_.rstrip("/"))
+        # r0304: the CONTENTS of a folder land in `d` itself: `x/.`, `x/..`, rsync's `x/`, BSD cp's `x/`, a glob `x/*` / `x/.*`, `cp -T x d`
+        contents = (not base or base in (".", "..") or (tree and s_.endswith("/") and name in ("cp", "rsync", "scp"))
+                    or bool(re.search(r"[*?[]", base)) or (notgt and tree))
+        if contents and not every:
+            if tree or name in ("mv", "ln") or re.search(r"[*?[]", base):      # a glob names files too: `cp dots/.* ~`
+                _mass_copy(s_, d, d, remote, cwd, home, c, project)
+            continue
         if not base or base in (".", ".."):
             if every:
                 c.add("persist", d.rstrip("/") + "/")
@@ -4934,6 +4948,14 @@ def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False):
         cand = os.path.join(d, base)
         whole = tree and is_persist_path(cand + "/x")  # `cp -R autostart ~/.config/`: a whole folder lands as an autostart folder
         if not (is_persist_path(cand) or every or whole):
+            if tree or name == "ln":
+                # r0304: a whole folder lands as DIR/<its name> (`cp -r .claude ~`, `ln -s ~/dots/.config ~`) or, when the destination is
+                # no folder yet, AS the destination (`cp -r dots ~/.config`: cp / mv / ln rename it; rsync always puts it inside)
+                syn = by_t or dest.endswith("/") or len(srcs) > 1 or d == home or name in ("rsync", "scp")
+                if syn:
+                    _mass_copy(s_, cand, d, remote, cwd, home, c, project)
+                elif _mass_probes(cand, home, project) or _mass_probes(d, home, project):
+                    _mass_copy(s_, cand if _fs.current().isdir(d) else d, d, remote, cwd, home, c, project)
             continue
         if HOME_ONLY_NAME.match(base) and d != home and not every:
             continue                                # `cp ~/.bashrc /tmp/`, `cp ~/.gitconfig backup/`: a copy OF the place, read only
@@ -4942,7 +4964,101 @@ def _into_persist(name, srcs, dest, by_t, cwd, home, c, tree=False):
             c.add("persist", cand if is_persist_path(cand) else cand + "/")
 
 
-# 0.2.51: short options that take a value (the rest of the cluster or the next word), per command; long options are matched by getopt prefix
+# r0304 (finding of r0300 p.6): a MASS copy -- `cp -r dotfiles/. ~`, `rsync -a dotfiles/ ~`, `cp -a cfg/. ~/.config/`, `cp -r .claude ~` --
+# puts files whose names the line does not say into the home folder or into a parent of autostart places. Before r0304 nothing was said
+# about it (an ordinary write, "from now on" offered). Now:
+#  - the source is a folder of the project that exists now, nothing earlier in the line can have changed it, and the hook can answer for
+#    every autostart place it would bring (exists + realpath of SRC/<place>): judged exactly -- a place found is `persist` (refused, Н4,
+#    as `cp .bashrc ~`); none found, nothing is added;
+#  - otherwise (a folder outside the project, a variable, a remote, a fresh clone, a line that wrote or fetched before): the question
+#    `autostart` "copy into <folder>: which files land there is not known" -- "Allow once" / "No", never "from now on"; never a refusal
+#    (constitution: a refusal is only for what is certain).
+# The places: the shell start-up files, LaunchAgents ..., Claude Code's settings / hooks / plugins, .mcp.json, the witness, ~/.ssh's
+# files that run, git's global hooks / config (under home); .claude/settings*, hooks, plugins, .mcp.json and .git (the project root);
+# the system's (/etc, /Library, /var cron). A folder is a "parent" when one of them lies strictly under it.
+MASS_HOME = (".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",
+             ".login", ".cshrc", ".tcshrc", ".kshrc", ".mkshrc", ".xinitrc", ".xprofile", ".xsession", ".pam_environment", ".hushlogin",
+             ".config/fish", "Library/LaunchAgents", "Library/LaunchDaemons", "Library/StartupItems", ".config/autostart",
+             ".config/systemd/user", ".claude/settings.json", ".claude/settings.local.json", ".claude/hooks", ".claude/plugins",
+             ".claude.json", ".mcp.json", ".config/deus-witness", ".deus-witness", "Library/Application Support/deus-witness",
+             ".local/share/deus-witness", ".ssh/authorized_keys", ".ssh/authorized_keys2", ".ssh/config", ".ssh/rc", ".ssh/environment",
+             ".config/git/hooks", ".gitconfig", ".config/git/config")
+MASS_PROJECT = (".claude/settings.json", ".claude/settings.local.json", ".claude/hooks", ".claude/plugins", ".mcp.json", ".git")
+MASS_SYSTEM = tuple(p + s for p in ("/etc", "/private/etc") for s in (
+    "/crontab", "/cron.d", "/cron.daily", "/cron.hourly", "/cron.weekly", "/cron.monthly", "/profile", "/profile.d", "/bashrc", "/zshrc",
+    "/zprofile", "/zshenv", "/sudoers", "/sudoers.d", "/hosts", "/paths", "/paths.d", "/launchd.conf", "/environment", "/pam.d",
+    "/ld.so.preload", "/rc.local")) + ("/var/at", "/var/cron", "/var/spool/cron", "/private/var/at", "/private/var/cron",
+                                        "/Library/LaunchAgents", "/Library/LaunchDaemons", "/Library/StartupItems")
+# commands that change no file a copy could read, when they stand before it in the line (the copy judged exactly only then)
+MASS_CLEAN_HEADS = {"cd", "pushd", "popd", "pwd", "ls", "echo", "printf", "true", "test", "[", "mkdir", "cp", "rsync", "mv", "ln", "install"}
+
+
+RSYNC_VALUE_OPTS = {"--exclude", "--include", "--exclude-from", "--include-from", "--filter", "-f", "--files-from", "-e", "--rsh",
+                    "--log-file", "--partial-dir", "-T", "--temp-dir", "--backup-dir", "--compare-dest", "--copy-dest", "--link-dest",
+                    "--chmod", "--chown", "--rsync-path", "--password-file", "--suffix", "--timeout", "--bwlimit", "--max-size",
+                    "--min-size", "--port", "--out-format", "--skip-compress", "--usermap", "--groupmap", "--info", "--debug", "--iconv",
+                    "--modify-window", "-B", "--block-size", "--max-delete", "--sockopts", "--contimeout", "--address", "-M",
+                    "--remote-option"}
+
+
+def _mass_probes(land, home, project):
+    """r0304: the autostart places under the folder `land` (paths relative to it); empty = `land` is no parent of one."""
+    L = posixpath.normpath(land).rstrip("/") or "/"
+    pre = "/" if L == "/" else L + "/"
+    tg = [home.rstrip("/") + "/" + p for p in MASS_HOME] if isinstance(home, str) and home.startswith("/") else []
+    if isinstance(project, str) and project.startswith("/"):
+        tg += [project.rstrip("/") + "/" + p for p in MASS_PROJECT]
+    tg += list(MASS_SYSTEM)
+    return list(dict.fromkeys(t[len(pre):] for t in tg if t.startswith(pre) and len(t) > len(pre)))
+
+
+def _mass_clean(c, src):
+    """r0304: nothing earlier in the line can have changed the folder `src` (no fetch, no unknown part, no write or delete in it, only the
+    commands of MASS_CLEAN_HEADS)."""
+    if c.opaque or c.net:
+        return False                                 # (other marks come only from MASS_CLEAN_HEADS: their writes are checked below)
+    if any(h.split(" ", 1)[0] not in MASS_CLEAN_HEADS for h in c.heads):
+        return False
+    return not any(w == src or w.startswith(src + "/") for w in list(c.writes) + list(c.deletes))
+
+
+def _mass_copy(s_, land, d, remote, cwd, home, c, project):
+    """r0304: the folder `land` receives files the line does not name, from the source word `s_`. See MASS_HOME above."""
+    probes = _mass_probes(land, home, project)
+    if not probes or "opaque:brace expansion" in c.danger:
+        return                                       # (brace expansion: the shell builds the words; the line is asked as opaque already)
+    L = posixpath.normpath(land)
+    src = None
+    if not remote and _lit_ok(s_) and not re.search(r"[*?[]", os.path.basename(s_.rstrip("/"))):
+        e = _expand(s_, cwd, home)
+        if e is not None and not re.search(r"[*?[]", e):
+            src = posixpath.normpath(_abspath(e, cwd, home))
+    elif not remote and re.search(r"[*?[]", os.path.basename(s_.rstrip("/"))) and not re.search(r"[*?[$`]", os.path.dirname(s_)):
+        e = _expand(os.path.dirname(s_) or ".", cwd, home)       # `cp dots/.* ~`: the files of the folder `dots` (a superset of the glob)
+        if e is not None:
+            src = posixpath.normpath(_abspath(e, cwd, home))
+    if src is not None and isinstance(project, str) and _in_project(src, project.rstrip("/")) and src != L and _mass_clean(c, src) \
+            and cwd != LOST_CWD and _fs.current().isdir(src):
+        fs_ = _fs.current()
+        rs = fs_.realpath(src)
+        found, unsure = [], not isinstance(rs, str)
+        for p in probes:
+            q = src + "/" + p
+            r = fs_.realpath(q)
+            if fs_.exists(q) or (isinstance(r, str) and isinstance(rs, str) and r != rs.rstrip("/") + "/" + p):
+                found.append(p)                      # it is there (or a link of that name, even a broken one): it lands
+            elif not isinstance(r, str):
+                unsure = True                        # the hook could not resolve it: not certain either way
+        if unsure and not found:
+            c.add(AUTOSTART, "copy into %s: which files land there is not known" % L)
+        for p in found:
+            t_ = L.rstrip("/") + "/" + p
+            if is_persist_path(t_) or is_persist_path(t_ + "/x") or is_persist_path(t_ + "/x.fish"):
+                c.add("persist", t_)
+            else:
+                c.add(AUTOSTART, "copy into %s brings %s" % (L, p))     # .git of the project (git's hooks / config): asked
+        return
+    c.add(AUTOSTART, "copy into %s: which files land there is not known" % L)
 _OUT_SHORT_VALUE = {"sort": set("kotST"), "tree": set("LPIoHT"), "uniq": set("fsw")}
 _OUT_LONG_VALUE = {"sort": ("--key", "--output", "--buffer-size", "--field-separator", "--temporary-directory", "--compress-program",
                             "--batch-size", "--parallel", "--random-source", "--files0-from", "--sort"),

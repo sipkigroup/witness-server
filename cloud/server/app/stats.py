@@ -200,11 +200,22 @@ def report(ctx, days=30, t=None):
     return {"since": since, "days": [{"day": d, "steps": rows[d]} for d in sorted(rows)], "total": tot, "steps": list(STEPS),
             "kept_day7_with_touch": {"outside": kept(ctx, False), "proba": kept(ctx, True)},      # r0285: all time, not only `days`
             "team_requests": team, "team_confirmed_n": sum(1 for x in team if x["confirmed"]),
+            "mandates_by_vocab": _by_vocab(ctx),                                                     # r0310 (app/renew.py)
             "note": "demo_visit = page loads of /demo/ (robots by user agent left out), not people; a Team request counts only once the "
                     "owner confirmed it (POST /internal/team-requests/{id}/confirm); hook_touch / hook_touch_day2 = a passkey decision on a "
                     "call of the Claude Code hook, first ever / again on a later day, internal, demo and own accounts left out (not in n_all); day7 = the hook "
                     "still asked the witness on the 7th UTC day after the account was made, day7_proba = the same for accounts named proba-..., "
                     "kept_day7_with_touch = accounts with day7 and hook_touch"}
+
+
+def _by_vocab(ctx):
+    """r0310: active mandates by the reason vocabulary they pinned; "stale" = their questions use older sentences (renew offered)."""
+    from app import renew
+    try:
+        return renew.by_vocab(ctx)
+    except Exception as e:  # noqa: BLE001  a report never breaks the stats page
+        log("WARN", "mandates by vocabulary not counted: " + type(e).__name__)
+        return None
 
 
 def confirm_team(ctx, rid, real=True, t=None):

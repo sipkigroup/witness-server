@@ -418,6 +418,17 @@ if (typeof document !== 'undefined') {
   }, true);
 }
 
+// r0310: "Clearer wording is available": a mandate signed under an older reason vocabulary. One line under Details, a link to the mandate
+// page (the passkey signs there) and "Not now". The server decides when it is offered (app/renew.py: once per mandate and vocabulary, once a week).
+function renewLine(o) {
+  const box = $('#renew_line');
+  if (!box || !o || o.show !== true || !safeId(o.agent_id) || !safeId(o.mandate_id) || typeof o.text !== 'string') return;
+  const a = $('#renew_go');
+  a.textContent = o.text;
+  a.href = 'mandate.html?agent=' + encodeURIComponent(o.agent_id) + '&renew=' + encodeURIComponent(o.mandate_id);
+  $('#renew_no').onclick = () => { box.hidden = true; post('/api/mandates/' + encodeURIComponent(o.mandate_id) + '/renew/dismiss', {}).catch(() => {}); };
+  box.hidden = false;
+}
 async function single(me) {
   if (!/^r_[A-Z2-7]+$/.test(rid)) { notice(msg, 'err', 'No approval request in this link.'); return; }
   markOpened(rid);
@@ -425,6 +436,7 @@ async function single(me) {
   UX.t0 = pnow();
   agentOfThis = r.agent_id || (r.action && r.action.agent) || null;
   keyOfThis = actKey(r);
+  renewLine(r.renew_offer);       // r0310: under Details only (never the first screen), outside the signed view
   get('/api/agents').then((l) => { const a = (Array.isArray(l) ? l : []).find((z) => z && z.id === agentOfThis); if (a && typeof a.name === 'string' && a.name) agentNameOfThis = a.name; }).catch(() => {});
   const held = r.status === 'held';
   const late = r.status === 'expired' && !!(r.repeat_offer && r.repeat_offer.eligible);     // 0.2.29: only for the agent's next runs

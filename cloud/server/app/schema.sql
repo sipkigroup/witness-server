@@ -178,3 +178,6 @@ CREATE TABLE IF NOT EXISTS tlog_checkpoints(size INTEGER PRIMARY KEY, root BLOB 
 CREATE TABLE IF NOT EXISTS tlog_stamps(size INTEGER PRIMARY KEY, digest BLOB NOT NULL, t INTEGER, status TEXT, ots TEXT, tsa TEXT,
   tries INTEGER DEFAULT 0, next_try INTEGER, last_err TEXT, done_t INTEGER);
 CREATE TABLE IF NOT EXISTS vocabs(digest TEXT PRIMARY KEY, json TEXT NOT NULL, t INTEGER);   -- r0269: reason vocabularies pinned by mandates (app/vocab.py)
+-- r0310: the vocabulary re-consent hint (app/renew.py): one episode per (mandate, vocabulary version), at most one a week per account
+CREATE TABLE IF NOT EXISTS renew_offers(account_id TEXT NOT NULL, mandate_id TEXT NOT NULL, vocab_v TEXT NOT NULL,
+  first_at INTEGER NOT NULL, closed_at INTEGER, PRIMARY KEY(account_id, mandate_id, vocab_v));

@@ -1,4 +1,5 @@
 // Pure helpers of the mandate form (no DOM): testable with node.
+import { encode, bytesToHex } from './cde.js';
 // A switched-on permission with nothing to enforce is silently FORBIDDEN by the server, so warn before signing.
 export function formWarnings(v) {
   const W = [];
@@ -170,3 +171,16 @@ export function recommendedHttp(toolmap) {
 
 // one limit for a money amount (cents) of the form: the page field takes 9 digits of dollars + 2 decimals (ui.js dollarsToCents); the server (app/mandates.py MAX_CENTS) and the importer use the same number
 export const MAX_CENTS = 99999999999;
+
+export function renewCheck(old, neu) {
+  if (!old || !neu || typeof old !== 'object' || typeof neu !== 'object') return 'no mandate';
+  const ko = Object.keys(old).sort(), kn = Object.keys(neu).sort();
+  if (ko.join() !== kn.join()) return 'the members differ';
+  for (const k of ko) {
+    if (['id', 'nbf', 'exp', 'toolmap_sha256'].includes(k)) continue;
+    if (bytesToHex(encode(old[k])) !== bytesToHex(encode(neu[k]))) return 'member ' + k + ' differs';
+  }
+  if (neu.id === old.id) return 'the same id';
+  if (!(Number.isInteger(neu.nbf) && Number.isInteger(neu.exp)) || neu.nbf < old.nbf || neu.exp > old.exp) return 'the time is wider';
+  return null;
+}

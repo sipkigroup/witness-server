@@ -42,7 +42,8 @@ TABLES_BY_ACCOUNT = ("agents", "data_patterns", "mandates", "actions", "approval
                      "run_contexts", "action_sessions",           # 0.2.85
                      "run_context_oidc",                         # 0.2.86
                      "run_context_policy",                       # 0.2.87
-                     "sandbox_sessions")                         # 0.2.88
+                     "sandbox_sessions",                         # 0.2.88
+                     "renew_offers")                             # r0310
 # 04.11 (privacy D3): the MCP proxy's tables (app/flow/store.py: tool catalogs, coverage strings, holds) are made lazily -> erased when present
 FLOW_TABLES = ("flow_catalogs", "flow_catalog_log", "flow_coverage", "flow_held", "flow_escalations")
 

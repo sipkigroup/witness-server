@@ -152,8 +152,8 @@ def test_the_vocabulary_does_not_change():
     and packs signed before stay as they were."""
     # r0305: the server runs mr-vocab-5 (+ screen defense_*); mr-vocab-4 is exactly that document minus the two sentences
     d = vocab.doc()
-    d4 = dict(d, v="mr-vocab-4", screen={k: v for k, v in d["screen"].items() if not k.startswith("defense_")})
-    PRED = ("mr-vocab-5", False, R0298_DIGEST)
+    d4 = dict(d, v="mr-vocab-4", screen={k: v for k, v in d["screen"].items() if not k.startswith(("defense_", "v6_"))})   # r0307: - v6_*
+    PRED = ("mr-vocab-6", False, R0298_DIGEST)
     assert (vocab.V, "mark_words" in d, vocab.digest(d4)) == PRED
 
 

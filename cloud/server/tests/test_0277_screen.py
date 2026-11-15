@@ -166,7 +166,7 @@ def _voc():
 
 def test_every_first_screen_sentence_of_the_server_is_a_vocabulary_template():
     v = _voc()
-    assert v["v"] == "mr-vocab-5" and set(qwords.SCREEN) <= set(v["screen"])     # r0298: + autostart_what / autostart_harm; r0305: + defense_*
+    assert v["v"] == "mr-vocab-6" and set(qwords.SCREEN) <= set(v["screen"])     # r0298: + autostart_what / autostart_harm; r0305: + defense_*
     leaves = SC.vocab_leaves(v)
     for k, s in qwords.SCREEN.items():
         assert s in leaves, k

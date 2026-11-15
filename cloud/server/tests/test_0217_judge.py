@@ -118,9 +118,9 @@ def test_the_longest_line_still_parsed_costs_bounded_time(client, agent, tmp_pat
     for name, g in GENS.items():
         cmd = g(hj.MAX_CMD)[:hj.MAX_CMD]
         assert len(cmd) <= hj.MAX_CMD
-        t0 = time.perf_counter()
-        r = client.post("/v1/hook/judge", json=_body(cmd, p), headers=agent)
-        worst = max(worst, time.perf_counter() - t0)
+        t0 = time.process_time()                    # 14.11: CPU time of this process, not wall time: the bound is the parser's cost,
+        r = client.post("/v1/hook/judge", json=_body(cmd, p), headers=agent)     # and a loaded machine (load ~5) made wall time red
+        worst = max(worst, time.process_time() - t0)
         assert r.status_code == 200, (name, r.text[:200])
     assert worst < 0.5 * time_scale(), worst      # r0279: the bound of this machine (tests/helpers.time_scale)
 

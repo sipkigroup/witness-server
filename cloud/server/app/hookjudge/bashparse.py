@@ -4498,6 +4498,7 @@ def _content_writes(name, args, cwd, home, c, project=None, via_xargs=False):
         ov = dict(opts)
         d = ov.get("-C") or ov.get("--directory")
         _cw_add(d if isinstance(d, str) else cwd, cwd, home, c, whole=True)
+        _unseen_land(d if isinstance(d, str) else cwd, cwd, home, c, project, root=False)     # r0309: which files land there is not known
         arch = ov.get("-f") or ov.get("--file")
         if old_style and "f" in first:                 # `tar xf a.tar`, `tar xCf dir a.tar`: the values follow in the order of their letters
             vl = [ch for ch in first if ch in _TAR_V_SHORT]
@@ -4512,7 +4513,20 @@ def _content_writes(name, args, cwd, home, c, project=None, via_xargs=False):
             return                                     # list / pipe / test / to stdout: nothing written
         d = dict(opts).get("-d")
         _cw_add(d if isinstance(d, str) else cwd, cwd, home, c, whole=True)
+        _unseen_land(d if isinstance(d, str) else cwd, cwd, home, c, project, root=False)     # r0309
         _archive_links(ops[0] if ops else None, d if isinstance(d, str) else None, cwd, home, c)
+        return
+    if name in ("7z", "7za", "7zz", "7zr") and args[:1] and args[0] in ("x", "e"):
+        o = next((a[2:] for a in args[1:] if a.startswith("-o") and len(a) > 2), None)
+        _cw_add(o if o else cwd, cwd, home, c, whole=True)                       # r0309: `7z x a.7z -oDIR` writes the archive's files
+        _unseen_land(o if o else cwd, cwd, home, c, project, root=False)
+        return
+    if name == "cpio" and any(a in ("-i", "--extract") or re.fullmatch(r"-[a-zA-Z]*i[a-zA-Z]*", a) for a in args) \
+            and not any(a == "--list" or re.fullmatch(r"-[a-zA-Z]*t[a-zA-Z]*", a) for a in args):      # -t: a listing
+        dv = next((args[k + 1] for k, a in enumerate(args[:-1]) if a in ("-D", "--directory")), None)
+        dv = dv or next((a.split("=", 1)[1] for a in args if a.startswith("--directory=")), None)
+        _cw_add(dv if dv else cwd, cwd, home, c, whole=True)                     # r0309: `cpio -idm < a.cpio`: names inside the archive
+        _unseen_land(dv if dv else cwd, cwd, home, c, project, root=False)
         return
     if name in ("perl", "ruby") and any(re.fullmatch(r"-[A-Za-z]*i\S*", a) for a in args if not a.startswith("--")):
         k, files = 0, []
@@ -4535,6 +4549,8 @@ def _content_writes(name, args, cwd, home, c, project=None, via_xargs=False):
     if i >= len(args):
         return
     sub, rest = args[i], args[i + 1:]
+    if sub == "clone" and not via_xargs:
+        _unseen_land(_clone_dest(rest), base, home, c, project)                  # r0309: a clone's files are not named in the line
     top = project if project and (base == project or base.startswith(project.rstrip("/") + "/")) else base
     dd = "--" in rest
     before = rest[:rest.index("--")] if dd else rest
@@ -4904,6 +4920,14 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         for p in ops:
             _write_target(p, cwd, home, c, c.writes)
         return
+    if name in ("cp", "mv", "install", "ln", "rsync", "scp") and (via_xargs or "{}" in ops):
+        # r0309: the names come at run time (xargs from stdin, find's `{}`): they land in the -t folder / the last word as DIR/<name>
+        t9 = next((args[k + 1] for k, a in enumerate(args) if a in ("-t", "--target-directory") and k + 1 < len(args)), None)
+        t9 = t9 or next((a.split("=", 1)[1] for a in args if a.startswith("--target-directory=")), None)
+        if t9 is None and len(ops) >= 2 and ops[-1] != "{}" and "{}" in ops[:-1]:
+            t9 = ops[-1]                             # `find ... -exec cp {} DIR \;`, `xargs -I{} cp {} DIR`
+        if t9 is not None:
+            _unseen_land(t9, cwd, home, c, project)
     if name in ("cp", "mv", "install", "ln", "rsync", "scp") and len(ops) >= 2:
         t = next((args[k + 1] for k, a in enumerate(args) if a in ("-t", "--target-directory") and k + 1 < len(args)), None)
         dest = t or ops[-1]
@@ -5093,6 +5117,62 @@ def _mass_copy(s_, land, d, remote, cwd, home, c, project):
                 c.add(AUTOSTART, "copy into %s brings %s" % (L, p))     # .git of the project (git's hooks / config): asked
         return
     c.add(AUTOSTART, "copy into %s: which files land there is not known" % L)
+
+
+# r0309 (finding of r0304): files whose names the line does not say -- an extraction (`tar -xf x.tar -C ~`, `unzip a.zip -d ~/.claude`,
+# `curl ... | tar -xz -C ~`, `7z x a.7z -o$HOME`, `cpio -i`), a clone (`git clone URL ~/.claude`), a copy of names found or read at run time
+# (`find ... -exec cp {} ~/.config/ \;`, `xargs cp -t ~/.config < list`, `xargs -I{} cp {} ~`) -- land in the folder `dest`. The same rule
+# as r0304's mass copy (one decision, one mark): the folder is the home folder, a parent of autostart places (_mass_probes: ~/.config,
+# ~/.claude, ~/Library, /etc) or the project root -> the question `autostart` "copy into <folder>: which files land there is not known"
+# (asked once, never "from now on", never a refusal); a folder whose EVERY name starts programs (~/.config/autostart, LaunchAgents) or an
+# autostart place itself (~/.claude/hooks, ~/.claude/plugins/x) -> `persist` (Н4), as `cp -r x/. ~/.config/autostart/` (r0304). Any other
+# folder (/tmp, a sub-folder of the project, ~/src/proj, ~/.config/nvim) -> nothing added. The archive's / clone's contents are not read.
+# An EXTRACTION into the project root itself (`tar xf a.tar`, `unzip a.zip`, `tar -C . -xf`) is not asked: the guards of RT-0273
+# (test_n13_n15_0273::test_guard_plain_tar_is_the_question_it_was) and RT7 (test_rt7_no_noise_readers_after_risky_write) keep it quiet,
+# and the hook does not send the archive's names (archlinks reads only its links) -- judging it needs that fact (not closed in r0309).
+def _unseen_land(dest, cwd, home, c, project, root=True):
+    if not isinstance(dest, str) or not dest or "opaque:brace expansion" in c.danger:
+        return
+    if cwd == LOST_CWD and not dest.startswith("/") and not _known_without_cwd(dest, cwd, home):
+        return                                       # (the unknown directory: r0298 / r0299 judge it)
+    e = _expand(dest, cwd, home)
+    if e is None or re.search(r"[*?[]", e):
+        return
+    L = posixpath.normpath(_abspath(e, cwd, home))
+    if is_persist_path(L):
+        c.add("persist", L)
+    elif is_persist_path(L.rstrip("/") + "/x"):
+        c.add("persist", L.rstrip("/") + "/")
+    elif _mass_probes(L, home, project) and (root or not (isinstance(project, str) and L == posixpath.normpath(project))):
+        c.add(AUTOSTART, "copy into %s: which files land there is not known" % L)
+
+
+# r0309: git clone's options that take a value (the operands are REPO [DIR])
+_CLONE_V = {"-o", "--origin", "-b", "--branch", "-u", "--upload-pack", "--reference", "--reference-if-able", "--separate-git-dir",
+            "--depth", "--shallow-since", "--shallow-exclude", "-c", "--config", "-j", "--jobs", "--template", "--filter",
+            "--server-option", "--bundle-uri", "--ref-format"}
+
+
+def _clone_dest(rest):
+    """r0309: `git clone [opts] REPO [DIR]` -> DIR (or the name git derives from REPO), None when not certain."""
+    ops, k = [], 0
+    while k < len(rest):
+        a = rest[k]
+        if a == "--":
+            ops += rest[k + 1:]
+            break
+        if a.startswith("-") and len(a) > 1:
+            k += 2 if a in _CLONE_V else 1
+            continue
+        ops.append(a)
+        k += 1
+    if len(ops) >= 2:
+        return ops[1]
+    if len(ops) == 1:
+        b = re.sub(r"(/?\.git)?/*$", "", ops[0].rstrip("/"))
+        b = re.split(r"[/:]", b)[-1] if b else ""
+        return b or None
+    return None
 _OUT_SHORT_VALUE = {"sort": set("kotST"), "tree": set("LPIoHT"), "uniq": set("fsw")}
 _OUT_LONG_VALUE = {"sort": ("--key", "--output", "--buffer-size", "--field-separator", "--temporary-directory", "--compress-program",
                             "--batch-size", "--parallel", "--random-source", "--files0-from", "--sort"),

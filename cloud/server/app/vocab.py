@@ -18,16 +18,19 @@ cannot fully check" (actions._mark_autostart, exec_json "as".pin false); the che
 r0305 (mr-vocab-5): + screen "defense_what" / "defense_harm" (a program that switches off a protection of the operating system: refused
 Н10 everywhere, asked only as a strict doubt). A mandate that pinned mr-vocab-2..4 keeps the generic "a dangerous command" sentence
 (actions._mark_defense, exec_json "df".pin false); the checker rebuilds 2, 3, 4 and 5.
+r0307 (mr-vocab-6): + screen v6_* -- clearer sentences where a reader without context misjudged the danger (gate V5). The older sentence
+stays in the vocabulary; a mandate that pinned mr-vocab-2..5 is shown it (actions._mark_v6, exec_json "v6".pin false).
 
 Honest limit: pinning says WHICH dictionary was in force; it does not stop the witness from choosing the reason code (profile, risk 2).
 """
 import hashlib
 import json
 
-V = "mr-vocab-5"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
+V = "mr-vocab-6"     # r0277: + "screen" (every first-screen sentence is a template here: the checker rebuilds what / harm offline)
 #                     r0294: + screen net_code_run / net_code_now (a run of code from the network); mr-vocab-2 receipts check as before
 #                     r0298: + screen autostart_what / autostart_harm (a file that starts commands by itself, folder unknown); 2 and 3 as before
 #                     r0305: + screen defense_what / defense_harm (an OS protection switched off); 2, 3 and 4 as before
+#                     r0307: + screen v6_* (clearer sentences after V5 «blind reader»; the older ones stay); 2..5 as before
 
 
 def doc():

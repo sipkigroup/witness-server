@@ -124,4 +124,14 @@ def metrics_text(ctx, t=None):
           "# TYPE dw_push_ladder_7d gauge"] + ['dw_push_ladder_7d{state="%s"} %d' % (k, lc[k]) for k in push.LADDER]
     L += ["# HELP dw_push_ladder_share_7d The same as a share of the questions pushed (0 when none).", "# TYPE dw_push_ladder_share_7d gauge"] + \
          ['dw_push_ladder_share_7d{state="%s"} %.4f' % (k, (lc[k] / tot) if tot else 0.0) for k in push.LADDER]
+    # r0310 (app/renew.py): active mandates by the reason vocabulary they pinned; stale = their questions use older sentences
+    from app import renew
+    try:
+        bv = renew.by_vocab(ctx)
+        L += ["# HELP dw_mandates_active_by_vocab Active mandates by the reason vocabulary they pinned (none = pins none: current words).",
+              "# TYPE dw_mandates_active_by_vocab gauge"] + ['dw_mandates_active_by_vocab{v="%s"} %d' % (k, n) for k, n in bv["by"].items()]
+        L += ["# HELP dw_mandates_stale_vocab Active mandates whose questions use older sentences than the current vocabulary.",
+              "# TYPE dw_mandates_stale_vocab gauge", "dw_mandates_stale_vocab %d" % bv["stale"]]
+    except Exception:  # noqa: BLE001  the metrics page never breaks on one count
+        pass
     return "\n".join(L) + "\n"

@@ -19,6 +19,7 @@ from app.hookjudge import judge as hj
 from app import allowances, auth, keyalert, keys, org, repeat, uxstat, waiting, wire, toolmap as tm
 from app import delegation, levels, account_delete, stats, trial
 from app import signview, maskdep, qwords
+from app import renew
 from app.context import Err, check_json, canon_rid
 from app import refusals
 from app.mandates import mandate_from_form
@@ -535,6 +536,42 @@ def make_router(ctx):
         trial.on_mandate(ctx, acc, m.get("agent"), out.get("mandate_id"))     # 0.2.38: the calls that waited for the first touch are judged again
         return out
 
+    # r0310: re-consent to the current reason vocabulary (app/renew.py): the same mandate, signed again by the owner's passkey
+    @r.get("/api/mandates/{mid}/renew")
+    def renew_offer(mid: str, req: Request):
+        acc = auth.session_account(ctx, req)
+        renew._old(ctx, acc, mid)                                   # r0311: a mandate of another account is 404
+        try:
+            org.require(ctx, req.state.user, acc["id"], "mandate")      # r0311: only who may re-sign is offered it (an observer: no line)
+        except Err:
+            return {"show": False}
+        return renew.offer(ctx, acc, mid)
+
+    @r.post("/api/mandates/{mid}/renew/dismiss")
+    async def renew_dismiss(mid: str, req: Request):
+        acc = auth.session_account(ctx, req, True, "mandate")          # r0311: a changing path -- an observer gets 403
+        return renew.dismiss(ctx, acc, mid)
+
+    @r.post("/api/mandates/{mid}/renew/draft")
+    async def renew_draft(mid: str, req: Request):
+        acc = auth.session_account(ctx, req, True, "mandate")
+        return renew.draft(ctx, acc, mid)
+
+    @r.post("/api/mandates/{mid}/renew")
+    async def renew_post(mid: str, req: Request):
+        acc = auth.session_account(ctx, req, True, "mandate")
+        renew._old(ctx, acc, mid)                                   # r0311: ownership before the body is read (no 409 oracle)
+        b = await body(req)
+        try:
+            env = wa.b64u_dec(b["envelope_b64"])
+            if not looks_like_envelope(env):
+                raise ValueError
+        except Exception:
+            raise Err(409, "WA_MALFORMED")
+        out = renew.register(ctx, acc, mid, b.get("mandate"), env)
+        trial.on_mandate(ctx, acc, b["mandate"].get("agent"), out.get("mandate_id"))
+        return out
+
     def own_mandate(acc, mid):
         x = db.one("SELECT * FROM mandates WHERE id=? AND account_id=?", (mid, acc["id"])) if isinstance(mid, str) else None
         if not x:
@@ -659,6 +696,11 @@ def make_router(ctx):
             out["view_signed"] = bool(ap["view_sha256"])
             if ap["view_sha256"]:
                 out["view_signed_sha256"] = ap["view_sha256"]
+        if out.get("status") in ("pending_approval", "held"):     # r0310: a hint under Details, outside the signed view (after view_sha256)
+            x_ = db.one("SELECT mandate_id FROM actions WHERE rid=?", (rid,))
+            ro = renew.offer(ctx, acc, x_["mandate_id"]) if x_ is not None and x_["mandate_id"] else {"show": False}
+            if ro.get("show"):
+                out["renew_offer"] = ro
         return out
 
     def _view_offer(acc, out):

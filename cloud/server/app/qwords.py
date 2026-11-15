@@ -82,6 +82,16 @@ SCREEN = {
     # TCC, the firewall, SELinux / AppArmor, Defender): refused (Н10) everywhere; these words show only where the strict policy asks a doubt
     "defense_what": "Your agent wants to switch off a protection of your computer",
     "defense_harm": "Harmful programs could then run without any warning.",
+    # r0307 (mr-vocab-6, V5 «слепой читатель» 14.11): clearer sentences where a reader without context misjudged the danger. Shown only
+    # when the mandate pinned mr-vocab-6 or later (exec_json "v6" {"pin": true}); a mandate signed before keeps the older sentence.
+    "v6_unknown_what": "Your agent wants to run something Witness cannot read",
+    "v6_unknown_harm": "Witness cannot tell what it does. Allow only if you expected it.",
+    "v6_http_harm": "It contacts this site and may send data from your computer.",
+    "v6_egress_harm": "Data from your computer could go to a site you did not name.",
+    "v6_net_unseen_what": "Your agent wants to open a network connection with {t}",
+    "v6_net_unseen_harm": "Others could get data out of, or into, your computer.",
+    "v6_strict_outside_harm": "That program is not limited: it can reach your files and the internet.",
+    "v6_irreversible_harm": "Work not saved in git, or a database, would be lost for good.",
 }
 AUTOSTART_MARK = "autostart:"      # = hookjudge.bashparse.AUTOSTART + ":"
 LATER_LONG = ("This file is run later by another program, by itself, outside Witness: direnv runs .envrc when you enter the folder, git "
@@ -560,6 +570,45 @@ def _project_of(x):
         return None
 
 
+# r0307 (mr-vocab-6): (field, older sentence template, new SCREEN key, only for this reason or None). The older sentence stays in the
+# vocabulary (a mandate that pinned mr-vocab-2..5 is shown it, and the checker matches either one against the pinned document).
+V6_SWAP = (
+    ("what", UNKNOWN_WHAT, "v6_unknown_what", None),
+    ("harm", UNKNOWN_HARM, "v6_unknown_harm", None),
+    ("harm", "Information from your computer could be sent to this site.", "v6_http_harm", None),
+    ("harm", "Your keys or passwords could be sent to this site.", "v6_egress_harm", "ESCALATE_EGRESS_UNSPECIFIED"),   # no secret was seen
+    ("what", "Your agent wants to run a network program ({t}) whose destination is not in the line", "v6_net_unseen_what", None),
+    ("harm", "It could send data to a place you cannot see.", "v6_net_unseen_harm", "ESCALATE_NET_UNSEEN"),
+    ("harm", "That program runs without the sandbox's limits.", "v6_strict_outside_harm", None),
+    ("harm", "Uncommitted changes, git history or a database are lost for good.", "v6_irreversible_harm", None),
+)
+
+
+def _v6_rx(tpl):
+    out, i = "", 0
+    for m_ in re.finditer(r"\{(\w+)\}", tpl):
+        out += re.escape(tpl[i:m_.start()]) + "(?P<%s>.+)" % m_.group(1)
+        i = m_.end()
+    return re.compile("^" + out + re.escape(tpl[i:]) + "$", re.S)
+
+
+def _v6(w, x, reason=None):
+    """mr-vocab-6 sentences when the question carries exec_json "v6" {"pin": true}; otherwise the words as they were. Never raises."""
+    try:
+        v6_ = _exec_member(x, "v6")
+        if not (isinstance(v6_, dict) and v6_.get("pin") is True):
+            return w
+        for f, old_, key, only in V6_SWAP:
+            if only is not None and only != reason:
+                continue
+            m_ = _v6_rx(old_).match(w.get(f) or "")
+            if m_:
+                w[f] = SCREEN[key].format(**m_.groupdict())
+        return w
+    except Exception:      # noqa: BLE001  the older words: still true, still in the vocabulary
+        return w
+
+
 def words(x):
     """-> {"what", "harm", "details"} (non-empty strings) for an actions row x (sqlite Row or dict). Never raises."""
     try:
@@ -854,7 +903,7 @@ def words(x):
         if up_ is not None and kind == "host":
             for f_ in fulls_:
                 d.append("Full path: %s" % _clean(f_, 300))      # r0283: the page puts it under Technical details
-        return {"what": what, "harm": harm, "risk": risk, "details": "\n".join(d)}
+        return _v6({"what": what, "harm": harm, "risk": risk, "details": "\n".join(d)}, x, reason)
     except Exception:    # fail closed in words: still a question, an honest general text
         return {"what": UNKNOWN_WHAT, "harm": UNKNOWN_HARM, "risk": "high", "details": "Witness could not read more about this call. Decide only if you expected it."}
 

@@ -5,7 +5,7 @@ import { signPayload } from './sign.js';
 import { explainError, supported, isClone, cloneNote } from './webauthn.js';
 import { describeMandate } from './describe.js';
 import { inspectFields } from './honest.js';
-import { formWarnings, L2_CLASSES, inputsFromMandate, applySuggestion, commandForm, recommendedCommand, READONLY_COMMANDS, sampleFor, httpForm, recommendedHttp } from './mandate_form.js';
+import { renewCheck, formWarnings, L2_CLASSES, inputsFromMandate, applySuggestion, commandForm, recommendedCommand, READONLY_COMMANDS, sampleFor, httpForm, recommendedHttp } from './mandate_form.js';
 import { importForm, pendingImport } from './mandate_import.js';
 import { revokeMandate } from './revoke.js';
 import { needsText } from './policy.js';
@@ -175,6 +175,7 @@ function setInputs(v) {
 
 function showActiveRow(act) {
   clear($('#activekv')).append(...kv(describeMandate(act.mandate)).childNodes);
+  renewOffer(act).catch(() => { $('#renew_line').hidden = true; });
   $('#active').hidden = false; $('#revoke').disabled = false;
   $('#revoke').onclick = async () => {
     if (!confirm('Revoke this mandate? The agent is refused until a new mandate is signed.')) return;
@@ -182,6 +183,44 @@ function showActiveRow(act) {
     try { await revokeMandate(act, me); $('#active').hidden = true; notice(msg, 'ok', 'Mandate revoked. Sign a new one below when you are ready.'); }
     catch (e) { notice(msg, 'err', e.code ? failText(e) : explainError(e)); $('#revoke').disabled = false; }
   };
+}
+// r0310: the same mandate, re-signed under the current reason vocabulary (app/renew.py). The new mandate must be the one shown on this card
+// member for member, except id, nbf (not earlier), exp (not later) and toolmap_sha256 (the hash of the tool map document the server sends,
+// checked here as for any mandate): the page refuses anything else before the passkey prompt; the server checks it again.
+async function renewOffer(act) {
+  const box = $('#renew_line');
+  box.hidden = true;
+  if (!safeId(act.id)) return;
+  const o = await get('/api/mandates/' + encodeURIComponent(act.id) + '/renew');
+  if (!o || o.show !== true || typeof o.text !== 'string') return;
+  let confirmEnds = false;
+  const go = $('#renew_go');
+  go.textContent = o.text; go.disabled = false; $('#renew_ends').hidden = true;
+  $('#renew_no').onclick = () => { box.hidden = true; post('/api/mandates/' + encodeURIComponent(act.id) + '/renew/dismiss', {}).catch(() => {}); };
+  go.onclick = async () => {
+    go.disabled = true; notice(msg, 'ok', '');
+    try {
+      const r = await post('/api/mandates/' + encodeURIComponent(act.id) + '/renew/draft', {});
+      if (r.typ !== TYP_MANDATE || !r.gateway) throw new Error('Unexpected answer from the server. Nothing was signed.');
+      const gw = bytesToHex(await sha256(encode(r.gateway)));
+      if (r.mandate.toolmap_sha256 !== gw) throw new Error('The tool map hash in the mandate is not the hash of the tool map sent. Nothing was signed.');
+      const bad = renewCheck(act.mandate, r.mandate);
+      if (bad) throw new Error('The updated mandate is not the one shown above (' + bad + '). Nothing was signed.');
+      const ends = (r.ends && (r.ends.allowances || 0) + (r.ends.repeat || 0)) || 0;
+      if (ends && !confirmEnds) {          // project permissions name the old mandate: they end (said before the passkey prompt)
+        confirmEnds = true;
+        $('#renew_ends').textContent = ' ' + ends + ' "from now on" permission' + (ends === 1 ? '' : 's') + ' of this mandate will end; you will be asked for those again.';
+        $('#renew_ends').hidden = false; go.textContent = 'Update and confirm with passkey'; go.disabled = false; return;
+      }
+      const envelope_b64 = await signPayload(TYP_MANDATE, encode(r.mandate), me);
+      await post('/api/mandates/' + encodeURIComponent(act.id) + '/renew', { mandate: r.mandate, envelope_b64 });
+      box.hidden = true;
+      await showActive().catch(() => {});
+      notice(msg, 'ok', 'Mandate updated: the same rules, clearer wording in new questions. The previous mandate is superseded; its receipts stay valid.');
+    } catch (e) { notice(msg, 'err', isClone(e) ? explainError(e) : e.code ? failText(e) : (e.message || explainError(e))); go.disabled = false; }
+  };
+  box.hidden = false;
+  if (qs.get('renew') === act.id) box.scrollIntoView();
 }
 // the card of the active mandate, read again from the server (after a signature)
 async function showActive() {

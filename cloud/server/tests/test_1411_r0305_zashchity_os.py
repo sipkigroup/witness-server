@@ -157,7 +157,7 @@ def _row(rc, df=None):
 
 def test_vocabulary_is_mr_vocab_5_and_holds_every_screen_sentence():
     d = vocab.doc()
-    assert d["v"] == "mr-vocab-5" and d["screen"]["defense_what"] == qwords.SCREEN["defense_what"]
+    assert d["v"] == "mr-vocab-6" and d["screen"]["defense_what"] == qwords.SCREEN["defense_what"]
     assert "defense" in qwords.MARK_WORDS
 
 

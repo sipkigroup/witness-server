@@ -33,9 +33,9 @@ import os
 import re
 import unicodedata
 
-VOCAB_STRICT = "mr-vocab-5"      # the server's current vocabulary (r0294: + a run of code from the network; r0298: + autostart, folder unknown;
+VOCAB_STRICT = "mr-vocab-6"      # r0307: + clearer v6_* sentences (V5 blind reader); the server's current vocabulary (r0294: + a run of code from the network; r0298: + autostart, folder unknown;
 #                                  r0305: + an OS protection switched off)
-VOCAB_REBUILT = ("mr-vocab-2", "mr-vocab-3", "mr-vocab-4", "mr-vocab-5")    # every version whose words are rebuilt; older mandates check as before
+VOCAB_REBUILT = ("mr-vocab-2", "mr-vocab-3", "mr-vocab-4", "mr-vocab-5", "mr-vocab-6")    # every version whose words are rebuilt; older mandates check as before
 VOCAB_FIRST = VOCAB_REBUILT[0]
 OMIT_RULE = "mr-omit-1"
 FIRST_SCREEN = ("rid", "status", "what", "harm", "risk")

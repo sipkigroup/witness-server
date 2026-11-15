@@ -2441,6 +2441,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             _mark_net_code(ctx, agent, row, act, args, t0, m)          # r0294: the line runs code downloaded in this session
             _mark_autostart(ctx, row, act, m)                          # r0298: autostart in an unknown folder: which words the mandate pinned
             _mark_defense(ctx, row, act, m)                            # r0305: an OS protection switched off (asked only as a strict doubt)
+            _mark_v6(ctx, row, m)                                      # r0307: mr-vocab-6 sentences only for a mandate that pinned them
         if gate is not None and gate[0] == "deny":
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
@@ -2670,6 +2671,18 @@ def _mark_defense(ctx, row, act, m=None):
             row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
     except Exception:      # noqa: BLE001  no mark: the older words
         log("ERROR", "defense mark not made", rid=row.get("rid"))
+
+
+def _mark_v6(ctx, row, m=None):
+    """r0307: exec_json "v6" {"pin"}: True = the mandate pinned mr-vocab-6 or later (or none) -> qwords V6_SWAP sentences; False = a mandate
+    signed before -> the older sentences of its own vocabulary (signed = shown, the evidence pack stays VALID)."""
+    try:
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["v6"] = {"pin": bool(_pinned_has(ctx, m, "v6_unknown_what"))}
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except Exception:      # noqa: BLE001  no mark: the older words
+        log("ERROR", "v6 mark not made", rid=row.get("rid"))
 
 
 def _pinned_has(ctx, m, key):

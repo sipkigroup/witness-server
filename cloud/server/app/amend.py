@@ -498,8 +498,13 @@ def _net_heads(w):
 def line_ok(tool, args, home):
     """Rule 2 and 3 of the module doc: the whole line may be covered by amendments at all."""
     from app import constitution
-    if any(isinstance(d, str) and d.startswith("autostart:") for d in _witness(args).get("danger") or []):
+    strict_ = tool.startswith("Bash") and _witness(args).get("sandbox") == {"strict": True}
+    if any(isinstance(d, str) and (d.startswith("defense:") or (d.startswith("autostart:") and ("in an unknown directory" in d or d.startswith("autostart:copy into ") or not strict_)))
+           for d in _witness(args).get("danger") or []):
+        #                                               r0305: W5 (a file run later, inside the project) under the strict fact is the
+        #                                               closed list's С3 with its own narrow "from now on" (strict_policy.LATER)
         return False                                  # r0298: autostart in an unknown folder -- never "from now on", strict fact or not
+        #                                               r0305: nor an OS protection switched off (Н10; a strict doubt is asked once)
     if tool.startswith("Bash") and _witness(args).get("sandbox") == {"strict": True}:
         # r0261 (closed list): under the strict fact only the immutable articles (judged on what runs) block "from now on"; every other
         # mark of the line is silent there (hookjudge/strict_policy.py)

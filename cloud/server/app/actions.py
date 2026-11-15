@@ -2188,6 +2188,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             # under a strict fact the line is then held by the sandbox, as without the profile)
             act = refused_outside_write(ctx, agent["id"], L, m["id"], act, tnow, t0, tool, args, ameta)
             used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
+            act = unlisted_allow_gate(L, m["id"], act, tool, args, tnow)     # r0305
         sv_ = None
         if m is not None and L is not None and isinstance(tool, str) and tool.startswith("Bash") and not al.team(ctx, acc) \
                 and al.in_strict_sandbox(L, m["id"], al.project_meta(args), w_):
@@ -2202,6 +2203,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             # shell write of it is; the narrow "from now on" is this path in this project
             act = strict_policy.write_cover(L, m["id"], act, tool, args, tnow, (ameta or {}).get("project"))
             used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
+        if m is not None and L is not None and tool in strict_policy.FILE_TOOLS and not al.team(ctx, acc):
+            act = later_run_write(L, m["id"], act, tool, args, tnow)     # r0305 (W5): .envrc, .husky, CI ... outside the strict session
         if m is not None and L is not None and tool in strict_policy.FILE_TOOLS:
             # r0261f (0.2.59): a file in the shared temp the mandate does not name is asked once, not refused RESOURCE with no button
             act = strict_policy.temp_write_ask(L, m["id"], act, tool, args, tnow)
@@ -2225,6 +2228,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             if ameta is not None:
                 ea = amend.cover(L, m["id"], ea, tool, args, ameta, tnow)
             ea = refused_outside_write(ctx, agent["id"], L, m["id"], ea, tnow, t0, tool, args, ameta)   # r0296 (before the strict step)
+            ea = unlisted_allow_gate(L, m["id"], ea, tool, args, tnow)                                # r0305
             if sv_ is not None:
                 ea = strict_policy.soften_data(L, m["id"], ea, tool, args, sv_, tnow)[0]
                 ea = strict_policy.cover(L, m["id"], ea, tool, args, sv_, tnow, al.project_meta(args))
@@ -2436,6 +2440,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             _mark_refused_before(ctx, agent, row, act, args, t0, hit_)     # r0275: the owner refused the same effect through another call
             _mark_net_code(ctx, agent, row, act, args, t0, m)          # r0294: the line runs code downloaded in this session
             _mark_autostart(ctx, row, act, m)                          # r0298: autostart in an unknown folder: which words the mandate pinned
+            _mark_defense(ctx, row, act, m)                            # r0305: an OS protection switched off (asked only as a strict doubt)
         if gate is not None and gate[0] == "deny":
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
@@ -2504,12 +2509,18 @@ def refused_outside_write(ctx, agent_id, L, mid, act, now, t0, tool=None, args=N
     if not isinstance(rc, str) or not rc.startswith(OUTSIDE_WRITE_HEAD):
         return act
     try:
-        if L.S.decide_for(mid, act, now)[1:] not in (("allow", "OK"), ("allow", "OK_UNSPECIFIED")):
+        d0_ = L.S.decide_for(mid, act, now)[1:]
+        if d0_ not in (("allow", "OK"), ("allow", "OK_UNSPECIFIED")):
             return act
         pth = rc[len(OUTSIDE_WRITE_HEAD):].strip()
         key = "out:" + (provenance._canon(pth) or "")
         M = L.S.mandates.get(mid)
-        not_data = is_auto_profile(((M or {}).get("permissions") or {}).get("command")) and not auto_quiet_place(pth)
+        # r0305 (SHAG0 v40, witness-vectors W2 / X3): under `unlisted: "allow"` (the core's OK_UNSPECIFIED: no entry of the list names
+        # this write) a write or delete OUTSIDE the project is asked -- "other commands run without asking" is about commands, not about
+        # files of other projects or the person's notes (a Makefile of another project runs before any undo). An owner's own folder entry
+        # (OK) and the auto profile's data files stay quiet with their shadow copy.
+        not_data = (is_auto_profile(((M or {}).get("permissions") or {}).get("command")) and not auto_quiet_place(pth)) \
+            or d0_ == ("allow", "OK_UNSPECIFIED")
         if not not_data and provenance.refused_place(ctx, agent_id, key, t0) is None:
             return act
         b = dict(act, dangerous=True)
@@ -2529,6 +2540,60 @@ def refused_outside_write(ctx, agent_id, L, mid, act, now, t0, tool=None, args=N
         return b
     except Exception:      # noqa: BLE001  fail closed: asked
         log("ERROR", "refused outside-write check failed")
+        return dict(act, dangerous=True)
+
+
+# r0305 (witness-vectors 0.1 under `unlisted: allow`: E6, E8, H1, O8, X2): "run other commands without asking" never covers what cannot
+# be undone or seen -- a recursive delete, root rights, a hand-off to another app or the browser, code from a variable, a local service's
+# socket. Under unlisted "ask" these are asked anyway (not on the list); only the silence of OK_UNSPECIFIED is narrowed.
+_ALLOW_NEVER_SILENT = re.compile(r"^(?:rm \[[^\]]*\brecursive\b|find \[[^\]]*\bdelete\b|(?:sudo|doas|pkexec|su|runas)(?:\s|$)|"
+                                 r"(?:open|xdg-open|osascript|start|explorer(?:\.exe)?)(?:\s|$|\s*\[))")
+_EVAL_FROM_VAR = re.compile(r"(?:^|\s)-[A-Za-z]*[ce]\s+[\"']?\$|(?:^|[\s;&|(])eval\s|--unix-socket\b|docker\.sock\b")
+
+
+def later_run_write(L, mid, act, tool, args, now):
+    """r0305 (witness-vectors W5; reverses r0261c (д) П2 for these files): a Write / Edit of a file INSIDE the project that another program
+    runs later by itself, outside the agent and Witness -- direnv runs .envrc on `cd` in the person's shell, a hooks manager runs .husky /
+    .githooks on the person's commit, CI runs workflows on push, the editor runs tasks.json -- is asked ONCE (the danger `autostart` with
+    its own detail: qwords autostart words, never "from now on"). "Its run is judged when it runs" does not hold there: nothing of it runs
+    through the agent. Under the session's fresh strict fact (`sbx_session`) the closed list's С3 asks it already (strict_policy.write_cover,
+    with its narrow "from now on"): unchanged. Only an allowed write is turned into a question; anything else as it was."""
+    from app.hookjudge.bashparse import AUTOSTART as _AS, LATER_RUN_DETAIL, is_later_run_path
+    w = args.get("_witness") if isinstance(args, dict) else None
+    pth = w.get("path") if isinstance(w, dict) else None
+    if not isinstance(act, dict) or "allowance" in act or not isinstance(w, dict) or w.get("sbx_session") is True or w.get("danger") \
+            or not is_later_run_path(pth) or not isinstance(w.get("project"), str) or act.get("dangerous") is True:
+        return act
+    try:
+        if L.S.decide_for(mid, act, now)[1] != "allow":
+            return act
+        b = dict(act, **{"class": "command"}, recipient=(_AS + ":" + LATER_RUN_DETAIL % pth)[:300], dangerous=True)
+        b.pop("reversible", None)
+        b.pop("sandboxed", None)
+        return b if L.S.decide_for(mid, b, now)[1] == "defer" else act
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "later-run write check failed")
+        return act
+
+
+def unlisted_allow_gate(L, mid, act, tool, args, now):
+    """r0305: an action the core lets through ONLY because of `unlisted: "allow"` (OK_UNSPECIFIED) whose command head is one of the
+    above, or whose line runs code from a variable / talks to a local service's socket, is asked (marked dangerous: no list covers it).
+    Only narrows; anything else unchanged."""
+    if not isinstance(act, dict) or act.get("class") != "command" or act.get("dangerous") is True or "allowance" in act \
+            or act.get("sandboxed") is True or not (isinstance(tool, str) and tool.startswith("Bash")):
+        return act
+    rc = str(act.get("recipient") or "")
+    text = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else ""
+    if not (_ALLOW_NEVER_SILENT.match(rc) or _EVAL_FROM_VAR.search(text)):
+        return act
+    try:
+        if L.S.decide_for(mid, act, now)[1:] != ("allow", "OK_UNSPECIFIED"):
+            return act
+        b = dict(act, dangerous=True)
+        return b if L.S.decide_for(mid, b, now)[1] == "defer" else act
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "unlisted-allow gate failed")
         return dict(act, dangerous=True)
 
 
@@ -2589,6 +2654,22 @@ def _mark_autostart(ctx, row, act, m=None):
             row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
     except Exception:      # noqa: BLE001  no mark: the older words
         log("ERROR", "autostart mark not made", rid=row.get("rid"))
+
+
+def _mark_defense(ctx, row, act, m=None):
+    """r0305: a question whose recipient is the danger `defense` (bashparse.DEFENSE: an OS protection switched off) -- refused Н10 at once
+    everywhere, so it is asked only when the strict policy found it in text a program may run (a doubt) -- carries exec_json "df" {"pin"}:
+    True = the mandate pinned mr-vocab-5 or later (or none) -> qwords SCREEN defense_*; False = a mandate signed before -> the older
+    vocabulary's own sentence ("a dangerous command"): signed = shown, the evidence pack stays VALID."""
+    if act.get("class") != "command" or not str(act.get("recipient") or "").startswith("defense:"):
+        return
+    try:
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["df"] = {"pin": bool(_pinned_has(ctx, m, "defense_harm"))}
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except Exception:      # noqa: BLE001  no mark: the older words
+        log("ERROR", "defense mark not made", rid=row.get("rid"))
 
 
 def _pinned_has(ctx, m, key):

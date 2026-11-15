@@ -139,7 +139,7 @@ def test_no_question_is_added(client, owner, home_dir, monkeypatch, name):
 
 def test_words_are_vocabulary_templates_and_rebuild_offline(client, owner, home_dir):
     """P1: the new line is a sentence of mr-vocab-3 with the call's (or the witness's Details') host; under mr-vocab-2 it is not"""
-    assert vocab.V in ("mr-vocab-3", "mr-vocab-4") and {"net_code_run", "net_code_now"} <= set(vocab.doc()["screen"])   # r0298: 4 keeps them
+    assert vocab.V in ("mr-vocab-3", "mr-vocab-4", "mr-vocab-5") and {"net_code_run", "net_code_now"} <= set(vocab.doc()["screen"])   # r0298: 4 keeps them
     voc3 = json.loads(vocab.canonical())
     voc2 = dict(voc3, v="mr-vocab-2", screen={k: v for k, v in voc3["screen"].items() if not k.startswith("net_code_")})
     for name in ("a9 curl -o install.sh; chmod; ./install.sh", "a11 npx github:"):

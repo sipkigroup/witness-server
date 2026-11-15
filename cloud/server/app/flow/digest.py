@@ -12,7 +12,7 @@ from app.flow import escalate, store, suggest
 GATE_ONLY = ("APPROVAL_RATE", "TOOL_UNMAPPED", "TOOL_ARGS_UNMAPPED", "TOOLMAP_CHANGED", "DATA_PATTERNS_CHANGED", "ADVISOR_CHANGED", "NO_MANDATE", "ADVISORY_HOLD", "ADVISORY_REJECTED",
              # 06.11: the Constitution v1's immutable articles (app/constitution.py): refused by the gateway, no ledger entry
              "FORBIDDEN_SECRET_READ", "FORBIDDEN_GIT_HOOKS", "FORBIDDEN_AUTOSTART", "FORBIDDEN_WIPE", "FORBIDDEN_REMOTE_SHELL",
-             "FORBIDDEN_HIDDEN_CHARS", "FORBIDDEN_FORCE_PUSH")
+             "FORBIDDEN_HIDDEN_CHARS", "FORBIDDEN_FORCE_PUSH", "FORBIDDEN_DEFENSE_OFF")
 
 
 def gateway(x):

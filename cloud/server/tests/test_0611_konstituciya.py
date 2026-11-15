@@ -377,6 +377,9 @@ def test_p2_build_files_change_silently_and_run_only_in_sandbox(client, owner, t
     os.makedirs(os.path.dirname(os.path.join(d.proj, rel)), exist_ok=True)
     got = d.send(None, tool="Write", inp={"file_path": os.path.join(d.proj, rel), "content": text})
     # r0261c (д, decision of Deus): no strict fact here -> П2 for every build / CI file (С3 for Write / Edit only under it)
+    if rel.startswith(".github/"):                # r0305 (W5): a CI workflow is asked once (CI runs it on push, outside the agent)
+        assert [r["verdict"] for _, r in got] == ["defer"], (rel, got)
+        return
     assert _rows(got) == [("allow", "OK", "allowed")], (rel, got)                                   # PRED: no question for the edit
     got = d.send(None, tool="Edit", inp={"file_path": os.path.join(d.proj, rel), "old_string": text[:3], "new_string": text[:3]})
     assert all(r["verdict"] == "allow" for _, r in got), (rel, got)

@@ -226,7 +226,10 @@ PERSIST_PATH = re.compile(r"(^|/)(\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc
                           r"Library/LaunchAgents(/.*)?|Library/LaunchDaemons(/.*)?|Library/StartupItems(/.*)?|\.config/autostart/.*|\.config/systemd/user/.*|"
                           r"\.claude/settings(\.local)?\.json|\.claude/hooks(/.*)?|\.claude/plugins(/.*)?|\.claude\.json|\.mcp\.json|"
                           r"\.config/deus-witness(/.*)?|\.deus-witness(/.*)?|Library/Application Support/deus-witness(/.*)?|\.local/share/deus-witness(/.*)?|deus-witness/shadow(/.*)?|"
-                          r"\.ssh/(authorized_keys2?|config|rc|environment)|\.config/git/hooks(/.*)?|\.gitconfig|\.config/git/config)$|"
+                          r"\.ssh/(authorized_keys2?|config|rc|environment)|\.config/git/hooks(/.*)?|\.gitconfig|\.config/git/config|"
+                          r"(site|dist)-packages/[^/]+\.pth|(site|dist)-packages/(sitecustomize|usercustomize)\.py|"     # r0305: every python runs them at start (T1546.018)
+                          r"lib/python[0-9.]*/(sitecustomize|usercustomize)\.py|"
+                          r"\.ipython/profile_[^/]+/(startup/[^/]+|ipython_(kernel_)?config\.py))$|"     # r0305: IPython runs them at start
                           r"^/(private/)?etc/(cron\.[^/]+/.*|crontab|cron\.d/.*|profile(\.d/.*)?|bashrc|zshrc|zprofile|zshenv|sudoers(\.d/.*)?|hosts|paths(\.d/.*)?|"
                           r"launchd\.conf|rc\.[^/]+|environment|ld\.so\.[^/]+|pam\.d/.*)$|^/(private/)?var/(at|cron|spool/cron)/.*|"
                           r"^/Library/(LaunchAgents|LaunchDaemons|StartupItems)/.*", re.I)
@@ -245,6 +248,23 @@ def is_persist_path(p: str) -> bool:
 # The mark stands FIRST in the line's danger list: the question's recipient is the first mark (toolmap.recipient_values).
 AUTOSTART = "autostart"
 AUTOSTART_GIT = re.compile(r"(^|/)\.git[. ]*/(.+/)?(hooks(/|$)|config(\.worktree)?$)", re.I)
+
+
+# r0305 (witness-vectors 0.1 class W5, SHAG0): a file INSIDE the project that another program runs later by itself, outside the agent:
+# direnv (.envrc on cd), git hooks managers (.husky, .githooks, pre-commit), the editor's tasks / dev containers, CI. Before r0305 a write
+# there was a plain project write (silent under every mandate). Now the danger `autostart` with this detail: asked once ("Allow once" /
+# "No"), never "from now on" (allowances.offer, repeat.eligible, amend.line_ok). Deleting such a file starts nothing: not marked.
+# The same set as strict_policy.LATER_PATH minus what has its own mark already (.claude, .mcp.json, .git/hooks, .cursor: agent-config /
+# git-config / persist).
+LATER_RUN = re.compile(
+    r"(?:^|/)(?:\.envrc$|\.husky/[^/]|\.githooks/[^/]|\.pre-commit-config\.ya?ml$|\.pre-commit-hooks\.ya?ml$|\.devcontainer/[^/]|"
+    r"\.vscode/(?:tasks|launch)\.json$|\.github/workflows/[^/]|\.github/actions/[^/]|\.gitlab-ci\.ya?ml$|\.circleci/[^/]|"
+    r"\.buildkite/[^/]|azure-pipelines\.ya?ml$|bitbucket-pipelines\.ya?ml$|\.travis\.ya?ml$|Jenkinsfile$)", re.I)
+LATER_RUN_DETAIL = "write to %s (another program runs it later by itself)"
+
+
+def is_later_run_path(p) -> bool:
+    return isinstance(p, str) and bool(LATER_RUN.search(p))
 
 
 def is_autostart_tail(t) -> bool:
@@ -1013,7 +1033,7 @@ class Command:
             if path not in self.writes:             # r0298: a deletion starts nothing: no `autostart` mark (the opaque one stays)
                 self.writes.append(path)
         else:
-            self.write(path)
+            self.write(path, deleting=True)
         if path not in self.deletes:
             self.deletes.append(path)
 
@@ -1021,15 +1041,17 @@ class Command:
         if h and h not in self.outside:
             self.outside.append(h)
 
-    def write(self, path: str) -> None:
+    def write(self, path: str, deleting: bool = False) -> None:
         if path not in self.writes:
             self.writes.append(path)
         if isinstance(path, str) and path.startswith(LOST_CWD + "/"):
             t_ = path[len(LOST_CWD) + 1:]           # r0298: under the unknown directory the place is not certain: asked (autostart), never Н4
-            if is_autostart_tail(t_):
+            if is_autostart_tail(t_) and not deleting:
                 self.add(AUTOSTART, "write to %s in an unknown directory" % t_)
         elif is_persist_path(path):
             self.add("persist", path)               # 0.2.90: shell rc, LaunchAgents, crontab, the agent's settings / hooks, the witness's key
+        elif not deleting and is_later_run_path(path) and not is_git_exec_path(path) and not is_agent_config_path(path):
+            self.add(AUTOSTART, LATER_RUN_DETAIL % path)     # r0305 (W5): .envrc, .husky, CI ...: another program runs it later
 
     def host(self, h: str) -> None:
         h = h.lower().rstrip(".")
@@ -1952,7 +1974,7 @@ def _local_write(name, args, here, home, project, c):
     tags = _lw_tags(name, args, lw)
     if not tags:
         for p in lw.writes:
-            c.write(p)
+            c.write(p, deleting=name in ("rm", "rmdir"))     # r0305: a deletion starts nothing (no W5 `autostart` mark)
     return tags
 
 
@@ -4007,6 +4029,8 @@ def _write_target(t, cwd, home, c, writes, deleting=False):
         c.add("git-config", p)                  # 0.2.9: git would run what is written there on the next `git status` / `git diff`
     if is_agent_config_path(p):
         c.add("agent-config", p)                # 0.2.24 (critique A): the hook / MCP configuration of the agent itself
+    if not deleting and is_later_run_path(p) and not is_persist_path(p) and not is_git_exec_path(p) and not is_agent_config_path(p):
+        c.add(AUTOSTART, LATER_RUN_DETAIL % p)  # r0305 (W5): .envrc, .husky, CI ... run later by another program: asked once
 
 
 def _delete_targets(ops, cwd, home, c):
@@ -4718,6 +4742,9 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
                     _CODE[0] -= 1
             continue
         e = _expand(o, cwd, home)                         # 0.2.11: also through $HOME/${HOME}, and a symlink in the project to a key
+        if e is not None and re.search(r"[*?\[]", e) and name not in STAT_ONLY and name != "ls":
+            for g_ in glob_secrets(_abspath(e, cwd, home), home):
+                c.add("secrets", g_)                      # r0305 (witness-vectors r4-18): `cat ~/.ss?/id_*` names the key the shell expands
         if name in STAT_ONLY and o in ops and o not in uploads and _lit_ok(o) and e is not None and \
                 not SECRET_DIR.search(o) and not SECRET_DIR.search(_abspath(e, cwd, home)):
             continue                                      # N16 0.2.74: `ls -la .env` / `stat .env` / `test -f .env`: metadata, not the text
@@ -4755,6 +4782,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         _code_scan(_sa, c, name)                          # s7 (O1): `python3 -c "...urlopen('https://evil')"`, `node -e "fetch(...)"`
         _code_fs_scan(_eval_code(name, args), c, name, cwd, home, project, depth, operands=[o for o in ops if _lit_ok(o)])   # 0.2.90
     _gates(name, args, ops, short, long_, cwd, home, c)                                  # 0.2.90: G2 egress, G3 keychain, G4 persistence
+    _defense(name, args, ops, short, long_, c)                                           # r0305: an OS protection switched off (Н10)
     if name == "git":
         _git_global(args, cwd, home, c, depth, project)  # s7 (O1): `git -c alias.x='!curl https://evil' x`
         _git_config_set(args, cwd, home, c, depth, project)     # rt2810: `git config core.sshCommand "curl https://evil"`
@@ -4849,6 +4877,12 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         return
     if name.startswith("mkfs") or name in ("fdisk", "parted", "wipefs", "sgdisk"):
         c.add("disk", " ".join(ops) or name)
+        return
+    # r0305 (found by the property test "every mark x every mandate": `diskutil eraseDisk` carried no mark, so it ran silently under
+    # `unlisted: allow`): the macOS disk tools that erase or repartition (catalog X5)
+    if (name == "diskutil" and ops and (ops[0] in DISKUTIL_ERASE or (ops[0] in ("apfs", "cs", "ar") and len(ops) > 1 and ops[1] in DISKUTIL_ERASE))) \
+            or name.startswith("newfs") or name == "asr" and ops[:1] == ["restore"]:
+        c.add("disk", ("%s %s" % (name, " ".join(ops))).strip()[:80])
         return
     if name in ("chmod", "chown") and ("R" in short or "--recursive" in long_) and any(_abspath(p, cwd, home) in ("/", home) for p in paths):
         c.add("rm-rf", "%s -R %s" % (name, " ".join(paths)))
@@ -5489,12 +5523,208 @@ def loopback_harm(u):
     return None
 
 
+# r0305 (SHAG0-POLNYY-KONVEYER-1411, KONSTITUCIYA-KATALOG-1411 class Z): a program that switches off a protection of the operating
+# system -- Gatekeeper / quarantine (T1553.001), SIP, TCC, the firewall, SELinux / AppArmor / auditd, Defender (T1562.001 / .004). Before
+# r0305 such a line carried NO mark: under `unlisted: "allow"` it ran silently, under "ask" it was "It runs a program on your computer"
+# (low). The danger `defense` is refused by the Constitution (Н10 FORBIDDEN_DEFENSE_OFF), whatever the mandate says. Only the forms that
+# SWITCH OFF are marked; a form that only looks (xattr -l, spctl --assess, csrutil status, ufw status, systemctl status, defaults read)
+# or that adds protection (xattr -w com.apple.quarantine, ufw enable, setenforce 1) is judged as before.
+DEFENSE = "defense"
+DISKUTIL_ERASE = {"eraseDisk", "eraseVolume", "reformat", "partitionDisk", "zeroDisk", "randomDisk", "secureErase", "splitPartition",
+                  "mergePartitions", "resizeVolume", "deleteContainer", "deleteVolume", "deleteSnapshot", "eraseVolumeGroup", "delete"}   # r0305
+QUARANTINE_ATTR = re.compile(r"^com\.apple\.(quarantine|provenance)$", re.I)
+DEFENSE_UNITS = re.compile(r"^(apparmor|firewalld|ufw|nftables|iptables|ip6tables|auditd|selinux\w*|fail2ban|clamav[\w-]*|clamd[\w@.-]*|"
+                           r"falcon-sensor|osqueryd|wazuh-agent|sysmon\w*|crowdstrike\w*|sentinelone\w*|mdatp|microsoft-defender\w*)(\.service)?$", re.I)
+DEFENSE_PS = re.compile(r"(?i)\bSet-MpPreference\b[^;|&\n]*-(Disable\w+|MAPSReporting|SubmitSamplesConsent|EnableControlledFolderAccess)\b"
+                        r"(?:\s*[:=]?\s*(?:\$true|1|0|\$false|disabled?|never))?|\bAdd-MpPreference\b[^;|&\n]*-Exclusion\w+|"
+                        r"\bSet-NetFirewallProfile\b[^;|&\n]*-Enabled\s*:?\s*(?:\$?false|0)\b|\bnetsh\s+(?:advfirewall|firewall)\s+set\b[^;|&\n]*\bstate\s+off\b|"
+                        r"\bUninstall-WindowsFeature\b[^;|&\n]*Defender|\bsc(?:\.exe)?\s+(?:stop|config)\s+WinDefend\b")
+POWERSHELLS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe", "cmd", "cmd.exe"}
+# r0305: what a scheduler / service manager makes run LATER, outside the agent (T1053.002 at, T1543.002 systemd): `persist` (Н4)
+SYSTEMCTL_PERSIST = {"enable", "reenable", "link", "preset", "preset-all", "add-wants", "add-requires", "set-default", "revert"}
+
+
+# r0305 (witness-vectors 0.1, wv-evasion-r4-18 `cat ~/.ss?/id_*`): a glob the shell expands to a credential file reads that file. The
+# server does not see the person's disk, so the pattern is matched (shell rules: `*` / `?` never match a leading dot unless the pattern
+# component starts with one) against the places where keys and tokens live; each match is a `secrets:` mark of that path (Н1 refuses a
+# private key / token store). A glob that cannot reach one (`src/*.py`, `~/*`) is judged as before.
+GLOB_SECRET_PLACES = (".ssh/id_rsa", ".ssh/id_dsa", ".ssh/id_ecdsa", ".ssh/id_ed25519", ".ssh/id_ecdsa_sk", ".ssh/id_ed25519_sk", ".ssh/identity",
+                      ".aws/credentials", ".netrc", ".git-credentials", ".docker/config.json", ".kube/config", ".config/gh/hosts.yml",
+                      ".gnupg/secring.gpg", ".gnupg/private-keys-v1.d/key.key", "Library/Keychains/login.keychain-db",
+                      ".config/gcloud/application_default_credentials.json", ".azure/accessTokens.json")
+
+
+def _glob_part(pat, name) -> bool:
+    import fnmatch
+    if name.startswith(".") and not pat.startswith("."):
+        return False
+    return fnmatch.fnmatchcase(name, pat)
+
+
+def _glob_match(pp, cp) -> bool:
+    if not pp:
+        return not cp
+    if pp[0] == "**":
+        return any(_glob_match(pp[1:], cp[k:]) for k in range(len(cp) + 1) if not any(x.startswith(".") for x in cp[:k]))
+    return bool(cp) and _glob_part(pp[0], cp[0]) and _glob_match(pp[1:], cp[1:])
+
+
+def glob_secrets(pattern, home) -> list:
+    """r0305: -> the credential places (absolute) that the absolute glob `pattern` can expand to; [] when none."""
+    if not isinstance(pattern, str) or not pattern.startswith("/") or not home or len(pattern) > 512:
+        return []
+    pp = [x for x in pattern.split("/") if x]
+    out = []
+    for rel in GLOB_SECRET_PLACES:
+        cand = os.path.join(home, rel)
+        if _glob_match(pp, [x for x in cand.split("/") if x]):
+            out.append(cand)
+    return out
+
+
+# r0305 (witness-vectors Z2-03, Z4, H2): the privacy database written directly; logs erased; an agent started with its permission checks off
+TCC_DB = re.compile(r"(?i)com\.apple\.TCC/TCC\.db")
+SQL_WRITE = re.compile(r"(?i)\b(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE|ATTACH)\b")
+UNSUPERVISED = {"claude": {"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions"},
+                "codex": {"--dangerously-bypass-approvals-and-sandbox", "--yolo"},
+                "gemini": {"--yolo"}, "qwen": {"--yolo"}, "aider": {"--yes-always"}, "cursor-agent": {"--force"}, "opencode": set(),
+                "amp": {"--dangerously-allow-all"}, "goose": set()}
+
+
+def is_defense_path(p) -> bool:
+    return isinstance(p, str) and bool(TCC_DB.search(p))
+
+
+def _defense_of(name, args, ops, short, long_):
+    """r0305: -> the detail of a switch-off of an OS protection by this one program, or None."""
+    a1 = ops[0] if ops else ""
+    al = [str(a) for a in args]
+    if any(TCC_DB.search(a) for a in al):
+        if name in ("sqlite3", "sqlite") and SQL_WRITE.search(" ".join(al)) or name in ("cp", "mv", "rm", "tee", "dd", "ln", "rsync", "ditto", "install",
+                                                                                         "truncate", "sed", "perl", "chmod", "chflags"):
+            return "%s on the privacy database (TCC.db)" % name
+    if name == "log" and a1 == "erase":
+        return "log erase " + " ".join(str(o) for o in ops[1:])[:60]
+    if name in ("wevtutil", "wevtutil.exe") and a1.lower() in ("cl", "clear-log"):
+        return "wevtutil cl " + " ".join(str(o) for o in ops[1:])[:60]
+    if name in UNSUPERVISED and not (name == "claude" and (_frame() or {}).get("alt_cfg")):
+        # (a `claude` run with CLAUDE_CONFIG_DIR set in the line to another configuration -- the person's own test bench, real corpus
+        # s7-0264 -- is the danger `witness` of _claude_env, judged as before: refusing it refused 4 harmless lines)
+        lf = {a.split("=", 1)[0] for a in al if a.startswith("--")}
+        pm = [al[k + 1] for k, a in enumerate(al[:-1]) if a in ("--permission-mode", "--approval-mode", "--sandbox", "-s", "--ask-for-approval", "-a")]
+        pm += [a.split("=", 1)[1] for a in al if a.startswith(("--permission-mode=", "--approval-mode=", "--sandbox=", "--ask-for-approval="))]
+        if lf & UNSUPERVISED[name] or any(v in ("bypassPermissions", "yolo", "danger-full-access", "never") for v in pm) or \
+                (name in ("gemini", "qwen") and "y" in short):
+            return "%s started with its permission checks off: %s" % (name, " ".join(al)[:80])
+    if name == "xattr":
+        if "c" in short or "--clear" in long_:
+            return "xattr -c (clears the quarantine mark): " + " ".join(ops)[:80]
+        if "d" in short and any(QUARANTINE_ATTR.match(str(o)) for o in ops):
+            return "xattr -d com.apple.quarantine: " + " ".join(o for o in ops if not QUARANTINE_ATTR.match(str(o)))[:80]
+        return None
+    if name == "spctl":
+        if long_ & {"--master-disable", "--global-disable", "--disable", "--add", "--remove-label"} or \
+                (a1 in ("kext-consent", "developer-mode") and len(ops) > 1 and ops[1] in ("disable", "add", "enable-terminal")):
+            return "spctl " + " ".join(al)[:80]
+        return None
+    if name == "csrutil":
+        if any(o in ("disable", "clear") for o in ops) or "--without" in long_ or (a1 == "authenticated-root" and "disable" in ops):
+            return "csrutil " + " ".join(al)[:80]
+        return None
+    if name == "tccutil":
+        # `tccutil reset All` / `reset Camera` erase the person's privacy decisions for every app (a denied app may ask again or get
+        # in); `reset Camera com.me.app` only takes ONE app's permission back (a developer's daily step): judged as before
+        if a1 == "reset" and (len(ops) <= 2 or str(ops[1]).lower() == "all"):
+            return "tccutil " + " ".join(al)[:80]
+        return None
+    if name == "pfctl":
+        if short & {"d", "F"} or "--disable" in long_:
+            return "pfctl " + " ".join(al)[:80]
+        return None
+    if name == "defaults" and a1 in ("write", "delete"):
+        dom = str(ops[1]) if len(ops) > 1 else ""
+        key = str(ops[2]) if len(ops) > 2 else ""
+        val = str(ops[3]).lower() if len(ops) > 3 else ""
+        if key.lower() == "lsquarantine" and (a1 == "delete" or val in ("no", "false", "0")):
+            return "defaults %s %s LSQuarantine %s" % (a1, dom, val)
+        if re.search(r"(^|/)com\.apple\.alf(\.plist)?$", dom) and key.lower() in ("globalstate", "stealthenabled", "allowsignedenabled",
+                                                                                  "allowdownloadsignedenabled") \
+                and (a1 == "delete" or key.lower().startswith("allow") or val in ("0", "no", "false")):
+            return "defaults %s %s %s %s" % (a1, dom, key, val)
+        if re.search(r"(^|/)com\.apple\.(security|SoftwareUpdate|commerce)(\.plist)?$", dom, re.I) and \
+                re.match(r"(?i)(GKAutoRearm|AutomaticallyInstall\w*|CriticalUpdateInstall|ConfigDataInstall|AutoUpdate\w*)$", key) and \
+                val in ("0", "no", "false"):
+            return "defaults %s %s %s %s" % (a1, dom, key, val)
+        return None
+    if name == "socketfilterfw":
+        for k, a in enumerate(al):
+            nxt = al[k + 1].lower() if k + 1 < len(al) else ""
+            if a in ("--setglobalstate", "--setblockall", "--setstealthmode") and nxt in ("off", "0"):
+                return "socketfilterfw %s off" % a
+            if a in ("--unblockapp", "--add", "--setallowsigned", "--setallowsignedapp") and (a.startswith("--un") or a == "--add" or nxt in ("on", "1")):
+                return "socketfilterfw " + " ".join(al)[:80]
+        return None
+    if name == "ufw":
+        if a1 in ("disable", "reset"):
+            return "ufw " + a1
+        return None
+    if name == "setenforce":
+        if a1.lower() in ("0", "permissive"):
+            return "setenforce " + a1
+        return None
+    if name in ("iptables", "ip6tables"):
+        if short & {"F", "X"} or long_ & {"--flush", "--delete-chain"} or \
+                (("P" in short or "--policy" in long_) and any(str(o).upper() == "ACCEPT" for o in ops)):
+            return "%s %s" % (name, " ".join(al)[:80])
+        return None
+    if name == "nft" and ops[:2] == ["flush", "ruleset"]:
+        return "nft flush ruleset"
+    if name == "auditctl" and (("e" in short and any(str(o) == "0" for o in ops)) or "D" in short):
+        return "auditctl " + " ".join(al)[:80]
+    if name in ("systemctl", "service"):
+        verbs = {"stop", "disable", "mask", "kill"}
+        if name == "systemctl" and a1 in verbs and any(DEFENSE_UNITS.match(str(o)) for o in ops[1:]):
+            return "systemctl %s %s" % (a1, " ".join(str(o) for o in ops[1:] if DEFENSE_UNITS.match(str(o)))[:80])
+        if name == "service" and len(ops) > 1 and DEFENSE_UNITS.match(str(ops[0])) and ops[1] == "stop":
+            return "service %s stop" % ops[0]
+        return None
+    if name == "systemextensionsctl" and ops[:2] == ["developer", "on"]:
+        return "systemextensionsctl developer on"
+    if name in POWERSHELLS and re.search(r"(?i)\bClear-EventLog\b|\bwevtutil(?:\.exe)?\s+cl\b", " ".join(al)):
+        return "event log cleared: " + " ".join(al)[:80]
+    if name in POWERSHELLS or name in ("Set-MpPreference", "Add-MpPreference", "Set-NetFirewallProfile", "netsh", "netsh.exe", "sc", "sc.exe"):
+        m = DEFENSE_PS.search((name + " " + " ".join(al)) if name not in POWERSHELLS else " ".join(al))
+        if m:
+            return m.group(0)[:120]
+        return None
+    return None
+
+
+def _defense(name, args, ops, short, long_, c):
+    """r0305: the danger `defense` (first in the line's list: it is the refusal's detail) for a program that switches off an OS protection."""
+    det = _defense_of(name, args, ops, short, long_)
+    if det is not None:
+        c.add(DEFENSE, det)
+
+
 def _gates(name, args, ops, short, long_, cwd, home, c):
     """G2 (egress) / G3 (secrets) / G4 (persistence) for the commands the 0.2.88 classifier let through under `unlisted: allow`
     (spec v0.1 6.5: `pip install`, `security find-generic-password`, `crontab -`, `launchctl load`, `claude plugin disable`)."""
     if name in CRON_LIKE:
         if not (name == "crontab" and (short & {"l"} and not short & {"r", "e"} and not ops)):
             c.add("persist", "%s %s" % (name, " ".join(args)[:60]))         # crontab -l (list) is a read; -, -e, -r, FILE change the table
+        return
+    if name in ("at", "batch"):
+        # r0305 (T1053.002): `at TIME -f f.sh` / `echo cmd | batch` hand a job to atd: it runs later, outside the agent and its sandbox.
+        # `at -l` (= atq), `at -c N` (prints a job), `at -r` / `-d` (= atrm) only look or remove: judged as before
+        if not (name == "at" and short & {"l", "c", "r", "d"}):
+            c.add("persist", "%s %s" % (name, " ".join(args)[:60]))
+        return
+    if name == "systemctl":
+        # r0305 (T1543.002): a unit enabled / linked starts at the next boot or login, outside the agent ( --user too); start / stop /
+        # status / restart act now (judged as before; stopping a protection is the danger `defense`)
+        if ops and ops[0] in SYSTEMCTL_PERSIST:
+            c.add("persist", "systemctl %s" % " ".join(args)[:60])
         return
     if name == "launchctl":
         if ops and ops[0] in LAUNCH_SUBS:

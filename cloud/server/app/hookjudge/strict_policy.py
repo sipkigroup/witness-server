@@ -58,6 +58,8 @@ TABLE = (
     ("Н6 FORBIDDEN_REMOTE_SHELL", "Н", "download | shell, reverse shell, listener", "capture of the machine"),
     ("Н7 FORBIDDEN_HIDDEN_CHARS", "Н", "bidi / zero-width characters in what runs", "what the person reads is not what runs"),
     ("Н8 FORBIDDEN_FORCE_PUSH", "Н", "force-push, deleting a remote branch", "history destroyed"),
+    ("Н10 FORBIDDEN_DEFENSE_OFF", "Н", "Gatekeeper / quarantine, SIP, TCC, firewall, SELinux / AppArmor, Defender switched off",
+     "the OS's own guard removed: what runs next is not checked (r0305)"),
     (PUBLISH, "С", "git push, npm/yarn/pnpm/uv/twine/cargo/gem publish, gh writes, deploy CLIs, cloud CLIs that write, ssh/scp/rsync to "
                    "another machine, curl/wget/http with a method or a body to a host outside loopback, mail, payments",
      "leaves the computer by a host the person allowed; cannot be taken back"),
@@ -1103,7 +1105,8 @@ def cover(L, mid, a, tool, args, v, now, amend_meta=None):
     if v0 == "allow" and why0 == "OK" and all(p == PUBLISH for p, _ in v.ask):
         return a                                      # the person listed this publishing command in the mandate
     ids = v.ids()
-    as_ = any(isinstance(d, str) and d.startswith("autostart:") for d in _witness(args).get("danger") or [])
+    as_ = any(isinstance(d, str) and (d.startswith("defense:") or (d.startswith("autostart:") and "in an unknown directory" in d))
+              for d in _witness(args).get("danger") or [])   # r0305: + defense; a W5 mark is С3 here (its narrow amendment stays)
     if amend_meta is not None and not as_:            # r0298: autostart in an unknown folder is never covered "from now on"
         for gid, g in sorted(L.S.allowances.items(), key=lambda kv: -kv[1]["seq"]):
             if g["mandate"] == mid and not g["ended"] and g["nbf"] <= now <= g["exp"] and g["project"] == amend_meta["project"] \

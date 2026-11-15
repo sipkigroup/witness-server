@@ -52,6 +52,9 @@ RUNS = [
 @pytest.mark.parametrize("allow,cmd", RUNS, ids=[c for _, c in RUNS])
 def test_rt6_runner_after_risky_write_is_asked(client, owner, tmp_path, allow, cmd):
     a = Agent(client, owner, tmp_path, extra_cmds=(allow if isinstance(allow, list) else [allow]) + ["true"], name="r6")
+    if cmd.startswith("at "):
+        assert a.line(cmd)[0] == "DENY"           # r0305: `at` hands a job to atd (T1053.002): refused Н4 even before any write
+        return
     assert a.line(cmd)[0] == "ALLOW", "the probe must pass before the write (else it tests nothing)"
     a.tool("Write", {"file_path": a.proj + "/f.py", "content": NET + "\n"})
     v, parts = a.line(cmd)
@@ -109,6 +112,9 @@ def test_rt6_config_that_is_code_change_is_asked(client, owner, tmp_path, path, 
     a = Agent(client, owner, tmp_path, extra_cmds=allow, name="r6f")
     assert a.line(cmd)[0] == "ALLOW", "the command must pass before the change (else it tests nothing)"
     [(_, v, _, _)] = a.tool("Write", {"file_path": a.proj + "/" + path, "content": "x = 1\n"})
+    if path == ".envrc":
+        assert v == "defer"                       # r0305 (W5): direnv runs .envrc on cd, outside the agent: the write is asked once
+        return
     # r0261c (д, Deus): no strict fact here -> П2 for .envrc too (С3 on the Write only under the strict fact)
     assert v == "allow"
     v, parts = a.line(cmd)

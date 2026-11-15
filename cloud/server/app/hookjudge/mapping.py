@@ -52,6 +52,7 @@ from urllib.parse import urlsplit
 
 from . import fs as _fs
 from .bashparse import _abspath, temp_in, under_home, _in_project, classify, is_agent_config_path, is_git_exec_path, is_persist_path, is_secret_path
+from .bashparse import is_defense_path   # r0305
 from . import samefile as _samefile
 
 RESERVED = "_witness"
@@ -344,6 +345,9 @@ def _map(ev, home, env=None):
         if not isinstance(p, str) or not p:
             raise Refuse("EVENT_MALFORMED")
         path = _abspath(p, cwd, home)
+        if is_defense_path(path):                   # r0305 (Н10): the privacy database (TCC.db) written directly
+            args[RESERVED] = {"path": path, "danger": ["defense:%s writes the privacy database (TCC.db)" % tool]}
+            return [Mapped("Write.danger", args, "%s: the privacy database (TCC.db)" % tool), Mapped(tool, args, "%s %s" % (tool, path))]
         if is_persist_path(path):                   # 0.2.90 (G4): shell rc, LaunchAgents, the agent's settings / hooks / plugins, the witness's key
             args[RESERVED] = {"path": path, "danger": ["persist:" + path]}
             return [Mapped("Write.danger", args, "%s: a place that runs at the next login / session (only by hand)" % tool), Mapped(tool, args, "%s %s" % (tool, path))]

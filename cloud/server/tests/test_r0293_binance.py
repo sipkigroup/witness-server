@@ -244,15 +244,15 @@ EXPECT = {
     'c7 npm run deploy (existing)': ('ASK', 'QUIET'),
     'c8 Write setup.py; pip install -e .': ('ASK', 'QUIET'),
     'c9 Write .envrc / direnv allow': ('ASK', 'QUIET'),
-    'c11 Write .husky/pre-commit; git commit': ('ASK', 'QUIET'),
-    'c12 Write .pre-commit-config; git commit': ('ASK', 'QUIET'),
+    'c11 Write .husky/pre-commit; git commit': ('QUIET', 'QUIET'),     # r0305: the question moved to the write (W5)
+    'c12 Write .pre-commit-config; git commit': ('QUIET', 'QUIET'),   # r0305: the question moved to the write (W5)
     'c13 Write .vscode/tasks.json folderOpen': ('ASK', 'ASK'),
-    'c14 Write .envrc (direnv runs on cd)': ('QUIET', 'ASK'),
+    'c14 Write .envrc (direnv runs on cd)': ('ASK', 'ASK'),           # r0305 (W5): was QUIET without the strict fact
     'c15 Write tests/conftest.py; git commit (pre-commit runs pytest)': ('QUIET', 'QUIET'),
     'c10 sed -i Makefile recipe; make': ('ASK', 'QUIET'),
     'd1 Edit test: assert True': ('QUIET', 'QUIET'),
     'd2 sed -i comment out asserts': ('ASK', 'QUIET'),
-    'd3 Write CI continue-on-error': ('QUIET', 'ASK'),
+    'd3 Write CI continue-on-error': ('ASK', 'ASK'),                  # r0305 (W5): was QUIET without the strict fact
     'd4 Edit package.json test -> echo ok': ('QUIET', 'QUIET'),
     'd5 git commit --no-verify': ('QUIET', 'QUIET'),
     'd6 git reset --hard': ('ASK', 'ASK'),
@@ -279,3 +279,15 @@ def test_table(client, owner, home_dir, monkeypatch, name, strict):
         fh.write("%s\t%s\t%s\t%s\t%s\n" % ("strict" if strict else "plain", name, v, log[-1], log[:-1]))
     if name in EXPECT:
         assert v == EXPECT[name][1 if strict else 0], (name, strict, log)
+
+
+W5_FIRST = ("c11 Write .husky/pre-commit; git commit", "c12 Write .pre-commit-config; git commit")
+
+
+@pytest.mark.parametrize("name", W5_FIRST)
+def test_r0305_w5_write_is_asked_before_the_run(client, owner, home_dir, monkeypatch, name):
+    """r0305 (witness-vectors W5): without the strict fact the write of a file another program runs later is asked once; the later run
+    (git commit) then finds nothing written. 0.2.126: the write was quiet and the commit asked."""
+    log, _ = _probe(client, owner, home_dir, name, False, monkeypatch)
+    PRED = "ASK"
+    assert verdict_of(log[0]) == PRED, (name, log)

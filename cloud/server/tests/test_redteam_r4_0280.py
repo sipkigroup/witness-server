@@ -73,7 +73,10 @@ FAMILY = ["x.mk", "Makefile", "jest.config.py", "package.json", "build.rs", "x.c
 def test_r4_1_family_named_write_then_run_is_asked(client, owner, tmp_path, rel):
     a = _agent(client, owner, tmp_path)
     # r0261c (д, Deus): no strict fact here -> П2 for .husky/ / .githooks/ / CI too (С3 on the Write only under the strict fact)
-    assert [(t, v) for t, v, _r, _rid in _write(a, rel)] == [("Write", "allow")], rel
+    w5 = rel.startswith((".husky/", ".githooks/", ".github/workflows/"))     # r0305 (W5): asked once (0.2.126: allowed)
+    assert [(t, v) for t, v, _r, _rid in _write(a, rel)] == [("Write", "defer" if w5 else "allow")], rel
+    if w5:
+        return
     v, parts = _run(a, "python3 " + rel)
     assert v == "ASK" and "ESCALATE_WRITTEN_RUN" in _reasons(parts), (rel, v, parts)   # 0.2.80: ALLOW / OK
 

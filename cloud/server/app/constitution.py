@@ -1,4 +1,4 @@
-"""06.11 — the project's Constitution v1 (internal design note): the IMMUTABLE articles Н1-Н8 the witness refuses by
+"""06.11 — the project's Constitution v1 (internal design note): the IMMUTABLE articles Н1-Н8 (+ Н10, r0305) the witness refuses by
 itself, with no question.
 
 Law: a question about a plain attack moves the work of the guard onto a tired person (approval fatigue; the owner's goal is <= 1 question a
@@ -9,6 +9,14 @@ journal (status denied), and NOBODY is notified (actions.refuse: no pending appr
 Each rule may only TIGHTEN: it is applied as a gateway deny (actions.submit: `gate = ("deny", code)`) after the core's dry decision, never to
 a call the core already refuses, and it never turns anything into an allow. Inputs: the hook's `_witness` of the call (the classifier's
 `danger` marks "kind:detail", `net`, `writes`, `commands`, `project`, `path`) and the command text.
+
+Н10 (r0305, SHAG0-POLNYY-KONVEYER-1411): a program that switches off a protection of the operating system -- Gatekeeper / the
+quarantine mark (xattr -d com.apple.quarantine, xattr -c, spctl --master-disable, LSQuarantine NO), SIP (csrutil disable), TCC
+(tccutil reset), the firewall (pfctl -d, socketfilterfw --setglobalstate off, com.apple.alf, ufw disable, iptables -F), SELinux /
+AppArmor / auditd (setenforce 0, systemctl stop apparmor), Defender (Set-MpPreference -DisableRealtimeMonitoring). The classifier's
+mark `defense:<what>` (bashparse._defense_of; only the forms that switch OFF, never one that looks). MITRE T1553.001 / T1562. Like
+Н4, the person turns such a protection off by hand in their own terminal, never through an agent; no mandate (`unlisted: allow`,
+"from now on", the auto profile, the sandbox) makes it silent, because a gateway deny comes after every one of them.
 
 Not here (and why) -- see the report of 06.11 (r0260):
   Н2 (secrets to the network): the core already refuses a credential-shaped value in a call to a domain the mandate lists (DLP tags ->
@@ -32,7 +40,8 @@ WIPE = "FORBIDDEN_WIPE"                   # Н5
 REMOTE_SHELL = "FORBIDDEN_REMOTE_SHELL"   # Н6
 HIDDEN = "FORBIDDEN_HIDDEN_CHARS"         # Н7
 FORCE_PUSH = "FORBIDDEN_FORCE_PUSH"       # Н8
-CODES = (SECRET, GUARD, AUTOSTART, WIPE, REMOTE_SHELL, HIDDEN, FORCE_PUSH)
+DEFENSE = "FORBIDDEN_DEFENSE_OFF"         # Н10 (r0305): a protection of the operating system switched off
+CODES = (SECRET, GUARD, AUTOSTART, WIPE, REMOTE_SHELL, HIDDEN, FORCE_PUSH, DEFENSE)
 
 _LOOPBACK = re.compile(r"^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0)$", re.I)
 
@@ -179,6 +188,10 @@ def check(tool, args):
     for k, det in marks:
         if k == "persist":
             return AUTOSTART, det[:200]
+    # Н10 (r0305): an OS protection switched off (bashparse.DEFENSE)
+    for k, det in marks:
+        if k == "defense":
+            return DEFENSE, det[:200]
     # Н3: git hooks and core.hooksPath
     for k, det in marks:
         if k == "git-config" and (det.lower().startswith("config core.hookspath") or _GIT_HOOKS.search(det)):

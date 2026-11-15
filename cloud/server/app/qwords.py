@@ -78,8 +78,20 @@ SCREEN = {
     # start-up files, LaunchAgents, Claude Code's settings / hooks, git hooks): asked "once" or "no", never "from now on" (bashparse.AUTOSTART)
     "autostart_what": "Your agent wants to change a file that starts commands by itself",
     "autostart_harm": "It could make commands run on their own, without asking you.",
+    # r0305 (mr-vocab-5, SHAG0-POLNYY-KONVEYER-1411): a program that switches off a protection of the operating system (Gatekeeper, SIP,
+    # TCC, the firewall, SELinux / AppArmor, Defender): refused (Н10) everywhere; these words show only where the strict policy asks a doubt
+    "defense_what": "Your agent wants to switch off a protection of your computer",
+    "defense_harm": "Harmful programs could then run without any warning.",
 }
 AUTOSTART_MARK = "autostart:"      # = hookjudge.bashparse.AUTOSTART + ":"
+LATER_LONG = ("This file is run later by another program, by itself, outside Witness: direnv runs .envrc when you enter the folder, git "
+              "hook managers (.husky, pre-commit) run their scripts on commit, the editor runs its tasks, CI runs its workflows on push. "
+              "Only \"Allow once\" is offered: this is never allowed from now on.")     # r0305 (W5)
+DEFENSE_MARK = "defense:"          # = hookjudge.bashparse.DEFENSE + ":" (r0305)
+DEFENSE_LONG = ("This switches off a protection your computer has against harmful programs: Gatekeeper or the quarantine mark on "
+                "downloaded files, System Integrity Protection, privacy permissions, the firewall, SELinux / AppArmor or antivirus. "
+                "Programs that run after it are not checked by it any more. Witness refuses this by itself; change such a setting by hand "
+                "in your own terminal if you really need to.")
 AUTOSTART_LONG = ("Witness cannot tell which folder this line writes in (a cd or a script before it may not have run), but the file it "
                   "names is one that starts programs by itself: a shell start-up file, a LaunchAgent, Claude Code's settings or hooks, "
                   "git's hooks or settings. Whatever is written there would run later without asking you. Only \"Allow once\" is offered: "
@@ -396,6 +408,7 @@ MARK_WORDS = {
     "witness": "it touches Witness's own key or settings",
     "git-force-push": "it overwrites history on the server",
     "autostart": "it writes a file that starts commands by itself",
+    "defense": "it switches off a protection of your computer",
     "agent-config": "it changes your agent's own settings",
 }
 
@@ -643,7 +656,17 @@ def words(x):
                 f_ = re.split(r": which files land there is not known$| brings ", str(t)[len(AUTOSTART_COPY_MARK):], maxsplit=1)[0]
                 long_harm = AUTOSTART_COPY_LONG.format(t=_clean(f_, 160)) + ((" " + sl) if so else "")
             else:
-                long_harm = AUTOSTART_LONG + ((" " + sl) if so else "")
+                long_harm = (AUTOSTART_LONG if "in an unknown directory" in str(t) else LATER_LONG) + ((" " + sl) if so else "")
+            dmark_ = _clean(t, 300)
+        if kind == "command" and reason == "ESCALATE_COMMAND_DANGER" and str(t).startswith(DEFENSE_MARK):
+            # r0305: an OS protection switched off (bashparse.DEFENSE). exec_json "df" {"pin"}: True = mr-vocab-5 or later pinned (or none);
+            # anything else = the older vocabulary's own "a dangerous command" sentence (signed = shown, the pack stays VALID)
+            df_ = _exec_member(x, "df")
+            if isinstance(df_, dict) and df_.get("pin") is True:
+                what, harm, as_risk = SCREEN["defense_what"], SCREEN["defense_harm"], "critical"
+            else:
+                as_risk = "high"                    # what / harm stay the generic ESCALATE_COMMAND_DANGER sentences of every vocabulary
+            long_harm = DEFENSE_LONG + ((" " + sl) if so else "")
             dmark_ = _clean(t, 300)
         sp_, sent_ = _strict_words(t) if kind in ("command", "path") else (None, None)
         if sent_ is not None:                       # r0261: a reason of the strict closed list (its own words, not "dangerous command")

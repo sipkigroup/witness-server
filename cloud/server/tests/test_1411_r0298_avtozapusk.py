@@ -166,11 +166,11 @@ V3_DIGEST = "8e70ef8893dd440b7df70228351390f68c6592dd3cc90f127b76d58dbe249ebc"  
 
 def _v3():
     d = json.loads(vocab.canonical())
-    return dict(d, v="mr-vocab-3", screen={k: v for k, v in d["screen"].items() if not k.startswith("autostart_")})
+    return dict(d, v="mr-vocab-3", screen={k: v for k, v in d["screen"].items() if not k.startswith(("autostart_", "defense_"))})   # r0305: - defense_*
 
 
 def test_mr_vocab_3_is_the_same_document_minus_the_new_sentences():
-    PRED = ("mr-vocab-4", V3_DIGEST)       # the older vocabulary is exactly the one 0.2.118-0.2.120 pinned: old packs keep their file
+    PRED = ("mr-vocab-5", V3_DIGEST)       # (r0305: the server runs mr-vocab-5) the older vocabulary is exactly the one 0.2.118-0.2.120 pinned: old packs keep their file
     assert (vocab.V, vocab.digest(_v3())) == PRED
 
 

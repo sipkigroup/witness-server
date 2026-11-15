@@ -16,10 +16,17 @@ import screencheck as SC  # noqa: E402
 # r0298: the server runs mr-vocab-4 (+ screen autostart_what / autostart_harm). Cases S-01..S-24 stay byte for byte: they are built on
 # mr-vocab-3, rebuilt here as mr-vocab-4 minus the new sentences -- its digest is the one 0.2.118-0.2.120 pinned (asserted below)
 R0298_KEYS = ("autostart_what", "autostart_harm")
-voc4 = json.loads(vocab.canonical())
-vb4 = vocab.canonical()
+# r0305: the server runs mr-vocab-5 (+ screen defense_what / defense_harm). mr-vocab-4 is rebuilt as mr-vocab-5 minus the new sentences: its
+# digest is the one 0.2.121-0.2.126 pinned (asserted below), so S-01..S-29 stay byte for byte
+R0305_KEYS = ("defense_what", "defense_harm")
+voc5 = json.loads(vocab.canonical())
+vb5 = vocab.canonical()
+vd5 = hashlib.sha256(vb5).hexdigest()
+assert voc5["v"] == "mr-vocab-5"
+voc4 = dict(voc5, v="mr-vocab-4", screen={k: v for k, v in voc5["screen"].items() if k not in R0305_KEYS})
+vb4 = jcs(voc4)
 vd4 = hashlib.sha256(vb4).hexdigest()
-assert voc4["v"] == "mr-vocab-4"
+assert vd4 == "b6c90377085240d07959ed2f89c818a3e969d78f9ddc000dda66216cba88f845", vd4
 V3 = dict(voc4, v="mr-vocab-3", screen={k: v for k, v in voc4["screen"].items() if k not in R0298_KEYS})
 
 
@@ -150,12 +157,30 @@ case("S-28", "r0298 the harm softened by one word", omit(dict(as_, harm="It coul
      "INVALID WORDING_NOT_DERIVED", pinned=vd4, given=vd4)
 case("S-29", "r0298 an older receipt under mr-vocab-4 too: every earlier sentence is still a leaf", omit(base), "VALID APPROVED_PARTIAL_VIEW",
      pinned=vd4, given=vd4)
+# r0305: mr-vocab-5 -- a program that switches off a protection of the operating system (refused Н10; asked only as a strict doubt)
+DFA = {"class": "command", "recipient": "defense:spctl --master-disable"}
+df_ = view(tool="Bash.danger", action=DFA, text_preview="python3 -c \"import os; os.system('spctl --master-disable')\"",
+           line_commands=["python3 [eval]"], what="Your agent wants to switch off a protection of your computer",
+           harm="Harmful programs could then run without any warning.", risk="critical",
+           details="Why it matters: This switches off a protection your computer has against harmful programs.\nTool: Bash")
+case("S-30", "r0305 honest: an OS protection switched off, under mr-vocab-5", omit(df_), "VALID APPROVED_PARTIAL_VIEW", pinned=vd5, given=vd5)
+case("S-31", "r0305 the new sentence under a mandate that pinned mr-vocab-4 (it does not hold it)", omit(df_), "INVALID WORDING_NOT_DERIVED",
+     pinned=vd4, given=vd4)
+df_old = dict(df_, what="Your agent wants to run a dangerous command: defense:spctl --master-disable",
+              harm="This command can damage files or leak data.", risk="high")
+case("S-32", "r0305 the same call under mr-vocab-4: the older vocabulary's generic dangerous-command sentence (what such an owner sees)",
+     omit(df_old), "VALID APPROVED_PARTIAL_VIEW", pinned=vd4, given=vd4)
+case("S-33", "r0305 the harm softened", omit(dict(df_, harm="Harmful programs could then run, but only with your consent.")),
+     "INVALID WORDING_NOT_DERIVED", pinned=vd5, given=vd5)
+case("S-34", "r0305 older receipts under mr-vocab-5 too: every earlier sentence is still a leaf", omit(as_), "VALID APPROVED_PARTIAL_VIEW",
+     pinned=vd5, given=vd5)
 out = {"v": "mr-screen-vectors-1", "vocabularies": {vd: vb.decode("utf-8"), od: ob.decode("utf-8"), old_d: olb.decode("utf-8"),
-                                                   v2d: v2b.decode("utf-8"), vd4: vb4.decode("utf-8")}, "cases": cases}
+                                                   v2d: v2b.decode("utf-8"), vd4: vb4.decode("utf-8"), vd5: vb5.decode("utf-8")},
+       "cases": cases}
 for c in cases:
     got = SC.verdict(c["view"], out["vocabularies"][c["vocab"]].encode("utf-8"), c["pinned"], c["receipt_action"])
     assert got == c["expect"], (c["id"], got, c["expect"])
 with open(os.path.join(HERE, "screen-vectors-0277.json"), "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, indent=1, sort_keys=True)
     f.write("\n")
-print("screen vectors: %d cases, vocabulary %s (mr-vocab-3 %s)" % (len(cases), vd4[:16], vd[:16]))
+print("screen vectors: %d cases, vocabulary %s (mr-vocab-4 %s, mr-vocab-3 %s)" % (len(cases), vd5[:16], vd4[:16], vd[:16]))

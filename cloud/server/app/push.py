@@ -491,12 +491,14 @@ class Pusher:
                 if r["push_state"] != "opened" and r["push_at"] is not None and t - r["push_at"] >= RECV_WAIT_S:
                     if st is None or RANK[r["push_state"]] < RANK[st]:
                         st = r["push_state"]
-        if st is None and rids and not self.db.one("SELECT 1 AS k FROM actions WHERE account_id=? AND rid IN (%s) AND push_state IS NOT NULL"
-                                                   % ",".join("?" * len(rids)), (acc, *rids)):
+        # r0306: "a new question" = none of this call's questions was pushed RECV_WAIT_S ago or more. Before, a push of THIS question that
+        # the worker thread had just sent (push_state set a moment before this check) hid the warning: a race (Linux VM 2 of 3 red)
+        if st is None and rids and not self.db.one("SELECT 1 AS k FROM actions WHERE account_id=? AND rid IN (%s) AND push_state IS NOT NULL "
+                                                   "AND push_at<=?" % ",".join("?" * len(rids)), (acc, *rids, t - RECV_WAIT_S)):
             # the newest question whose push says something about the phone: it got there (received or more), or it was sent twice
-            r = self.db.one("SELECT push_state FROM actions WHERE account_id=? AND push_at<=? AND push_at>? AND "
-                            "(push_tries=2 OR push_state IN ('received','shown','opened')) ORDER BY push_at DESC LIMIT 1",
-                            (acc, t - 2 * RECV_WAIT_S, t - 86400))
+            r = self.db.one("SELECT push_state FROM actions WHERE account_id=? AND push_at<=? AND push_at>? AND rid NOT IN (%s) AND "
+                            "(push_tries=2 OR push_state IN ('received','shown','opened')) ORDER BY push_at DESC LIMIT 1" % ",".join("?" * len(rids)),
+                            (acc, t - 2 * RECV_WAIT_S, t - 86400, *rids))
             if r is not None and r["push_state"] in ("failed", "sent"):
                 return self._said(acc, "last-" + r["push_state"], "last")
         if st is None:

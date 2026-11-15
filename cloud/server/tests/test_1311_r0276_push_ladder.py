@@ -245,3 +245,26 @@ def test_new_question_quiet_when_the_phone_answered_later(papp, pc, po, tmp_path
     d, why, sm = run("make clean")
     PRED = "did not confirm the last push"
     assert PRED not in sm and "Notification: sent via phone push (1 device)." in sm, sm
+
+
+def test_warning_survives_the_push_worker_winning_the_race(papp, pc, po, tmp_path, monkeypatch):
+    # r0306 (Linux VM, 14.11): the push of the NEW question was sometimes sent by the worker thread before the hook's answer was built,
+    # and the "your phone did not confirm the last push" warning vanished. Here the worker always wins (the worst order, every time).
+    ctx, p = papp.state.ctx, papp.state.ctx.push
+    subscribe(po, Device("https://push.test/a"))
+    run = _hook(papp, pc, po, tmp_path)
+    run("make build")
+    assert p.drain()
+    p.clock.t += push.RECV_WAIT_S
+    assert p.retry_unreceived() == 1
+    ctx.db.x("UPDATE push_subs SET acked=1")
+    p.clock.t += push.RECV_WAIT_S + 1
+    real = p.delivery
+
+    def worker_first(acc, rids, t=None):
+        assert p.drain()                                                           # the new question's push is already sent
+        return real(acc, rids, t)
+    monkeypatch.setattr(p, "delivery", worker_first)
+    d, why, sm = run("make install")
+    PRED = "phone push (1 device) - your phone did not confirm the last push, open the link above."
+    assert PRED in sm, sm

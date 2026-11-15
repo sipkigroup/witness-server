@@ -112,7 +112,7 @@ def _why(w):
 
 def test_every_category_has_words():
     PRED = set()                            # one entry per category the question can name, + autostart and agent-config
-    assert (set(qwords.DANGER_WORDS) | {"autostart", "agent-config"}) ^ set(qwords.MARK_WORDS) == PRED
+    assert (set(qwords.DANGER_WORDS) | {"autostart", "agent-config", "defense"}) ^ set(qwords.MARK_WORDS) == PRED   # r0305: + defense
     assert not any(INTERNAL.search(v) for v in qwords.MARK_WORDS.values())
 
 
@@ -150,8 +150,11 @@ R0298_DIGEST = "b6c90377085240d07959ed2f89c818a3e969d78f9ddc000dda66216cba88f845
 def test_the_vocabulary_does_not_change():
     """MARK_WORDS is not in the signed vocabulary document (Details is not rebuilt by the checker): mr-vocab-4 keeps its digest, so mandates
     and packs signed before stay as they were."""
-    PRED = ("mr-vocab-4", False, R0298_DIGEST)
-    assert (vocab.V, "mark_words" in vocab.doc(), vocab.digest()) == PRED
+    # r0305: the server runs mr-vocab-5 (+ screen defense_*); mr-vocab-4 is exactly that document minus the two sentences
+    d = vocab.doc()
+    d4 = dict(d, v="mr-vocab-4", screen={k: v for k, v in d["screen"].items() if not k.startswith("defense_")})
+    PRED = ("mr-vocab-5", False, R0298_DIGEST)
+    assert (vocab.V, "mark_words" in d, vocab.digest(d4)) == PRED
 
 
 def test_an_old_view_with_the_mark_still_rebuilds():

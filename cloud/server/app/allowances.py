@@ -58,6 +58,8 @@ TRUST_TEXT = ("Allowing a command for this project means trusting the project's 
               "project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
               "asked every time, and so is anything outside this project.")
 
+DEFENSE_WHY = ("this switches off a protection of your computer: Witness never allows it from now on")     # r0305
+LATER_WHY = "another program runs this file later by itself (direnv, a git hook, CI, the editor): it is asked every time, approve it once"
 AUTOSTART_WHY = ("this changes a file that starts commands by itself, in a folder Witness cannot tell: it is asked every time, approve it "
                  "once")
 
@@ -269,6 +271,13 @@ def offer(ctx, acc, x):
         a = meta = None
     if a is None or a.get("class") != "command" or x["status"] != "pending_approval":
         out["why_not"] = "only a pending shell command can be allowed for a project"
+        return out
+    if str(a.get("recipient") or "").startswith("defense:"):
+        out["why_not"] = DEFENSE_WHY                   # r0305: an OS protection switched off (Н10; asked only as a strict doubt)
+        return out
+    if str(a.get("recipient") or "").startswith("autostart:") and "in an unknown directory" not in str(a.get("recipient")) \
+            and not str(a.get("recipient")).startswith("autostart:copy into "):   # r0304 mass copy keeps its own words
+        out["why_not"] = LATER_WHY                     # r0305 (W5): .envrc, .husky, CI ... run later by another program: once only
         return out
     if str(a.get("recipient") or "").startswith("autostart:"):
         # r0298 (decision of Deus 14.11): a file that starts commands by itself, in a folder Witness cannot tell: never "from now on" --

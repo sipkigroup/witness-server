@@ -110,6 +110,8 @@ def eligible(ctx, acc, x, action=None):
         rc_ = ""
     if rc_.startswith("autostart:copy into "):
         return "files Witness cannot see, copied into a folder whose files start commands by themselves, are asked every time"   # r0304
+    if rc_.startswith("defense:"):
+        return "a program that switches off a protection of your computer is asked every time"     # r0305
     if rc_.startswith("autostart:"):
         return "a file that starts commands by itself, in a folder Witness cannot tell, is asked every time"     # r0298
     if x["reason"] in NOT_OFFERED:

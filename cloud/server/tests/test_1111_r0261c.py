@@ -249,12 +249,12 @@ def test_text_written_but_not_run_stays_text(client, owner, tmp_path, monkeypatc
 
 # ======================================================================================= (д) Write / Edit С3 only under the strict fact
 @pytest.mark.parametrize("rel", [".github/workflows/ci.yml", ".husky/pre-commit"])
-def test_write_of_a_ci_file_without_the_strict_fact_is_p2(client, owner, tmp_path, rel):
+def test_write_of_a_ci_file_without_the_strict_fact_is_asked_once_r0305(client, owner, tmp_path, rel):
     d = _mk(client, owner, tmp_path, "w")
     os.makedirs(os.path.dirname(os.path.join(d.proj, rel)), exist_ok=True)
     got = d.send(None, tool="Write", inp={"file_path": os.path.join(d.proj, rel), "content": "on: push\n"})
-    PRED = True                                   # П2: no strict fact -> no С3 question (the run outside is judged when it runs)
-    assert _quiet(got) is PRED, (rel, _v(got))
+    PRED = True                                   # r0305 (W5, reverses П2 for these files): asked once without the strict fact too --
+    assert _asked(got) is PRED, (rel, _v(got))    # direnv / a hooks manager / CI run it outside the agent (0.2.126: quiet)
 
 
 def test_write_of_a_ci_file_under_the_strict_fact_is_asked(client, owner, tmp_path, monkeypatch):

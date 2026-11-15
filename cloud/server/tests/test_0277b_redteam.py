@@ -119,7 +119,8 @@ def test_r2_2_no_hookspath_no_question(client, owner, tmp_path):
     subprocess.run(["git", "init", "-q", a.proj], check=True)
     os.makedirs(a.proj + "/.husky")
     # r0261c (д, decision of Deus): no strict fact here -> П2 again (С3 for a file tool only under a fresh strict fact of the session)
-    assert not _asked(a.tool("Write", {"file_path": a.proj + "/.husky/pre-commit", "content": "npm test\n"}))   # git does not run it
+    # r0305 (W5): asked once anyway -- `npm install` (husky's prepare) sets core.hooksPath later, after the write; 0.2.126: not asked
+    assert _asked(a.tool("Write", {"file_path": a.proj + "/.husky/pre-commit", "content": "npm test\n"}))
 
 
 def test_r2_2_hook_k1_reads_hookspath(tmp_path):

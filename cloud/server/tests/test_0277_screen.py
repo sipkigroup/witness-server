@@ -166,7 +166,7 @@ def _voc():
 
 def test_every_first_screen_sentence_of_the_server_is_a_vocabulary_template():
     v = _voc()
-    assert v["v"] == "mr-vocab-4" and set(qwords.SCREEN) <= set(v["screen"])     # r0298: + autostart_what / autostart_harm
+    assert v["v"] == "mr-vocab-5" and set(qwords.SCREEN) <= set(v["screen"])     # r0298: + autostart_what / autostart_harm; r0305: + defense_*
     leaves = SC.vocab_leaves(v)
     for k, s in qwords.SCREEN.items():
         assert s in leaves, k
@@ -223,9 +223,10 @@ def test_screen_vectors_file():
     levels, a wrong count, another recipient than the receipt)."""
     path = os.path.join(os.path.dirname(SC.__file__), "screen-vectors-0277.json")
     n, bad = SC.run_vectors(path)
-    assert n == 29 and bad == []          # r0281: + S-14..S-17 (the file-send sentences; an older receipt under the r0280 vocabulary)
+    assert n == 34 and bad == []          # r0281: + S-14..S-17 (the file-send sentences; an older receipt under the r0280 vocabulary)
     #                                       r0294: + S-18..S-24 (a run of code from the network under mr-vocab-3; mr-vocab-2 receipts as before)
     #                                       r0298: + S-25..S-29 (autostart in an unknown folder under mr-vocab-4; mr-vocab-3 receipts as before)
+    #                                       r0305: + S-30..S-34 (an OS protection switched off under mr-vocab-5; mr-vocab-4 receipts as before)
     d = json.load(open(path, encoding="utf-8"))
     for c in d["cases"]:
         assert hashlib.sha256(signview.jcs(c["view"])).hexdigest() == c["view_sha256"]
@@ -237,7 +238,8 @@ def test_screen_vectors_file():
             "S-20": "INVALID WORDING_NOT_DERIVED", "S-21": "VALID APPROVED_PARTIAL_VIEW", "S-22": "VALID APPROVED_PARTIAL_VIEW",
             "S-23": "INVALID WORDING_NOT_DERIVED", "S-24": "INVALID WORDING_NOT_DERIVED", "S-25": "VALID APPROVED_PARTIAL_VIEW",
             "S-26": "INVALID WORDING_NOT_DERIVED", "S-27": "VALID APPROVED_PARTIAL_VIEW", "S-28": "INVALID WORDING_NOT_DERIVED",
-            "S-29": "VALID APPROVED_PARTIAL_VIEW"}
+            "S-29": "VALID APPROVED_PARTIAL_VIEW", "S-30": "VALID APPROVED_PARTIAL_VIEW", "S-31": "INVALID WORDING_NOT_DERIVED",
+            "S-32": "VALID APPROVED_PARTIAL_VIEW", "S-33": "INVALID WORDING_NOT_DERIVED", "S-34": "VALID APPROVED_PARTIAL_VIEW"}
     assert {c["id"]: c["expect"] for c in d["cases"] if c["id"] in want} == want
 
 

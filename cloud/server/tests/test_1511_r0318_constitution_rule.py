@@ -169,6 +169,8 @@ def test_the_v3_correction_is_true_of_the_code():
     assert set(offline.READ_TOOLS) | set(offline.DIR_TOOLS) == {"Read", "NotebookRead", "Grep", "Glob", "LS"}
     assert {"cat", "grep", "ls"} <= offline.OFFLINE_PROGRAMS and not {"git", "sh", "bash", "python3", "curl"} & offline.OFFLINE_PROGRAMS
     assert offline.enabled({}) and not offline.enabled({offline.ENV: "strict"})
+    if not (ROOT / "vorota").is_dir():   # 15.11: the open repository is a fresh export -- its git history says nothing about the evidence
+        pytest.skip("not the private repository: the evidence age is checked there")
     for c in v3["corrects"]:
         f, _, name = c["evidence"].partition("::")
         try:

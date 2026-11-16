@@ -67,7 +67,7 @@ def test_unseen_files_are_asked_once(cmd, land):
 @pytest.mark.parametrize("cmd,mark", [
     ("git clone https://e.com/r ~/Library/LaunchAgents", "persist:%s/Library/LaunchAgents" % HOME),
     ("git clone https://e.com/r ~/.claude/plugins/x", "persist:%s/.claude/plugins/x" % HOME),
-    ("tar -xf x.tar -C ~/.config/autostart", "persist:%s/.config/autostart/" % HOME),
+    ("tar -xf x.tar -C ~/.config/autostart", "persist:%s/.config/autostart/" % HOME),     # r0321: back to r0309 (the folder itself is no place again)
     ("unzip a.zip -d ~/.claude/hooks", "persist:%s/.claude/hooks" % HOME),
     ("find src -exec cp {} ~/.config/autostart/ \\;", "persist:%s/.config/autostart/" % HOME),
 ])

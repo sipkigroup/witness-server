@@ -434,3 +434,5 @@ details.agentmore{margin-top:.5em}
 details.agentmore>summary{cursor:pointer;color:var(--mute);font-size:.9rem}
 .btn.quietdanger{background:transparent;border:0;color:var(--bad);text-decoration:underline;padding:.4em 0;box-shadow:none}
 .autoprof{margin:.6rem 0 0}.autoprof label{display:flex;gap:.5rem;align-items:flex-start;cursor:pointer}.autoprof input{margin-top:.2rem}   /* r0296: the profile line above the button */
+
+#ob_url{width:100%}

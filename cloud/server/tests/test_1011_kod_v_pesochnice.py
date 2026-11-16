@@ -157,15 +157,22 @@ def test_code_that_runs_a_push_the_parser_does_not_see(client, owner, tmp_path, 
     """Measured (not a change of this branch): `require('child_process').execSync('git push')` is not read as a command by the parser
     (_RUN_API wants `child_process.execSync`). Without the fact: asked (an unlisted interpreter). Under the strict fact: OK_SANDBOXED --
     the push runs inside the sandbox, where the kernel refuses its connection (and its ssh agent socket). Law 2 holds; the parser gap
-    is listed in the r0260 report."""
+    is listed in the r0260 report.
+
+    15.11 Deus/agent (r0321): the gap is closed by r0319 (RT 15.11 B3, `require('child_process')` canonicalised): the parser now reads the
+    push, so under the strict fact it is asked like every program of the line that LEAVES the machine (this file's docstring: "git push
+    ... kept asked"). Restoring the quiet answer would mean re-opening the gap, and the same form with `-f` is the adversary's Н8 vector
+    (ISPYTANIE-PROTIVNIK-0.2.132-1511, test_1511_r0319_redteam: FORBIDDEN_FORCE_PUSH). PRED changed on purpose: True -> False."""
     cmd = "node -e \"require('child_process').execSync('git push origin main')\""
     d = _mk(client, owner, tmp_path, "n1")
     PRED = False
     assert _quiet(d.send(cmd)) is PRED
     d = _mk(client, owner, tmp_path, "n2")
     _strict(d, monkeypatch)
-    PRED = True
-    assert _quiet(d.send(cmd)) is PRED
+    PRED = False
+    got = d.send(cmd)
+    assert _quiet(got) is PRED
+    assert any(r.get("reason") == "ESCALATE_COMMAND_DANGER" for _, r in got), _v(got)
 
 
 def test_the_guard_of_r1011_allowed_domains_make_code_network_a_question(client, owner, tmp_path, monkeypatch):

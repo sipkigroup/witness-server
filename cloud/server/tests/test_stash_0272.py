@@ -211,4 +211,5 @@ def test_gstore_paths():
     assert g("git add f9.py")[0].endswith("/p/f9.py") and g("git commit -m x f9.py")[0].endswith("/p/f9.py")
     for cmd in ("echo f9.py | xargs git add", "git add '*.py'", "git add :/", "git --work-tree=/x add f", "git add -p",
                 "git add --pathspec-from-file=l", "git commit --pathspec-from-file=l -m x"):
-        assert g(cmd) == ["*"], cmd
+        # r0323 (закон (3)): `echo f9.py | xargs git add` is also judged as `git add f9.py` (its path joins; "*" stays: unknown kept)
+        assert g(cmd) == ["*"] or (cmd.startswith("echo") and "*" in g(cmd)), cmd

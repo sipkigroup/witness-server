@@ -138,7 +138,7 @@ def test_rt6_registry_is_the_one_source():
     from app.hookjudge import bashparse, runners
     assert execguard._PY_RE is runners.PY_RE
     assert bashparse.SHELLS == runners.POSIX_SHELLS and bashparse.RUN_CODE == runners.SCRIPT_INTERPRETERS
-    assert bashparse.MAKE_RUNNERS == runners.MAKE_RUNNERS and bashparse.INTERPRETERS == runners.EVAL_INTERPRETERS
+    assert bashparse.MAKE_RUNNERS == runners.MAKE_RUNNERS and bashparse.INTERPRETERS == runners.INLINE_INTERPRETERS >= runners.EVAL_INTERPRETERS   # r0323: one inline-code list
     assert actions.CODE_RUNNERS == runners.ALL_RUNNERS
     every = {n for names in execguard.EXECUTORS.values() for n in names}
     assert not [n for n in every if not runners.is_runner(n) and n not in runners.NOT_RUNNERS], "an executor the registry does not know"

@@ -458,6 +458,32 @@ def parse_batch_leaf(data):
     return parts[1], bytes.fromhex(parts[2])
 
 
+# r0312: one leaf per published version of the public constitution (web/constitution.html, packtools/constitution_check.py). Same log,
+# same signature: a later silent edit of a version's text no longer matches the hash the witness signed into the log.
+CONST_LEAF_V = "deus-witness/constitution/v1"
+
+
+def constitution_leaf(version, sha256_hex):
+    v = int(version)
+    h = str(sha256_hex)
+    if v < 1 or len(h) != 64 or any(c not in "0123456789abcdef" for c in h):
+        raise ValueError("bad constitution version")
+    return ("%s\n%d\n%s\n" % (CONST_LEAF_V, v, h)).encode()
+
+
+def parse_constitution_leaf(data):
+    """-> (version, sha256 hex); ValueError if the leaf is not a constitution leaf."""
+    try:
+        parts = bytes(data).decode("utf-8").split("\n")
+    except UnicodeDecodeError:
+        raise ValueError("not a constitution leaf")
+    if len(parts) != 4 or parts[0] != CONST_LEAF_V or parts[3] != "" or not parts[1].isdigit():
+        raise ValueError("not a constitution leaf")
+    if constitution_leaf(int(parts[1]), parts[2]) != bytes(data):
+        raise ValueError("not a canonical constitution leaf")
+    return int(parts[1]), parts[2]
+
+
 def stamp_digest(note_text):
     """What the daily external stamp (OpenTimestamps / RFC 3161) commits to: SHA-256 of the checkpoint TEXT (origin, size, root)."""
     return hashlib.sha256(note_text.encode() if isinstance(note_text, str) else note_text).digest()

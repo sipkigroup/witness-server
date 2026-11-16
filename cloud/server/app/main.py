@@ -345,11 +345,12 @@ def _content_tag(p, st):
 
 PUBLIC_TOP = (".html",)
 PUBLIC_FILES = ("sw.js", "manifest.webmanifest", "sitemap.xml", "robots.txt")   # 08: SW + PWA manifest; 24.10: sitemap, robots (поиск)
-PUBLIC_DIRS = {"js": (".js",), "css": (".css",), "dl": None, "icons": (".png",), "demo": None, "pricing": (".html",), ".well-known": ("security.txt",)}      # None = any file (demo: P0-2, /demo)
+PUBLIC_DIRS = {"js": (".js",), "css": (".css",), "dl": None, "icons": (".png",), "demo": None, "pricing": (".html",), "constitution": (".html", ".json"), ".well-known": ("security.txt",)}      # None = any file (demo: P0-2, /demo)
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 _re_docs_noext = __import__("re").compile(r"dl/docs/[a-z0-9-]+")
+_re_const_v = __import__("re").compile(r"constitution/v[0-9]{1,4}")     # r0312: /constitution/v1 -> constitution/v1.html (pinned copy)
 
 
 def _public(path):
@@ -498,6 +499,10 @@ def create_app(cfg=None):
         app.include_router(node2feed.make_router(ctx))
     from app import tlog as _tlog
     app.include_router(_tlog.make_router(ctx))                   # r0269: public log of anchor batches, C2SP checkpoint, daily stamp
+    try:
+        _tlog.record_constitution(ctx, web_dir)                  # r0312: every constitution version into the signed log, once
+    except Exception as e:  # noqa: BLE001 -- never stops the start; constitution_check.py says INVALID to anyone instead
+        log("ERROR", "constitution log failed: " + type(e).__name__)
     from app import demo_live
     if demo_live.enabled(ctx):                                   # 0.2.32, DW_DEMO_ACCOUNT set only: public feed + pack of the demo account
         app.include_router(demo_live.make_router(ctx))
@@ -539,6 +544,8 @@ def create_app(cfg=None):
             path = "node2.html"
         if _re_docs_noext.fullmatch(path) and os.path.isfile(os.path.join(web_dir, "dl", "docs", path[len("dl/docs/"):] + ".html")):
             path += ".html"                                       # 0.2.55: /dl/docs/quickstart -> quickstart.html (only [a-z0-9-], only an existing file)
+        if _re_const_v.fullmatch(path):
+            path += ".html"                                       # r0312: a version of the constitution at a permanent address
         if path == "node2.html" and not node2feed.enabled(ctx):
             raise Err(404, "NOT_FOUND")                           # 0.2.30: DW_NODE2 off -> no node 2 page either (it describes a feature that is off)
         if not os.path.isdir(web_dir):

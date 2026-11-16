@@ -102,6 +102,9 @@ DEFENSE_LONG = ("This switches off a protection your computer has against harmfu
                 "downloaded files, System Integrity Protection, privacy permissions, the firewall, SELinux / AppArmor or antivirus. "
                 "Programs that run after it are not checked by it any more. Witness refuses this by itself; change such a setting by hand "
                 "in your own terminal if you really need to.")
+MONEY_MARK = "money:"            # = hookjudge.bashparse.MONEY + ":" (r0313, Д3)
+MONEY_LONG = ("This command uses a payment or wallet program (Stripe, PayPal, a crypto wallet) to create a charge, send a payment or move "
+              "funds. Money sent this way may not come back. Allow only if you asked for this payment.")
 AUTOSTART_LONG = ("Witness cannot tell which folder this line writes in (a cd or a script before it may not have run), but the file it "
                   "names is one that starts programs by itself: a shell start-up file, a LaunchAgent, Claude Code's settings or hooks, "
                   "git's hooks or settings. Whatever is written there would run later without asking you. Only \"Allow once\" is offered: "
@@ -419,6 +422,7 @@ MARK_WORDS = {
     "git-force-push": "it overwrites history on the server",
     "autostart": "it writes a file that starts commands by itself",
     "defense": "it switches off a protection of your computer",
+    "money": "it can spend or send money",
     "agent-config": "it changes your agent's own settings",
 }
 
@@ -716,6 +720,18 @@ def words(x):
             else:
                 as_risk = "high"                    # what / harm stay the generic ESCALATE_COMMAND_DANGER sentences of every vocabulary
             long_harm = DEFENSE_LONG + ((" " + sl) if so else "")
+            dmark_ = _clean(t, 300)
+        if kind == "command" and reason == "ESCALATE_COMMAND_DANGER" and str(t).startswith(MONEY_MARK):
+            # r0313 (Д3): a payment through a shell CLI (bashparse.MONEY). The sentence is ESCALATE_MONEY's, in every vocabulary since
+            # mr-vocab-2 (no new template); {t} is the parser's detail when the call's text shows it, else the program's name (a quote of
+            # the call either way: screencheck rebuilds it)
+            mt_ = str(t)[len(MONEY_MARK):].strip()
+            tp_ = str(x["text_preview"] if "text_preview" in x.keys() and x["text_preview"] else "")
+            if not mt_ or mt_ not in tp_:
+                mt_ = mt_.split(" ", 1)[0] if mt_ else ""
+            what = REASON_WORDS["ESCALATE_MONEY"][0].format(t=_clean(mt_, 120) or SCREEN["unnamed"])
+            harm, as_risk = REASON_WORDS["ESCALATE_MONEY"][1], "critical"
+            long_harm = MONEY_LONG + ((" " + sl) if so else "")
             dmark_ = _clean(t, 300)
         sp_, sent_ = _strict_words(t) if kind in ("command", "path") else (None, None)
         if sent_ is not None:                       # r0261: a reason of the strict closed list (its own words, not "dangerous command")

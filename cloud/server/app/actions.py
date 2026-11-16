@@ -2577,6 +2577,47 @@ def later_run_write(L, mid, act, tool, args, now):
         return act
 
 
+# r0323 (Р-1511 закон неизвестного кода, (1) и (2)): `unlisted: "allow"` lets through what the owner did not list -- never code the agent
+# could have written or swapped. (1) a program run by a PATH that is not a system program (`./g`, `bin/x`, `../tool`, a link or copy the
+# agent made): its text is the agent's; installed project runners (node_modules/.bin, .venv/bin, venv/bin) stay as before. (2) code given
+# to an interpreter IN the line (`-c` / `-e`, a heredoc / here-string / pipe into one of runners.INLINE_INTERPRETERS, an awk program that
+# runs commands): its whole program is the agent's -- except Python of the closed edit-only list (inline.edit_only, stdlib only: a project
+# module it imports is code the agent may have written).
+_SYSTEM_PROG = re.compile(r"^/(?:usr/(?:local/)?(?:s?bin|libexec)|s?bin|opt/homebrew/(?:s?bin|Cellar|opt)|opt/local/s?bin|nix/store|"
+                          r"run/current-system/sw/bin|Library/Developer/CommandLineTools/usr/bin|Applications/Xcode[^/]*\.app/)/")
+_INSTALLED_RUNNER = re.compile(r"(?:^|/)(?:node_modules/\.bin|\.?venv/bin|\.tox/[^/]+/bin)/[^/]+$")
+
+
+def unknown_code(rc, text):
+    """-> why the head `rc` of a Bash line runs code the agent could have written, or None (r0323, Р-1511 (1)-(2))."""
+    try:
+        from app.hookjudge import runners as _rn
+        prog = rc.split(" [", 1)[0].split(" ", 1)[0]
+        if prog.startswith("(") or not prog:
+            return None
+        if "/" in prog and not _SYSTEM_PROG.match(prog) and not _INSTALLED_RUNNER.search(prog):
+            return "a program of the agent: " + prog[:80]
+        base = prog.rsplit("/", 1)[-1]
+        py = bool(_rn.PY_RE.fullmatch(base))
+        if re.fullmatch(r"[gmn]?awk", base) and re.match(r"^\S+ \[[^\]]*\bexec\b", rc):
+            return "awk code that runs commands"
+        if not (py or base in _rn.INLINE_INTERPRETERS):
+            return None
+        b_ = re.escape(base)
+        inline = "[eval" in rc or re.search(r"(?:^|[\s;&|(/])%s\b[^|;&\n]*<<" % b_, text) or \
+            re.search(r"\|&?\s*(?:\S*/)?%s(?:\s+-)?\s*(?:$|[;&|)\n])" % b_, text)
+        if not inline:
+            return None
+        if py:
+            from app.hookjudge import inline as _inl
+            r_ = _inl.py_codes(text)
+            if r_ and r_[0] and len(r_[0]) == r_[1] and all(_inl.edit_only(c_) is not None for c_ in r_[0]):
+                return None
+        return "code in the line given to " + base
+    except Exception:      # noqa: BLE001  fail closed: asked
+        return "unreadable head"
+
+
 def unlisted_allow_gate(L, mid, act, tool, args, now):
     """r0305: an action the core lets through ONLY because of `unlisted: "allow"` (OK_UNSPECIFIED) whose command head is one of the
     above, or whose line runs code from a variable / talks to a local service's socket, is asked (marked dangerous: no list covers it).
@@ -2586,7 +2627,7 @@ def unlisted_allow_gate(L, mid, act, tool, args, now):
         return act
     rc = str(act.get("recipient") or "")
     text = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else ""
-    if not (_ALLOW_NEVER_SILENT.match(rc) or _EVAL_FROM_VAR.search(text)):
+    if not (_ALLOW_NEVER_SILENT.match(rc) or _EVAL_FROM_VAR.search(text) or unknown_code(rc, text)):
         return act
     try:
         if L.S.decide_for(mid, act, now)[1:] != ("allow", "OK_UNSPECIFIED"):

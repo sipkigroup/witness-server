@@ -234,6 +234,8 @@ def _map(ev, home, env=None):
             own_ = _dr.own_addresses(cmd, gs_)
             if own_:
                 args[RESERVED]["own_addr"] = own_
+        if isinstance(getattr(c, "alias_line", None), str):
+            args[RESERVED]["alias_line"] = c.alias_line[:4096]     # r0319 (Б1): the line with linked programs named (constitution Н6)
         if outside_w:
             args[RESERVED].update(outside_writes=outside_w, shadow=shadow)
         if (outside_w or any(isinstance(d, str) and d.startswith("agent-config:") for d in c.danger)

@@ -60,10 +60,14 @@ export async function getCredential(o) {
 // (0.2.2: any of the person's active passkeys may sign; rawId says which one did).
 export async function assertOver(challengeBytes, rpId, credentialIds) {
   const ids = Array.isArray(credentialIds) ? credentialIds : [credentialIds];
-  const c = await navigator.credentials.get({ publicKey: {
-    challenge: challengeBytes, rpId, userVerification: 'required', timeout: 300000,
-    allowCredentials: ids.map((id) => ({ type: 'public-key', id: b64uDec(id) })),
-  } });
+  const t0 = Date.now();
+  let c;
+  try {
+    c = await navigator.credentials.get({ publicKey: {
+      challenge: challengeBytes, rpId, userVerification: 'required', timeout: 300000,
+      allowCredentials: ids.map((id) => ({ type: 'public-key', id: b64uDec(id) })),
+    } });
+  } catch (e) { try { if (e && typeof e === 'object') e.dwMs = Date.now() - t0; } catch (x) { /* frozen */ } throw e; }
   if (!c) throw new Error('No credential returned');
   return {
     authData: new Uint8Array(c.response.authenticatorData),
@@ -101,4 +105,26 @@ export function explainError(e) {
     || /credential manager|passkey|screen lock|unknown error/i.test(m)))
     return 'Your device could not create or use the passkey. Check that: (1) a screen lock (PIN, pattern, fingerprint or face) is set on this device; (2) you are signed in to the device account that stores passkeys (Google account on Android, Apple ID on iPhone); (3) you did not dismiss the system dialog. Then try again, or use another device or a security key. (' + (e.name || 'Error') + ')';
   return (e && (e.detail || e.message)) || String(e);
+}
+
+// Embedded browsers (the in-app browser of Telegram, Slack, mail) may have no WebAuthn. Pure check, nothing is sent anywhere.
+// Honest limit: a NotAllowedError is the same for "no system window could open" and "the person pressed Cancel"; only the time differs:
+// refused in < 400 ms (before anyone could answer) = the browser blocked it; later = the person (or a timeout) -> the usual message, no hint.
+export const FAST_MS = 400;
+export function noWebAuthn() { return !(window.PublicKeyCredential && navigator.credentials); }
+// r0321: no isUserVerifyingPlatformAuthenticatorAvailable() check -- false there means only "no built-in authenticator" (a desktop
+// with a hardware key or a password manager), not "this browser cannot do passkeys"; the hint then misled people who can sign.
+export function blockedByBrowser(e) {
+  if (!e || typeof e.code === 'string' && e.code) return false;     // a server answer is not a browser block
+  if (e.name === 'SecurityError' || e.name === 'NotSupportedError') return true;
+  return e.name === 'NotAllowedError' && typeof e.dwMs === 'number' && e.dwMs < FAST_MS;
+}
+export function showOtherBrowser(doc = document) {
+  const box = doc.getElementById('otherbrowser'); if (!box || !box.hidden) return;
+  box.hidden = false;
+  const b = doc.getElementById('ob_copy'), inp = doc.getElementById('ob_url');
+  const fallback = () => { inp.value = location.href; inp.hidden = false; inp.focus(); inp.select(); };
+  b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(location.href); b.textContent = 'Copied'; } catch (e) { fallback(); }
+  });
 }

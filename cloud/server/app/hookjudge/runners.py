@@ -31,6 +31,18 @@ SCRIPT_INTERPRETERS = frozenset({
     "ocaml", "crystal", "nim", "dart", "zig", "perl6", "raku", "php-cgi", "hhvm", "cscript", "wscript", "csi",
     "dotnet-script", "pypy", "pypy3", "python2", "m4", "erb", "gnuplot", "octave", "matlab", "maxima", "sage"})
 INTERPRETERS = EVAL_INTERPRETERS | SCRIPT_INTERPRETERS
+# r0323 (Р-1511 закон неизвестного кода, (2)): THE one list of interpreters that take code IN the line -- the option that carries it
+# (`node -e CODE`, `python -c CODE`, `swift -e CODE`; deno: `deno eval CODE`) -- and of those that read code from stdin (a heredoc /
+# here-string / pipe: `tclsh <<< 'exec ...'`, `lua - <<EOF`). bashparse (EVAL_OPTS, INTERPRETERS) and actions (unlisted: allow) read it
+# from here; before r0323 lua / swift / tclsh / awk code was not scanned at all (RT 15.11 Б3: `lua -e "os.execute('git push -f')"` silent).
+INLINE_CODE_OPTS = {"node": frozenset({"-e", "--eval", "-p", "--print", "-r", "--require", "--import", "--loader", "--experimental-loader"}),
+                    "python": frozenset({"-c"}), "ruby": frozenset({"-e", "-r"}), "perl": frozenset({"-e", "-E", "-M", "-m"}),
+                    "php": frozenset({"-r", "-B", "-R", "-E", "-F"}), "lua": frozenset({"-e", "-l"}), "luajit": frozenset({"-e", "-l"}),
+                    "Rscript": frozenset({"-e"}), "osascript": frozenset({"-e"}), "julia": frozenset({"-e", "-E"}), "deno": frozenset({"eval"}),
+                    "bun": frozenset({"-e", "--eval", "-p", "--print"}), "swift": frozenset({"-e"})}
+for _n in ("nodejs", "tsx", "ts-node", "ts-node-dev", "esno", "tsm", "swc-node", "babel-node", "vite-node", "nodemon"):
+    INLINE_CODE_OPTS[_n] = INLINE_CODE_OPTS["node"]
+INLINE_INTERPRETERS = EVAL_INTERPRETERS | frozenset(INLINE_CODE_OPTS) | frozenset({"tclsh", "wish", "expect", "jshell", "irb", "ghci"})
 MAKE_RUNNERS = frozenset({"make", "gmake", "bmake", "pmake"})
 # build / test / task / package runners and servers: they run the project's code or code named in its files
 TASK_RUNNERS = frozenset({

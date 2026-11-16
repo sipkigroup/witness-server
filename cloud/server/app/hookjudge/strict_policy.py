@@ -102,7 +102,7 @@ REMOTE_PROGS = {"ssh", "scp", "sftp", "mosh", "telnet", "ftp", "tftp", "lftp", "
                 "socat", "websocat", "grpcurl", "mosquitto_pub", "ngrok", "cloudflared", "tailscale", "wireguard", "wg", "wg-quick", "openvpn",
                 "mail", "mailx", "sendmail", "mutt", "msmtp", "twine",
                 "stripe", "paypal", "bitcoin-cli", "lightning-cli", "lncli", "elements-cli", "solana", "spl-token", "cast", "near", "aptos",
-                "sui"}
+                "sui", "seth", "electrum", "monero-wallet-cli", "cardano-cli", "litecoin-cli", "dogecoin-cli"}     # r0319: wallets (Б4)
 DB_PROGS = {"psql", "mysql", "mongosh", "mongo", "sqlcmd", "redis-cli"}
 # programs that talk to a remote service: a READ verb (first words that are not options) keeps them silent; anything else is a publication
 CLOUD_READ = {

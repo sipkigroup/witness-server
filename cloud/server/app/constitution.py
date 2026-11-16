@@ -196,6 +196,15 @@ def check(tool, args):
     for k, det in marks:
         if k == "git-config" and (det.lower().startswith("config core.hookspath") or _GIT_HOOKS.search(det)):
             return GUARD, det[:200]
+        # r0319 (RT 15.11 П4): the hooks of every new repository (init.templateDir, `git init|clone --template`), the whole git
+        # directory written by a program whose text the line does not show (`tar -xf h.tar -C .git`: hooks/ among it), and a
+        # hooksPath written straight into git's config file (`printf '[core]\n hooksPath = h' >> .git/config`)
+        if k == "git-config" and re.match(r"(?i)(config init\.templatedir|(init|clone) --template)", det):
+            return GUARD, det[:200]
+        if k == "git-config" and re.search(r"(?i)/\.git[. ]*/?$", det):
+            return GUARD, det[:200]
+        if k == "git-config" and cmd is not None and re.search(r"(?i)/\.git[. ]*/config(\.worktree)?$", det) and re.search(r"(?i)hooks\s*path", cmd):
+            return GUARD, det[:200]
     if cmd is not None:
         if _HOOKSPATH_SET.search(cmd):
             return GUARD, "core.hooksPath"
@@ -216,7 +225,8 @@ def check(tool, args):
     if cmd is not None and any(k == "pipe-to-shell" for k, _ in marks) and any(h_ and not _LOOPBACK.match(h_) for h_ in _hosts(w)):
         try:
             from app.hookjudge.bashparse import _normalize
-            bare = _normalize(cmd)[0]                    # heredoc bodies out: a document that SHOWS `curl x | sh` runs nothing
+            al_ = w.get("alias_line") if isinstance(w.get("alias_line"), str) else cmd   # r0319 (Б1): `./c` linked to curl is curl
+            bare = _normalize(al_)[0]                    # heredoc bodies out: a document that SHOWS `curl x | sh` runs nothing
         except Exception:  # noqa: BLE001 -- a line we cannot cut: no refusal here (it stays the question it was)
             bare = None
         m = (_PIPE_RUN.search(bare) or _SUBST_RUN.search(bare)) if isinstance(bare, str) else None

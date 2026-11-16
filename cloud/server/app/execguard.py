@@ -1050,10 +1050,31 @@ def gate_text(text, project=None, shell_writes=None, home=None):
         _HOME_CTX.reset(tok)
 
 
+def _n_text(text, project=None, home=None):
+    """r0319 (RT 15.11 Б2): the written text does what the signed "from now on" text says is still asked every time -- a force-push,
+    an OS protection switched off, a payment (bashparse's code scan: subprocess / os.system / child_process lines, the xattr API, a
+    payment SDK) -> "N". The mark's gate then holds every run under the rule (actions.allowance_keeps: clean_in_project)."""
+    from app.hookjudge import bashparse as _bp
+    if not isinstance(text, str) or len(text) > _bp.MAX_CODE_SCAN:
+        return None
+    c = _bp.Command()
+    c.budget = [_bp.MAX_NESTED]
+    pr = project if isinstance(project, str) and project.startswith("/") else "/"
+    hm = home if isinstance(home, str) and home.startswith("/") else "/nonexistent-home"
+    try:
+        _bp._code_fs_scan(text, c, "code", pr, hm, project if pr != "/" else None, 0)
+    except Exception:  # noqa: BLE001 -- a text the scan cannot read: judged by the gates below, as before
+        return None
+    kinds = {d.split(":", 1)[0] for d in c.danger if isinstance(d, str)}
+    return "N" if kinds & {"git-force-push", "defense", "money"} else None
+
+
 def _gate_text(text, project=None, shell_writes=None, home=None):
     from app.hookjudge import bashparse as _bp
     if not isinstance(text, str):
         return "unseen"
+    if shell_writes is None and _n_text(text, project, home):
+        return "N"
     if _bp.code_obfuscated(text):
         return "opaque"
     hosts, unseen_net = _bp.code_net(text)

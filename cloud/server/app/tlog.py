@@ -113,6 +113,60 @@ def sync(ctx):
         return len(tree)
 
 
+CONST_KEY = "constitution:%d"          # tlog_leaves.batch_id of a constitution leaf (UNIQUE: a version is logged once)
+
+
+def record_constitution(ctx, web_dir):
+    """r0312: put every version of web/constitution/versions.json that the log does not hold yet into the log (one leaf each,
+    tlogcheck.constitution_leaf), then sign a checkpoint over them. Only a version whose copy file hashes to its sha256 is logged; a
+    version already logged with ANOTHER hash, or a current page that is no published version, is an ERROR line (the start goes on:
+    the offline checker, packtools/constitution_check.py, says INVALID to anyone). -> list of versions logged now."""
+    import constitution_check as CC
+    vf = os.path.join(web_dir, "constitution", "versions.json")
+    if not os.path.isfile(vf):
+        return []
+    with open(vf, "rb") as f:
+        vs = CC._versions(f.read())
+    todo = []
+    for e in vs:
+        p = os.path.realpath(os.path.join(web_dir, e["path"]))
+        if not p.startswith(os.path.realpath(web_dir) + os.sep) or not os.path.isfile(p):
+            log("ERROR", "constitution: copy of version %d missing: NOT logged" % e["version"])
+            continue
+        with open(p, "rb") as f:
+            if CC.page_hash(f.read()) != e["sha256"]:
+                log("ERROR", "constitution: copy of version %d does not match versions.json: NOT logged" % e["version"])
+                continue
+        todo.append(e)
+    cur = os.path.join(web_dir, "constitution.html")
+    if os.path.isfile(cur):
+        with open(cur, "rb") as f:
+            if CC.page_hash(f.read()) != vs[-1]["sha256"]:
+                log("ERROR", "constitution: constitution.html is not the latest version in versions.json (an edit without a new version)")
+    added = []
+    with _LOCK:
+        tree = _state(ctx)["tree"]
+        with ctx.db.tx():
+            _catch_up(ctx, tree)
+            leaves = []
+            for e in todo:
+                r = ctx.db.one("SELECT leaf FROM tlog_leaves WHERE batch_id=?", (CONST_KEY % e["version"],))
+                if r is not None:
+                    if TC.parse_constitution_leaf(bytes(r["leaf"]))[1] != e["sha256"]:
+                        log("ERROR", "constitution: version %d is in the log with another hash: versions.json was rewritten" % e["version"])
+                    continue
+                leaf = TC.constitution_leaf(e["version"], e["sha256"])
+                ctx.db.x("INSERT INTO tlog_leaves(idx,batch_id,leaf,t) VALUES(?,?,?,?)",
+                         (len(tree) + len(leaves), CONST_KEY % e["version"], leaf, int(time.time())))
+                leaves.append(leaf)
+                added.append(e["version"])
+        for leaf in leaves:
+            tree.append(TC.leaf_hash(leaf))
+    if added:
+        checkpoint(ctx)
+    return added
+
+
 def checkpoint(ctx, now=None):
     """-> the latest signed note (str). Signs a new one when the log grew; refuses (RuntimeError) to sign a tree that does not
     extend the last signed checkpoint."""

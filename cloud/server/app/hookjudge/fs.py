@@ -48,6 +48,40 @@ def reset_root(tok):
     _ROOT.reset(tok)
 
 
+def _other_name(samefile, p, root):
+    """r0323 (закон (1)): -> another path of the project tree `root` that is the same inode as the regular file `p` (a hard link), or
+    None. Breadth-first, at most samefile.MAX_ENTRIES entries, samefile.PRUNE skipped (as the credential walk; samefile.py itself is
+    byte-equal with the hook's copy, so the walk lives here)."""
+    import collections
+    st = samefile.links(p)
+    if st is None or not isinstance(root, str) or not root:
+        return None
+    q, n = collections.deque([root]), 0
+    while q:
+        d = q.popleft()
+        try:
+            it = os.scandir(d)
+        except (OSError, ValueError):
+            continue
+        with it:
+            for e in it:
+                n += 1
+                if n > samefile.MAX_ENTRIES:
+                    return None
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if e.name not in samefile.PRUNE:
+                            q.append(e.path)
+                        continue
+                    if e.path != p and e.is_file(follow_symlinks=False):
+                        s2 = e.stat(follow_symlinks=False)
+                        if (s2.st_dev, s2.st_ino) == (st.st_dev, st.st_ino):
+                            return e.path
+                except OSError:
+                    continue
+    return None
+
+
 class LocalFS:
     """The machine this code runs on (what the 0.2.15 hook did in-process)."""
 
@@ -108,6 +142,19 @@ class LocalFS:
 
     def git_head(self):
         return LOCAL_GIT_HEAD                            # 0.2.96: tests set it; None = no fact (no branch, no reset)
+
+    def hardlink_name(self, p):
+        """r0323 (закон (1)): -> another name of the regular file `p` when it has more than one (a hard link: realpath is the file
+        itself), found in the project root the hook walks; None = one name, or no other name found (the caller judges `p` as a
+        program the agent made)."""
+        h = _ROOT.get()
+        if h is None:
+            return None
+        from . import samefile
+        try:
+            return _other_name(samefile, p, h[0])
+        except Exception:      # noqa: BLE001
+            return None
 
     def shadow(self, p):
         """0.2.90: tests / the fatigue harness: a shadow copy of `p` under the temp dir (what the hook does on the user's machine)."""
@@ -266,6 +313,9 @@ class FactsFS:
 
     def git_head(self):
         return self.ghead                                # 0.2.96 (client 0.2.65): the project's git branch; None = no fact
+
+    def hardlink_name(self, p):
+        return None                                      # r0323: the hook sends no inode fact for a program: judged as the agent's own
 
     def home(self):
         return self.h

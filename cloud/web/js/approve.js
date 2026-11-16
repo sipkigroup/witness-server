@@ -4,7 +4,7 @@ import { get, post } from './api.js';
 import { bytesToHex } from './cde.js';
 import { challenge, approvalPayload, TYP_APPROVAL } from './profile.js';
 import { signPayload } from './sign.js';
-import { explainError, isClone, cloneNote } from './webauthn.js';
+import { explainError, isClone, cloneNote, noWebAuthn, blockedByBrowser, showOtherBrowser } from './webauthn.js';
 import { describeMandate, describeAction } from './describe.js';
 import { main as queueMain, advisoryText, decideHeld } from './batch.js';
 import { clip4k, nextPending, newerPending } from './queue.js';
@@ -1053,6 +1053,7 @@ async function single(me) {
       done(res.verdict === 'allow' ? 'Approved' : 'Refused', res.verdict === 'allow' ? approvedText(res) : 'The agent was refused. Nothing was executed.', res.verdict !== 'allow' && !approved);
     } catch (e) {
       if (isClone(e)) { notice(msg, 'err', explainError(e)); cloneNote(msg, e); unlock(); return; }   // 0.2.22 (N3)
+      if (blockedByBrowser(e)) { showOtherBrowser(); unlock(); return; }                                // the browser cannot do passkeys: one line + Copy link
       if (e.shown) { notice(msg, 'err', e.message); unlock(); return; }                                // 04.11: the line's result, part by part
       if (e.code === 'LINE_VIEW') { notice(msg, 'err', 'This page cannot show (and so cannot sign) what every part of this call does. Nothing was approved. Reload the page; you can still refuse.'); unlock(); return; }
       notice(msg, 'err', levelError(e) ? levelError(e) : e.code === 'ALLOWANCE_NOT_ELIGIBLE' || e.code === 'ALLOWANCE_MISMATCH' ? 'This command cannot be allowed for the project (' + failText(e) + '). You can still approve it once.' : e.code === 'NOT_DEFERRED' ? 'This request is no longer waiting (already decided or expired).' : e.code === 'VIEW_CHANGED' ? 'What this page shows changed at the witness since you opened it. Reload the page, read it again and decide.' : (e.code || '').startsWith('REPEAT_') ? 'This call cannot be approved for later runs (' + failText(e) + '). You can still approve it once.' : e.code === 'APPROVAL_SIG' ? STALE_SIG_TEXT : (e.code || '').startsWith('WA_') || (e.code || '').startsWith('WQ_') ? 'The server rejected the signature (' + failText(e) + ').' : explainError(e));
@@ -1088,6 +1089,8 @@ async function single(me) {
 async function main() {
   const me = await mountNav(true);
   if (!me) return;
-  if (rid) await single(me); else await queueMain(me, { afterBatch: (rids, agent) => watchNext(rids, agent) });
+  // r0321: on load only when WebAuthn is really absent; isUVPAA=false is NOT a reason (a computer with a security key or a password
+  // manager has no built-in authenticator and signs fine). A browser that blocks the call is caught at the call (blockedByBrowser).
+  if (rid) { if (noWebAuthn()) showOtherBrowser(); await single(me); } else await queueMain(me, { afterBatch: (rids, agent) => watchNext(rids, agent) });
 }
 main().catch((e) => notice(msg, 'err', failText(e)));

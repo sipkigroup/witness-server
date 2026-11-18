@@ -2,9 +2,9 @@
 # --require-hashes --no-deps). Packages already in requirements.lock are left out here (same versions: it was the constraint).
 # Made with: uv pip compile requirements-test.txt -c <requirements.lock without hashes> --generate-hashes --python-version 3.12
 # deus-witness = LATEST_CLIENT of the server; build-open-server.sh refuses to build when they differ (regenerate this file then).
-deus-witness==0.2.77 \
-    --hash=sha256:93e2a014883bd0735563f6dedc006ca59c3ed3a36c727c1142c8eede64a395b1 \
-    --hash=sha256:9f3de104435339daacdd5d1013b39039eedce5d5dc9978e18d26b0b657310987
+deus-witness==0.2.79 \
+    --hash=sha256:163f5c6c7c8ca94eedea0a39a0b23ed75dd6424e719223c3263a5eed280a59db \
+    --hash=sha256:71963521bb5f868044b730e3dcf616096c2177c406eba91b99a9b4ac2d8e9c68
     # via -r requirements-test.txt
 httpx-sse==0.4.3 \
     --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
@@ -141,9 +141,9 @@ python-dotenv==1.2.4 \
     --hash=sha256:42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc \
     --hash=sha256:f0d53e69935a851c0dcc78f3ab7aaccd8cabef0b92382b576b824212902873c0
     # via pydantic-settings
-python-multipart==0.0.33 \
-    --hash=sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45 \
-    --hash=sha256:b8112424a6abd162ec08d390565dd113ad699f2fe6fef3c987b8bbcbfe9e390d
+python-multipart==0.0.34 \
+    --hash=sha256:b998ae90ca6e1e363261ce2e0e230281b8af53867b757970abd69ee9edcd843a \
+    --hash=sha256:ebacd224bd686eee2f9aa1066a657affe07435a185834e05e5235e2e59173e91
     # via mcp
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \

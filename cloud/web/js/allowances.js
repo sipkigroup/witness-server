@@ -12,6 +12,13 @@ export function rowCells(x) {
   return [shown[0], shown[1], shown[2], untilText(x.exp), x.uses ? x.uses + ' times, last ' + fmtTime(x.last_used) : 'not yet', STATUS_TEXT[x.status] || x.status];
 }
 
+// r0327: the text of trust of the version this rule signed (the list shows THAT text, not today's); an older rule signed the page only
+export const OLD_TEXT_NOTE = 'Signed before the text of trust became part of the signature: the page was signed, the text shown next to the button was not.';
+export function trustNote(x) {
+  if (x && typeof x.text === 'string' && x.text && typeof x.text_v === 'string') return { signed: true, summary: 'Text you signed with this rule (version ' + x.text_v + ')', text: x.text };
+  return { signed: false, summary: 'Text you signed with this rule: none', text: OLD_TEXT_NOTE };
+}
+
 async function load() {
   const r = await get('/api/allowances');
   const tb = clear($('#rows'));
@@ -30,6 +37,8 @@ async function load() {
     }
     tr.append(td);
     tb.append(tr);
+    const tn = trustNote(x);
+    tb.append(h('tr', { class: 'trustrow' }, h('td', { colspan: '7' }, h('details', {}, h('summary', { text: tn.summary }), h('p', { class: tn.signed ? 'hint' : 'hint warn', text: tn.text })))));
   }
 }
 

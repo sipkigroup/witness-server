@@ -365,14 +365,24 @@ def _dev(client, owner, tmp_path):
     return d, r["rid"]
 
 
-def _allow(d, rid, sign_view="page", send_view="page", g=None):
+def _allow_view(g):
+    """r0327: the hash a rule signs: the page's view AND the text of trust of the offer (web/js/allowance.js allowViewHash)"""
+    from app import allowances as al
+    o = g["allowance_offer"]
+    obj = al.allow_view(signview.view_of({k: v for k, v in g.items() if k not in X}), o["text_v"], o["text"])
+    return hashlib.sha256(signview.jcs(obj)).digest()
+
+
+def _allow(d, rid, sign_view="allow", send_view="page", g=None):
+    """sign_view: "allow" (r0327: page + text of trust, the current page), "page" (the page alone: a page before r0327), bytes or None.
+    -> (response, map, the hash signed)"""
     from tests.test_allowance_0210 import _id, DAY
     from app import allowances as al
     from app import wire
     from svidetel_v4.state import mandate_hash
     g = g or _get(d.o, rid)
     page = _page(g)
-    sv = page if sign_view == "page" else sign_view
+    sv = _allow_view(g) if sign_view == "allow" else page if sign_view == "page" else sign_view
     nv = page if send_view == "page" else send_view
     o = g["allowance_offer"]
     a = {"v": "deus-aar-0.1", "t": "allowance", "id": _id(), "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command",
@@ -382,7 +392,7 @@ def _allow(d, rid, sign_view="page", send_view="page", g=None):
     body = {"rid": rid, "envelope_b64": d.o.sign(al.TYP, wa.cde(a))}
     if nv is not None:
         body["view_sha256"] = nv.hex()
-    return d.o.post("/api/allowances", **body), a, page
+    return d.o.post("/api/allowances", **body), a, sv
 
 
 def test_pv2_allowance_names_the_view(client, owner, tmp_path):

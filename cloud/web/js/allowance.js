@@ -3,6 +3,7 @@
 // (typ application/aar-allowance+cbor); the server records it in the ledger. Pure functions here; the DOM part is in approve.js / allowances.js.
 import { encode } from './cde.js';
 import { sha256 } from './profile.js';
+import { jcs } from './signview.js';
 
 export const TYP_ALLOWANCE = 'application/aar-allowance+cbor';
 export const DEFAULT_DAYS = 1;          // 0.2.51: one day by default (was 30): one question, then 24 h of quiet in this project
@@ -12,8 +13,24 @@ export const TRUST_TEXT = "Allowing a command for this project means trusting th
   + "the project's tests, conftest.py, plugins, scripts and build files, npm install and pip install -e . install the dependencies "
   + 'the project declares, and the agent can change those files. In practice the agent can then run code it wrote in this project '
   + 'without asking you when Witness could read what it wrote and that text does not reach the network, your keys or files outside this '
-  + 'project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still '
-  + 'asked every time, and so is anything outside this project.';
+  + 'project. Dangerous commands the agent types (recursive delete, force-push, reading secrets, a download piped into a shell) are still '
+  + "asked every time, and so is anything outside this project. Inside the project's code Witness looks for them too, but it cannot "
+  + 'promise to find every one: allow only a project whose code you trust.';
+
+// r0327 (law "Signed = shown"): the rule's `view` is the hash of the approval page's view AND of the text of trust shown next to the
+// button, whole (server app/allowances.allow_view: {v, page, text_v, text}). The text is the server's offer.text (the page shows exactly it).
+export const ALLOW_VIEW_V = 'dw-allow-view-1';
+export function trustTextOf(offer) {
+  return offer && typeof offer.text === 'string' && offer.text ? offer.text : TRUST_TEXT;
+}
+export function allowView(pageView, offer) {
+  if (!pageView || typeof pageView !== 'object') throw new Error('no page view');
+  if (!offer || typeof offer.text !== 'string' || !offer.text || typeof offer.text_v !== 'string' || !offer.text_v) throw new Error('the offer names no text of trust');
+  return { v: ALLOW_VIEW_V, page: pageView, text_v: offer.text_v, text: offer.text };
+}
+export async function allowViewHash(pageView, offer) {
+  return sha256(new TextEncoder().encode(jcs(allowView(pageView, offer))));
+}
 
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 export function newAllowanceId(rand = (n) => crypto.getRandomValues(new Uint8Array(n))) {

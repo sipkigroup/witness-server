@@ -20,9 +20,9 @@ def test_o4_allow24_only_for_listed_runners(client, owner, tmp_path):
     proj = tmp_path / "proj"
     proj.mkdir()
     d = Dev(client, owner, proj.resolve())
-    _, ok, why = _offer(d, "sw_vers")
+    _, ok, why = _offer(d, "uptime")
     assert not ok and "is not a test runner, build tool or file command" in why           # an unknown program: asked each time
-    _, ok, why = _offer(d, "python3 -V")
+    _, ok, why = _offer(d, "python3 f.py")   # r0343: python3 -V is a closed form since r0341 (silent)
     assert not ok and "interpreter" in why                                               # an interpreter runs any code it is given
     for cmd in ("npm test", "npm run test", "pytest", "make test"):
         _, ok, why = _offer(d, cmd)
@@ -50,8 +50,8 @@ def test_o3_agent_waiting_mark(client, owner, tmp_path, monkeypatch):
     proj = tmp_path / "proj"
     proj.mkdir()
     d = Dev(client, owner, proj.resolve())
-    [(_, a)] = d.send("sw_vers")                       # its hook gave up (never polls again)
-    [(_, b)] = d.send("hostname")                      # its hook is long-polling for the answer
+    [(_, a)] = d.send("uptime")                       # its hook gave up (never polls again)
+    [(_, b)] = d.send("pmset -g")                      # r0343: hostname is a closed form since r0341; its hook is long-polling for the answer
     clock = [waiting.time.time() + 100.0]              # both calls are older than the grace, the process too
     monkeypatch.setattr(waiting, "_now", lambda: clock[0])
     monkeypatch.setattr(waiting, "_started", 0.0)

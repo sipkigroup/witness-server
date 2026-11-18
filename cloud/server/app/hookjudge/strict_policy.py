@@ -53,6 +53,8 @@ PREFIXES = (PUBLISH, OUTSIDE, LATER, INJECT, WITNESS, DOUBT, IRREV, DATA)
 TABLE = (
     ("Н1 FORBIDDEN_SECRET_READ", "Н", "read a private key / token store / keychain / browser cookies", "identity theft; the kernel holds it too"),
     ("Н3 FORBIDDEN_GIT_HOOKS", "Н", ".git/hooks, core.hooksPath", "git runs it later outside the sandbox: the agent changes its own bounds"),
+    ("Н3 FORBIDDEN_WITNESS_OFF", "Н", "the witness uninstalled, stopped, killed, its files deleted / replaced outside the project",
+     "after it nothing is checked: the agent removes its own guard (r0333)"),
     ("Н4 FORBIDDEN_AUTOSTART", "Н", "rc files, LaunchAgents, cron, the agent's settings / hooks, .mcp.json, the witness", "the agent stays for good"),
     ("Н5 FORBIDDEN_WIPE", "Н", "rm -rf of ~, / or a folder above the project", "irreversible"),
     ("Н6 FORBIDDEN_REMOTE_SHELL", "Н", "download | shell, reverse shell, listener", "capture of the machine"),
@@ -241,6 +243,12 @@ def _bare(text):
     return one if balanced and unsure is None and isinstance(one, str) else text
 
 
+# r0346 (cost, test_0217 longest line: r0345's download_runs parses the line once more): a part with no quote, no backslash and no blank
+# other than space / tab / CR / LF splits the same with str.split() as with shlex.split(posix) (shlex's specials are the quotes and "\\"
+# only; str.split's extra blanks \v \f \x1c-\x1f \x85 and the Unicode spaces are excluded here, so they still go through shlex).
+_SHLEX_PLAIN = re.compile(r"[^'\"\\\s]*(?:[ \t\r\n]+[^'\"\\\s]*)*")
+
+
 def _segments(text):
     """Lenient argv of every simple command of the line (heredoc bodies cut, `$(` / backticks / `;|&` split), wrappers and leading
     assignments dropped. For VERB detection only: a segment that cannot be read is returned as its whitespace words (fail closed: an
@@ -251,19 +259,28 @@ def _segments(text):
         part = part.strip()
         if not part:
             continue
-        try:
-            argv = shlex.split(part, posix=True)
-        except ValueError:
-            argv = part.split()
-        while argv and (argv[0] in _WRAPPERS or _ASSIGN.match(argv[0])):
-            argv = argv[1:]
-        if argv:
-            out.append(argv)
+        if _SHLEX_PLAIN.fullmatch(part):
+            argv = part.split()                       # r0346 (cost): no quote, no backslash, only ' \t\r\n' as blanks -- shlex's own answer
+        else:
+            try:
+                argv = shlex.split(part, posix=True)
+            except ValueError:
+                argv = part.split()
+        k = 0
+        while k < len(argv) and (argv[k] in _WRAPPERS or _ASSIGN.match(argv[k])):
+            k += 1                                    # r0346 (cost): one slice, not one per word (`{ { { ...` was quadratic)
+        if k < len(argv):
+            out.append(argv[k:] if k else argv)
     return out
+
+
+_SPLIT_PLAIN = re.compile(r"\$\(|[;|&\n()`]")
 
 
 def _split_unquoted(one):
     """split on `;` `|` `&` newline `(` `)` `$(` and backticks OUTSIDE quotes (a `|` inside a quoted grep pattern is text)"""
+    if "'" not in one and '"' not in one and "\\" not in one:
+        return _SPLIT_PLAIN.split(one)                # r0346 (cost): no quote, no escape -- the walk below gives exactly this
     parts, cur, q, i = [], [], None, 0
     while i < len(one):
         ch = one[i]
@@ -1391,6 +1408,10 @@ def _script_self(text, path):
     return t
 
 
+_DUR = re.compile(r"[\d.]+[smhd]?")
+_LVAR = re.compile(r"\$\{?([A-Za-z_]\w*)\}?")
+
+
 def run_targets(text, cwd):
     """-> set of absolute paths a line RUNS as a script: `bash x.sh`, `sh < x.sh`, `source x`, `python3 x.py`, `node x.js`, `./x`,
     `scripts/x`, `uv run x.py`, `cat x.sh | bash`. Relative paths from cwd and from each `cd DIR` of the line."""
@@ -1404,18 +1425,19 @@ def run_targets(text, cwd):
     for m in re.finditer(r"(?:^|[;&|(\s])([A-Za-z_]\w*)=('[^']*'|\"[^\"$`]*\"|[^\s;&|()$`'\"]+)", text):
         lvars[m.group(1)] = m.group(2).strip("'\"")          # a literal the line sets (`X=scripts/p.sh; bash $X`)
     for a in segs:
-        while a and (a[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", a[0])):
+        while a and (a[0].startswith("-") or _DUR.fullmatch(a[0])):
             a = a[1:]                                 # what a dropped wrapper left (`timeout 10`, `nice -n 5`)
         while a and (_base(a[0]) in _RUNNERS or _base(a[0]) in ("timeout", "nice", "nohup", "time", "exec", "command", "caffeinate")):
             if _base(a[0]) in _RUNNERS:
                 a = a[2:] if len(a) > 1 and a[1] in ("run", "exec") else a[1:]
             else:
                 a = a[1:]
-                while a and (a[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", a[0])):
+                while a and (a[0].startswith("-") or _DUR.fullmatch(a[0])):
                     a = a[1:]
         if not a:
             continue
-        a = [re.sub(r"\$\{?([A-Za-z_]\w*)\}?", lambda m: lvars.get(m.group(1), m.group(0)), x) for x in a]
+        if lvars:                                     # r0346 (cost): no literal set on the line / no "$" in a word -> the word as it is
+            a = [_LVAR.sub(lambda m: lvars.get(m.group(1), m.group(0)), x) if "$" in x else x for x in a]
         if _base(a[0]) in _SHELLS and "-c" in a[1:]:
             k = a.index("-c", 1)
             if k + 1 < len(a):

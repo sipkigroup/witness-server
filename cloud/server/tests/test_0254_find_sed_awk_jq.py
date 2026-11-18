@@ -133,7 +133,7 @@ def _send(client, hdr, cmd, proj, owner=None):
 
 def test_five_copies_one_list():
     assert list(CC_READONLY_COMMANDS) == DEFAULT_SAFE_COMMANDS == HOOK_LIST
-    assert DEFAULT_SAFE_COMMANDS[63:67] == TX and len(set(DEFAULT_SAFE_COMMANDS)) == 95
+    assert DEFAULT_SAFE_COMMANDS[63:67] == TX and len(set(DEFAULT_SAFE_COMMANDS)) == 112      # r0325: + git init, xattr; r0341: + 6
     web = open(os.path.join(CLOUD, "web", "js", "mandate_form.js")).read()
     html = open(os.path.join(CLOUD, "web", "mandate.html")).read()
     assert ", ".join(DEFAULT_SAFE_COMMANDS) + '"' in html

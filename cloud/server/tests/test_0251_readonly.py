@@ -38,7 +38,7 @@ RISKY = ["sort -o out.txt a.txt", "sort -ro out.txt a.txt", "sort -roout.txt a.t
 
 def test_four_copies_one_list_and_w6_narrow():
     assert list(CC_READONLY_COMMANDS) == DEFAULT_SAFE_COMMANDS == HOOK_LIST
-    assert DEFAULT_SAFE_COMMANDS[22:48] == ADDED and len(set(DEFAULT_SAFE_COMMANDS)) == 95      # 0.2.53: + 15 local writes (test_0253); 0.2.54: + 4 (test_0254)
+    assert DEFAULT_SAFE_COMMANDS[22:48] == ADDED and len(set(DEFAULT_SAFE_COMMANDS)) == 112     # r0341: + 6 closed forms (test_1711_r0341); 0.2.53: + 15 local writes (test_0253); 0.2.54: + 4 (test_0254); r0325: + git init, xattr; r0335: + 9 state readers (test_1711_r0335)
     assert list(W6_READONLY_COMMANDS) == DEFAULT_SAFE_COMMANDS[:22]
     for not_a in ("gawk", "gsed", "less", "tac", "git stash", "git tag", "pytest", "tee", "git push", "git reset", "git clean"):
         assert not_a not in DEFAULT_SAFE_COMMANDS                    # class (c) stays out (find/sed/awk/jq: 0.2.54, test_0254)

@@ -16,6 +16,7 @@ What the gateway adds (the core cannot know it):
 Honest limit: allowing `pytest` / `npm test` / `make` for a project means trusting the project's code -- and the agent can edit that code.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -55,8 +56,44 @@ TRUST_TEXT = ("Allowing a command for this project means trusting the project's 
               "the project's tests, conftest.py, plugins, scripts and build files, npm install and pip install -e . install the dependencies "
               "the project declares, and the agent can change those files. In practice the agent can then run code it wrote in this project "
               "without asking you when Witness could read what it wrote and that text does not reach the network, your keys or files outside this "
-              "project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
-              "asked every time, and so is anything outside this project.")
+              "project. Dangerous commands the agent types (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
+              "asked every time, and so is anything outside this project. Inside the project's code Witness looks for them too, but it cannot "
+              "promise to find every one: allow only a project whose code you trust.")
+
+# r0327 (law "Signed = shown"): the text of trust shown when a rule is signed is part of the signature. Every version ever offered is kept
+# here, by a short name; a rule names the version it was signed with (allowances.trust_v) and the list shows THAT text. The evidence
+# checker (packtools/screencheck.ALLOW_TEXT_SHA256) keeps the SHA-256 of each version (a test keeps the two equal).
+#   tt-1: the text up to r0325 (it promised that dangerous commands are asked every time, also inside project code: not true)
+#   tt-2: the honest text of r0326 (TRUST_TEXT above)       am-1: the text of an amendment of a kind of request (app/amend.TEXT)
+TRUST_TEXT_V1 = ("Allowing a command for this project means trusting the project's code: pytest, npm test, make, cargo test and go test run "
+                 "the project's tests, conftest.py, plugins, scripts and build files, npm install and pip install -e . install the dependencies "
+                 "the project declares, and the agent can change those files. In practice the agent can then run code it wrote in this project "
+                 "without asking you when Witness could read what it wrote and that text does not reach the network, your keys or files outside this "
+                 "project. Dangerous commands (recursive delete, force-push, reading secrets, a download piped into a shell) are still "
+                 "asked every time, and so is anything outside this project.")
+ALLOW_VIEW_V = "dw-allow-view-1"
+
+
+def texts():
+    """-> {version: text} of every trust text a "from now on" rule may have been signed with."""
+    from app import amend
+    return {"tt-1": TRUST_TEXT_V1, "tt-2": TRUST_TEXT, "am-1": amend.TEXT}
+
+
+def text_version(text):
+    """-> the version name of this exact text, or None."""
+    for k, t in texts().items():
+        if t == text:
+            return k
+    return None
+
+
+def allow_view(page, text_v, text):
+    """r0327: the object a rule's `view` hashes (SHA-256 over RFC 8785): the approval page's signing view (dw-view-1) AND the text of trust
+    shown next to the button, whole. No new member in the signed allowance map (the core schema and every older checker keep working):
+    the existing `view` names both. web/js/allowance.js allowView builds the same object."""
+    return {"v": ALLOW_VIEW_V, "page": page, "text_v": text_v, "text": text}
+
 
 DEFENSE_WHY = ("this switches off a protection of your computer: Witness never allows it from now on")     # r0305
 LATER_WHY = "another program runs this file later by itself (direnv, a git hook, CI, the editor): it is asked every time, approve it once"
@@ -236,6 +273,29 @@ def reset_stale(ctx, acc_id, agent_id, L, meta, now):
     return out
 
 
+def renew_unsigned(ctx, acc_id, agent_id, L, meta, a, now):
+    """r1611 (law "Signed = shown"): a live rule signed BEFORE r0327 (allowances.trust_v is NULL: the text of trust was not part of its
+    signature) does not pass silently at its first use: when it WOULD cover this action it ends (ledger ALLOWANCE_END "revoked";
+    end_reason = "text-unsigned-renewed") before cover() reads the ledger, so the call is asked as any unlisted command and the human's
+    "from now on" signs the current text as a NEW rule. No migration: the mark is trust_v IS NULL. Called under hub.lock. -> ids ended."""
+    if meta is None or not isinstance(a, dict) or a.get("class") != "command":
+        return []
+    rc = a.get("recipient", "")
+    out = []
+    for g in ctx.db.q("SELECT id, commands FROM allowances WHERE account_id=? AND agent_id=? AND project=? AND ended_at IS NULL AND exp>=? "
+                      "AND nbf<=? AND trust_v IS NULL", (acc_id, agent_id, meta["project"], now, now)):
+        if rc not in json.loads(g["commands"]):
+            continue
+        try:
+            res = L.end_allowance(g["id"], "revoked")
+        except Exception:  # noqa: BLE001  unknown to the ledger (never expected): mark it ended here, it covers nothing
+            res = {"result": "reject", "reason": "ALLOWANCE_UNKNOWN"}
+        ctx.db.x("UPDATE allowances SET ended_at=?, end_seq=?, end_reason='text-unsigned-renewed' WHERE id=? AND ended_at IS NULL",
+                 (_now(), res.get("seq"), g["id"]))
+        out.append(g["id"])
+    return out
+
+
 def team(ctx, account_id):
     return org.current_policy(ctx, account_id) is not None
 
@@ -263,7 +323,7 @@ def offer(ctx, acc, x):
     """What the approval page may offer for the pending action row x: {eligible, why_not, commands, project, t, days, default_days,
     max_days, typ, text}. Built from the row and the ledger; the owner's device builds and signs the payload itself."""
     out = {"eligible": False, "why_not": None, "commands": [], "project": None, "t": _now(), "days": list(DAYS), "default_days": DEFAULT_DAYS,
-           "max_days": min(MAX_DAYS, ALLOWANCE_MAX_S // 86400), "typ": TYP, "text": TRUST_TEXT, "max_per_project": MAX_PER_PROJECT}
+           "max_days": min(MAX_DAYS, ALLOWANCE_MAX_S // 86400), "typ": TYP, "text": TRUST_TEXT, "text_v": "tt-2", "max_per_project": MAX_PER_PROJECT}
     try:
         a = json.loads(x["action_json"]) if x["action_json"] else None
         meta = json.loads(x["cmd_meta"]) if x["cmd_meta"] else None
@@ -306,7 +366,8 @@ def offer(ctx, acc, x):
         out["why_not"] = "this question is not about an unlisted command (%s)" % x["reason"]
         return out
     if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"] and not _written_clean(x, meta):
-        out["why_not"] = "it runs a file the agent wrote (shown on this page): approve once"     # r25 (s8 P2)
+        from app.repeat import written_run_words
+        out["why_not"] = written_run_words(x["exec_json"])     # r25 (s8 P2); r0345: or a download place
         return out
     if team(ctx, acc["id"]):
         out["why_not"] = "a team's mandate is not widened by one signature: approve once (allowances are for a personal account)"
@@ -373,7 +434,8 @@ def _amend_offer(ctx, acc, x, meta, ids, out):
     """06.11 (r0260): the offer of an amendment (same signed object as a project allowance, kind identifiers as its `commands`)."""
     from app import amend
     if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"]:
-        out["why_not"] = "it runs a file the agent wrote (shown on this page): approve once"
+        from app.repeat import written_run_words
+        out["why_not"] = written_run_words(x["exec_json"])
         return out
     if team(ctx, acc["id"]):
         out["why_not"] = "a team's mandate is not widened by one signature: approve once (allowances are for a personal account)"
@@ -386,7 +448,7 @@ def _amend_offer(ctx, acc, x, meta, ids, out):
                                                                           and "*" not in i for i in ids)):
         out["why_not"] = "nothing in this call can be allowed from now on"
         return out
-    out.update(eligible=True, commands=list(ids), project=meta["project"], mandate_id=m["id"], text=amend.TEXT, kind="amendment")
+    out.update(eligible=True, commands=list(ids), project=meta["project"], mandate_id=m["id"], text=amend.TEXT, text_v="am-1", kind="amendment")
     return _narrow(ctx, acc, x, meta, out)
 
 
@@ -397,7 +459,10 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
     pv2: the allowance map may carry `view` (bstr 32, the presentation hash of the approval page that offered it); the request then claims
     the same hash (view_sha256) and view_fn checks it against the rows under hub.lock. Signed without the claim, claimed without the
     signature, or another hash than the claim -> ALLOWANCE_MISMATCH; the claim is not the rows' view -> VIEW_CHANGED. Neither: as before
-    (the permission is marked "view not signed")."""
+    (the permission is marked "view not signed").
+    r0327 (law "Signed = shown"): a claimed view must be signed as allow_view(page, text_v, text) -- the page AND the offer's text of trust,
+    whole; the page alone -> ALLOWANCE_TEXT_NOT_SIGNED, another text or version -> ALLOWANCE_MISMATCH. The object goes into shown_views
+    (views/allowance-<id>.json of the pack), the version into allowances.trust_v (the list shows that text)."""
     if not looks_like_envelope(env) or wq.envelope_kind(env) != "wa":
         raise Err(409, "WA_MALFORMED")               # one owner's wa-sig (a team's quorum does not widen its mandate this way)
     try:
@@ -427,8 +492,17 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
         if g["mandate"] != mandate_hash(M) or g["commands"] != o["commands"] or g["project"] != o["project"]:
             raise Err(409, "ALLOWANCE_MISMATCH", "the signed allowance is not the one offered for this request; reload the page")
         view = view_fn() if view_fn is not None else None           # pv2: under hub.lock, atomic with the ledger entry below
-        if ("view" in g) != (view_fn is not None) or ("view" in g and g["view"] != view):
+        if ("view" in g) != (view_fn is not None):
             raise Err(409, "ALLOWANCE_MISMATCH", "the view the permission signs is not the view this request claims; reload the page")
+        shown = None
+        if "view" in g:
+            shown = _allow_shown(ctx, acc["id"], view, o)       # r0327: (hash of page + text of trust, that object)
+            if shown is None or g["view"] != shown[0]:
+                if g["view"] == view:
+                    raise Err(409, "ALLOWANCE_TEXT_NOT_SIGNED", "the permission signs the page but not the text of trust shown with it; "
+                              "reload the page")
+                raise Err(409, "ALLOWANCE_MISMATCH", "the view the permission signs is not the view this request claims; reload the page")
+            shown = shown if shown[1] is not None else None
         if not now - NBF_SKEW_S <= g["nbf"] <= now + 5:          # the core counts it from nbf: no allowance that starts "later"
             raise Err(409, "ALLOWANCE_MALFORMED", "nbf must be the time of signing")
         if g["exp"] - g["nbf"] > MAX_DAYS * 86400:               # 0.2.96: the term is a ceiling of 30 days on this witness
@@ -441,15 +515,32 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
         if res["result"] != "accept":
             raise Err(409, res["reason"])
         with ctx.db.tx():
+            if shown is not None:          # r0327: the evidence pack carries the signed object (page + text) as views/allowance-<id>.json
+                ctx.db.x("INSERT INTO shown_views(account_id, sha256, view_json, t) VALUES(?,?,?,?) ON CONFLICT(account_id, sha256) DO UPDATE "
+                         "SET t=excluded.t", (acc["id"], shown[0].hex(), json.dumps(shown[1], ensure_ascii=False, sort_keys=True), now))
             ctx.db.x("INSERT INTO allowances(id,account_id,agent_id,mandate_id,commands,project,nbf,exp,envelope,ledger_seq,created_at,created_by,from_rid,"
-                     "view_sha256,branch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     "view_sha256,branch,trust_v) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (g["id"], acc["id"], x["agent_id"], m["id"], json.dumps(g["commands"]), g["project"], g["nbf"], g["exp"], env, res["seq"],
-                      now, user_id, rid, g["view"].hex() if "view" in g else None, o.get("branch")))
+                      now, user_id, rid, g["view"].hex() if "view" in g else None, o.get("branch"), shown[1]["text_v"] if shown else None))
             # the pending request is answered by the allowance (status `covered`: it leaves every queue; a waiting hook sends the call again,
             # an older hook answers "ask" as for any unanswered question and the agent's next call runs under the allowance)
             ctx.db.x("UPDATE actions SET covered_by=?, status='covered', updated_at=? WHERE rid=? AND status='pending_approval'", (g["id"], now, rid))
     return {"allowance_id": g["id"], "commands": g["commands"], "project": g["project"], "exp": g["exp"], "ledger_seq": res["seq"],
             "branch": o.get("branch")}
+
+
+def _allow_shown(ctx, account_id, page_hash, o):
+    """r0327: -> (hash, object) of the view a new rule must sign: the page view the server has just matched (stored under that hash by
+    api_web._view_match) plus the text of trust of THIS offer, whole. None when the page view is not held (the page then cannot sign)."""
+    if not isinstance(page_hash, bytes):
+        return None
+    r = ctx.db.one("SELECT view_json FROM shown_views WHERE account_id=? AND sha256=?", (account_id, page_hash.hex()))
+    tv = text_version(o.get("text"))
+    if r is None or tv is None or tv != o.get("text_v"):
+        return None
+    from app.signview import jcs
+    obj = allow_view(json.loads(r["view_json"]), tv, o["text"])
+    return hashlib.sha256(jcs(obj)).digest(), obj
 
 
 def revoke(ctx, acc, aid):
@@ -472,7 +563,8 @@ def revoke(ctx, acc, aid):
 def status_of(ctx, g, now=None):
     now = _now() if now is None else now
     if g["ended_at"] is not None:
-        return "branch_changed" if "end_reason" in g.keys() and g["end_reason"] == "branch" else "revoked"
+        er = g["end_reason"] if "end_reason" in g.keys() else None
+        return "branch_changed" if er == "branch" else "text_unsigned_renewed" if er == "text-unsigned-renewed" else "revoked"
     m = ctx.db.one("SELECT status FROM mandates WHERE id=?", (g["mandate_id"],))
     if m is None or m["status"] != "active":
         return "mandate_ended"
@@ -491,7 +583,11 @@ def listing(ctx, acc):
         out.append({"id": g["id"], "agent_id": g["agent_id"], "agent": names.get(g["agent_id"], ""), "mandate_id": g["mandate_id"],
                     "commands": json.loads(g["commands"]), "project": g["project"], "nbf": g["nbf"], "exp": g["exp"],
                     "created_at": g["created_at"], "from_rid": g["from_rid"], "ended_at": g["ended_at"], "status": status_of(ctx, g, now),
-                    "uses": use["n"], "last_used": use["last"], "ledger_seq": g["ledger_seq"], "branch": g["branch"]})
+                    "uses": use["n"], "last_used": use["last"], "ledger_seq": g["ledger_seq"], "branch": g["branch"],
+                    # r0327: the text of trust of the version this rule signed (None: signed before the text was part of the signature)
+                    "text_v": g["trust_v"], "text": texts().get(g["trust_v"]) if g["trust_v"] else None,
+                    # r1611: no text_v = the text of trust is not part of this rule's signature: its first use is asked again
+                    "text_signed": bool(g["trust_v"]), "note": None if g["trust_v"] else "text not signed"})
     return out
 
 

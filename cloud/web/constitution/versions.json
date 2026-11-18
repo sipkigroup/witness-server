@@ -158,5 +158,104 @@
     "evidence": "mcp/tests/test_offline_0248.py::test_read_runs_without_the_witness"
    }
   ]
+ },
+ {
+  "version": 4,
+  "date": "2026-11-17",
+  "sha256": "daa3477652af6fd08e0a0920cf07dcabe7583c3b4756172296664abca015194a",
+  "path": "constitution/v4.html",
+  "laws": {
+   "by-construction": [
+    "server/tests/test_0282_irreversibility_gate.py::test_a_exits_stay_asked",
+    "server/tests/test_0282_irreversibility_gate.py::test_a_delete_outside_project_and_disk",
+    "server/tests/test_hookjudge_hook.py::test_errors_fail_closed",
+    "mcp/tests/test_offline_0248.py::test_read_runs_without_the_witness"
+   ],
+   "rights-only-from-a-person": [
+    "server/tests/test_1311_r0292_constitution.py::test_agent_routes_cannot_widen_rights",
+    "server/tests/test_0237_no_self_approve.py::test_0237_1_agent_cannot_approve_pending",
+    "server/tests/test_0237_no_self_approve.py::test_0237_3_agent_cannot_sign_or_change_mandate"
+   ],
+   "signed-is-shown": [
+    "server/tests/test_kontrakt_konstant.py::test_signed_view_keys_and_version",
+    "server/tests/test_0283_shown_views.py::test_0283_an_edited_shown_object_is_invalid"
+   ],
+   "stopping-is-easier": [
+    "contract/v02/test_v02.py::test_revocation_rule_must_be_any_one",
+    "server/tests/test_1311_r0292_viewer_freeze.py::test_viewer_may_freeze_and_it_is_journaled",
+    "server/tests/test_1311_r0292_viewer_freeze.py::test_viewer_cannot_unfreeze_or_revoke"
+   ],
+   "silence-is-a-no": [
+    "server/tests/test_hookjudge_hook.py::test_deny_reasons",
+    "server/tests/test_hookjudge_hook.py::test_errors_fail_closed",
+    "mcp/tests/test_offline_0248.py::test_read_runs_without_the_witness",
+    "mcp/tests/test_offline_0248.py::test_non_reads_refused",
+    "mcp/tests/test_offline_0248.py::test_journal_unwritable_refuses"
+   ],
+   "past-not-rewritten": [
+    "server/tests_pack/test_tlog_server_0269.py::test_the_witness_refuses_to_sign_a_rewritten_log",
+    "server/tests_pack/test_tlogcheck_0269.py::test_substituted_root_and_rewritten_history"
+   ],
+   "no-paywall": [
+    "server/tests/test_1311_r0292_constitution.py::test_safety_features_have_no_paywall"
+   ],
+   "refused-without-question": [
+    "server/tests/test_0611_konstituciya.py::test_n_server_refuses_silently",
+    "server/tests/test_1711_r0334_registr.py::test_l2_any_case_refused_under_allow",
+    "server/tests/test_1711_r0332_metka.py::test_hole_in_the_verdict_closed",
+    "server/tests/test_1711_r0332_metka.py::test_agent_written_script_is_never_the_persons_code"
+   ],
+   "witness-off-refused": [
+    "server/tests/test_1711_r0333_samozashchita.py::test_witness_off_is_refused_n3",
+    "server/tests/test_1711_r0333_samozashchita.py::test_write_edit_of_an_installed_file_is_refused",
+    "server/tests/test_1711_r0333_samozashchita.py::test_witness_state_and_plugin_stay_autostart",
+    "server/tests/test_1711_r0333_samozashchita.py::test_l2_witness_off_refused_with_no_question_under_allow",
+    "server/tests/test_1711_r0336_witness_off_50.py::test_50_attempts_none_runs_silently",
+    "server/tests/test_1711_r0336_witness_off_50.py::test_50_attempts_40_refused_10_asked",
+    "server/tests/test_1711_r0336_witness_off_50.py::test_50_attempts_48_refused_2_asked",
+    "server/tests/test_1711_r0337_witness_replace.py::test_replace_forms_refused_under_any_mandate"
+   ],
+   "os-protections-stay-on": [
+    "server/tests/test_1411_r0305_zashchity_os.py::test_defense_mark_and_article",
+    "server/tests/test_1411_r0305_shag0_l2.py::test_defense_is_refused_with_no_button_under_every_mandate",
+    "server/tests/test_1411_r0305_zashchity_os.py::test_never_from_now_on_for_defense"
+   ],
+   "team-rules-harder": [
+    "server/tests/test_0237_team_kvorum.py::test_a_owner_alone_cannot_lower_threshold_or_drop_member",
+    "server/tests/test_0237_team_kvorum.py::test_c2_member_cancels_scheduled_change"
+   ],
+   "no-self-confirm": [
+    "server/tests/test_0213.py::test_delegated_agent_is_confirmed_by_others_never_by_its_operator",
+    "server/tests/test_0237_no_self_approve.py::test_0237_11_team_operator_cannot_approve_own_agent"
+   ],
+   "trust-has-an-end": [
+    "server/tests/test_kontrakt_konstant.py::test_from_now_on_days"
+   ],
+   "data-is-yours": [
+    "server/tests/test_0224_critique.py::test_0224_b_export_still_verifies",
+    "server/tests/test_0223_delete_account.py::test_success_erases_and_nobody_can_come_back"
+   ],
+   "if-we-are-gone": [
+    "server/tests_pack/test_solo_pack.py::test_4_solo_pack_valid_without_org_lines",
+    "selfhost/e2e_check.py"
+   ],
+   "change-rule": [
+    "server/tests/test_1311_r0292_constitution.py::test_constitution_page_is_versioned_and_every_law_has_a_check"
+   ],
+   "weakening-is-checked": [
+    "server/tests/test_1511_r0318_constitution_rule.py::test_a_law_dropped_without_weakens_is_invalid",
+    "server/tests/test_1511_r0318_constitution_rule.py::test_a_weakening_takes_effect_14_days_later",
+    "server/tests/test_1511_r0318_constitution_rule.py::test_a_changed_text_must_be_marked"
+   ]
+  },
+  "weakens": false,
+  "effective": "2026-11-17",
+  "corrects": [
+   {
+    "law": "refused-without-question",
+    "reason": "v3 listed what is refused without saying that these are the known forms of the commands; `Rm -rf ~` with a capital letter ran with no question under allow-unlisted until 0.2.133 (2026-11-17), which reads a program name in any case",
+    "evidence": "server/tests/test_1711_r0334_registr.py::test_l2_any_case_refused_under_allow"
+   }
+  ]
  }
 ]

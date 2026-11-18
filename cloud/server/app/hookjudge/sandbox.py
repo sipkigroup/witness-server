@@ -515,6 +515,7 @@ def _protected_rel(rel):
 
 
 UV_PIP_READ_HEAD = "uv pip"
+DOCKER_PS_HEAD = "docker ps"                          # r0335: the plain listing of containers (bashparse._docker_ps_plain): no exit
 PULL_LINE_HEADS = {"git pull", "git fetch", "git status", "git log", "git diff", "git show", "git rev-parse", "git branch"}
 STASH_HEAD = "git stash"
 NPX_OFFLINE_TOOLS = ("jest", "vitest", "mocha", "tsc", "eslint", "prettier")      # allowances.NPX_TOOLS
@@ -570,6 +571,8 @@ def standing_exit(head) -> bool:
     if not isinstance(head, str) or not head.strip():
         return False
     if head == RSYNC_PLAIN_HEAD:
+        return False
+    if head == DOCKER_PS_HEAD:
         return False
     if head == UV_PIP_READ_HEAD:
         return False                                  # 0611 (r0260): plain "uv pip" is only list / freeze / show / tree (bashparse._ro_tags tags

@@ -59,7 +59,10 @@ class Dev:
              "commands": o["commands"], "project": o["project"], "nbf": o["t"], "exp": o["t"] + days * DAY}
         a.update(over)
         env = self.o.sign(al.TYP, wa.cde(a))
-        return self.o.post("/api/allowances", rid=rid, envelope_b64=env), a
+        res = self.o.post("/api/allowances", rid=rid, envelope_b64=env)
+        if res.status_code == 200:      # r1611: this helper stands for a rule signed WITH the text of trust (trust_v set); old rules: test_1611_kand1_migr_vpred
+            self.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (a["id"],))
+        return res, a
 
 
 def test_allow_pytest_for_the_project(client, owner, tmp_path, app):
@@ -285,6 +288,7 @@ def test_the_browser_payload_is_accepted(client, owner, tmp_path):
     assert a["mandate"] == mandate_hash(wire.cbor_form(g["mandate"])) and a["exp"] == a["nbf"] + 7 * DAY and a["nbf"] == o["t"]
     res = owner.post("/api/allowances", rid=r["rid"], envelope_b64=owner.sign(al.TYP, payload))
     assert res.status_code == 200, res.text
+    client.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=?", (a["id"],))     # r1611: stands for a rule signed with the text
     assert d.verdicts("cargo test") == [("Bash", "allow", "OK_ALLOWANCE")]
 
 

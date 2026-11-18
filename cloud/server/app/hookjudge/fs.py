@@ -32,6 +32,7 @@ LOCAL_SANDBOX = None          # V3, TESTS ONLY: the sandbox fact LocalFS reports
 LOCAL_HARNESS = None          # 06.11, TESTS ONLY: the hook's K1 finding LocalFS reports (str) and whether the hook found it sandbox-held
 LOCAL_HARNESS_HELD = False
 LOCAL_SESSION = None          # 06.11, TESTS ONLY: the session id LocalFS reports (the hook's `session_id`)
+LOCAL_PROG_PATH = None        # r0338, TESTS ONLY: the PATH LocalFS looks a bare program word up with (None: no identity of bare words)
 
 
 _ROOT = contextvars.ContextVar("dw_hook_root", default=None)     # LocalFS: (project root, samefile.Secrets, {credential: link}) of one event
@@ -106,6 +107,10 @@ class LocalFS:
         from . import archlinks
         return archlinks.answer(p)
 
+    def sample(self, p):
+        from . import samplefile                         # r0335: a template of .env (bashparse.sample_clean)
+        return samplefile.answer(p)
+
     def isdir(self, p):
         return os.path.isdir(p)
 
@@ -153,6 +158,32 @@ class LocalFS:
         from . import samefile
         try:
             return _other_name(samefile, p, h[0])
+        except Exception:      # noqa: BLE001
+            return None
+
+    def prog_path(self, p):
+        """r0338: the identity of the program file at `p` (progid.ident) on this machine; None = no regular file."""
+        from . import progid
+        h = _ROOT.get()
+        try:
+            return progid.answer_path(p, h[0] if h is not None else None, self.home())
+        except Exception:      # noqa: BLE001  no fact: judged by the name
+            return None
+
+    def word_unlooked(self, w):
+        return False
+
+    def words_known(self):
+        return bool(LOCAL_PROG_PATH)                     # r0338: may prog_word answer at all (a cheap gate for the parser's loop)
+
+    def prog_word(self, w):
+        """r0338: the identity of the program a bare word runs; only with the PATH tests / the harness set (LOCAL_PROG_PATH)."""
+        if not LOCAL_PROG_PATH:
+            return None
+        from . import progid
+        h = _ROOT.get()
+        try:
+            return progid.answer_word(w, LOCAL_PROG_PATH, h[0] if h is not None else None, self.home())
         except Exception:      # noqa: BLE001
             return None
 
@@ -211,9 +242,12 @@ class FactsFS:
         self.refs = fs.get("gitref") if isinstance(fs.get("gitref"), dict) else None     # None: an older hook, which cannot answer
         self.same = fs.get("samefile") if isinstance(fs.get("samefile"), dict) else {}     # 0.2.73 (N13)
         self.arch = fs.get("archive") if isinstance(fs.get("archive"), dict) else None     # None: a hook older than 0.2.49 (never asked)
+        self.smp = fs.get("sample") if isinstance(fs.get("sample"), dict) else None       # r0335: None = an older hook (never asked)
         self.shad = fs.get("shadow") if isinstance(fs.get("shadow"), dict) else None       # 0.2.90: None: a hook older than 0.2.58 (never asked)
+        pg = facts.get("prog")                           # r0338: the identity of the line's programs (progid.fact); None = an older hook
+        self.prog = pg if isinstance(pg, dict) and isinstance(pg.get("w"), dict) and isinstance(pg.get("p"), dict) else None
         self.links = {}                                  # {credential file: the path of the call that is a hard link of it}
-        self.missing = {"realpath": [], "isdir": [], "exists": [], "gitref": [], "archive": [], "shadow": []}
+        self.missing = {"realpath": [], "isdir": [], "exists": [], "gitref": [], "archive": [], "shadow": [], "sample": [], "prog": []}
         self.scan_root = None
         self.n = 0
 
@@ -277,6 +311,19 @@ class FactsFS:
             self.missing["archive"].append(p)
         return None
 
+    def sample(self, p):
+        """r0335: the hook's answer on the text of a .env template: True / False / None; an older hook (no `sample` in its facts) is
+        never asked (None: judged as a credential, as before)."""
+        if self.smp is None or not isinstance(p, str):
+            return None
+        if p in self.smp:
+            v = self.smp[p]
+            return v if isinstance(v, bool) else None
+        if not _made_up(p) and p not in self.missing["sample"]:
+            self.n += 1
+            self.missing["sample"].append(p)
+        return None
+
     def shadow(self, p):
         """0.2.90: the hook's shadow copy of `p` (taken before the call runs): {"copy", "sha256", "size"} | {"absent": true} | {"failed"};
         an older hook (no `shadow` in its facts) cannot copy: {"failed": "hook"} (the write is asked, never refused RESOURCE for that)."""
@@ -316,6 +363,37 @@ class FactsFS:
 
     def hardlink_name(self, p):
         return None                                      # r0323: the hook sends no inode fact for a program: judged as the agent's own
+
+    def _prog(self, kind, key, k):
+        if self.prog is None or not isinstance(key, str):
+            return None                                  # an older hook: never asked (judged by the name, as before)
+        d = self.prog[kind]
+        if key in d:
+            v = d[key]
+            return v if isinstance(v, dict) else None
+        if kind == "w":
+            return None                                  # a word the hook did not look up is no word of the line (`xargs` input, a merged name)
+        if not _made_up(key) and key not in self.missing[k] and len(self.missing[k]) < 16:
+            self.n += 1
+            self.missing[k].append(key)
+        return None
+
+    def words_known(self):
+        return self.prog is not None and bool(self.prog["w"])
+
+    def word_unlooked(self, w):
+        """r0338: did the hook stop looking words up before `w` (a line with more words than progid.MAX_WORDS)?"""
+        from . import progid
+        return self.prog is not None and w not in self.prog["w"] and len(self.prog["w"]) >= progid.MAX_WORDS
+
+    def prog_path(self, p):
+        """r0338: the hook's identity of the program file at `p` (progid.ident): asked when the hook did not send it."""
+        return self._prog("p", p, "prog")
+
+    def prog_word(self, w):
+        """r0338: the hook's identity of the program the bare word `w` runs (on Claude Code's PATH); never asked: the hook looks up every
+        word of the line it was sent (none when it does not know the PATH)."""
+        return self._prog("w", w, "progw")
 
     def home(self):
         return self.h

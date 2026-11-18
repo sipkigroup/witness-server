@@ -502,7 +502,12 @@ def test_default_form_is_the_0_2_9_list():
                                       "ps", "lsof", "whoami", "id", "git remote", "git tag list", "git stash list", "git stash show", "git config get",
                                       "npm ls", "npm list", "pip list", "pip3 list", "pip freeze", "pip3 freeze", "pip show", "pip3 show", "uv pip", "git check-ignore", "git ls-tree", "git rev-list", "git merge-base", "git show-ref",
                                       "od", "hexdump", "strings", "xxd",      # 0.2.95 (r0265): byte dumps (ISPYTANIE-PERED-LYUDMI-1211 Н4)
+                                      "git init", "xattr",                    # r0325: a repository in the project (_lw_init), attributes read (_xattr_tags)
                                       "--version",
+                                      # r0335: closed read-only forms of programs that read the machine's state (bashparse.STATE_READERS)
+                                      "docker ps", "top -l", "vm_stat", "sysctl read", "scutil --get", "sw_vers", "netstat", "ruff check", "sqlite3 read",
+                                      # r0341: closed forms (printf, hostname, spctl --status, unzip -l, zip, sips)
+                                      "printf", "hostname", "spctl --status", "unzip -l", "zip", "sips",
                                       # 0.2.82: the option "code in Claude Code's strict sandbox" (a reserved entry, mapping.SANDBOXED_CODE)
                                       "(code in the strict sandbox)"], "unlisted": "ask",
                           "sandboxed": "allow"}                  # 0.2.56 (V3): runners only inside a strict Claude Code sandbox

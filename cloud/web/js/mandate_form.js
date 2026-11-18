@@ -102,7 +102,8 @@ export const READONLY_COMMANDS = ['ls', 'pwd', 'cd', 'cat', 'head', 'tail', 'wc'
   'find', 'sed', 'awk', 'jq',
   'ps', 'lsof', 'whoami', 'id', 'git remote', 'git tag list', 'git stash list', 'git stash show', 'git config get', 'npm ls', 'npm list',
   'pip list', 'pip3 list', 'pip freeze', 'pip3 freeze', 'pip show', 'pip3 show', 'uv pip', 'git check-ignore', 'git ls-tree', 'git rev-list', 'git merge-base', 'git show-ref',
-  'od', 'hexdump', 'strings', 'xxd', '--version'];
+  'od', 'hexdump', 'strings', 'xxd', 'git init', 'xattr', '--version',
+  'docker ps', 'top -l', 'vm_stat', 'sysctl read', 'scutil --get', 'sw_vers', 'netstat', 'ruff check', 'sqlite3 read', 'printf', 'hostname', 'spctl --status', 'unzip -l', 'zip', 'sips'];
 
 // 0.2.56 (V3): command.sandboxed of the recommended form: "allow" = test runners (pytest, npm test, make ...) run without a question ONLY while
 // the hook reports a strict Claude Code sandbox for that call (no network, secrets unreadable, no retry outside it); otherwise asked as before.

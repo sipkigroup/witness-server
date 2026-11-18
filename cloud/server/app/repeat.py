@@ -124,7 +124,7 @@ def eligible(ctx, acc, x, action=None):
     if a.get("dangerous") is True or a.get("exec_changed"):
         return "a dangerous command, or one whose executed files changed, is asked every time"
     if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"]:
-        return "it runs a file the agent wrote (shown on this page): approve once"             # r25 (s8 P2)
+        return written_run_words(x["exec_json"])             # r25 (s8 P2); r0345: or a download place
     m = ctx.db.one("SELECT status FROM mandates WHERE id=?", (x["mandate_id"],))
     if m is None or m["status"] != "active":
         return "the mandate of this request is no longer active"
@@ -391,3 +391,14 @@ def listing(ctx, acc):
                     "ended_at": g["ended_at"], "status": status_of(ctx, g, u["n"], now),
                     "ended_files": [p.rsplit("/", 1)[-1] for p in ((_end_note(g) or {}).get("files") or [])][:16]})
     return out
+
+
+def written_run_words(exec_json) -> str:
+    """r0345: why a page that names files to run is approve-once: a file the agent wrote, or one from a download place (actions.download_runs)."""
+    try:
+        wr = json.loads(exec_json).get("written_run") if isinstance(exec_json, str) else None
+        if isinstance(wr, list) and wr and all(isinstance(e, dict) and e.get("zone") for e in wr):
+            return "it runs a file from a download place (temp / Downloads) nobody read in this session: approve once"
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return "it runs a file the agent wrote (shown on this page): approve once"

@@ -55,6 +55,11 @@ def test_rt6_runner_after_risky_write_is_asked(client, owner, tmp_path, allow, c
     if cmd.startswith("at "):
         assert a.line(cmd)[0] == "DENY"           # r0305: `at` hands a job to atd (T1053.002): refused Н4 even before any write
         return
+    if cmd.startswith("zip -T"):
+        assert a.line(cmd)[0] == "ASK"           # r0341: -T/-TT runs a program -> the zip closed form tags [unsure]: asked even before any write
+        a.tool("Write", {"file_path": a.proj + "/f.py", "content": NET + "\n"})
+        assert a.line(cmd)[0] != "ALLOW"
+        return
     assert a.line(cmd)[0] == "ALLOW", "the probe must pass before the write (else it tests nothing)"
     a.tool("Write", {"file_path": a.proj + "/f.py", "content": NET + "\n"})
     v, parts = a.line(cmd)

@@ -22,11 +22,13 @@ This is a TRIPWIRE, not a sandbox: an agent that writes a script and runs it, or
 from __future__ import annotations
 
 import bisect
+import contextvars as _cv_
 import json
 import os
 import posixpath
 import re
 import shlex
+import unicodedata
 from dataclasses import dataclass, field
 
 from . import fs as _fs
@@ -39,7 +41,8 @@ SUBCOMMAND_RE = re.compile(r"[A-Za-z][A-Za-z0-9._:-]{0,63}")
 MAX_HEADS = 32
 DANGER_CATEGORIES = ("rm-rf", "sql-drop", "git-force-push", "git-destroy", "git-config", "agent-config", "pipe-to-shell", "secrets", "disk", "opaque",
                      "persist", "witness", "exit", "write-outside", "net-out", "loopback-write",    # 0.2.90 / 0.2.91: gates G2 / G4 (witness: a run the witness may not watch, asked)
-                     "autostart", "defense", "money")   # r0313 (catalog step 3): the marks r0298 / r0305 emitted outside this list; money (Д3)
+                     "autostart", "defense", "money",   # r0313 (catalog step 3): the marks r0298 / r0305 emitted outside this list; money (Д3)
+                     "witness-off")                     # r0333: the witness itself removed / stopped / replaced (Н3, refused)
 DETAIL_MAX = 160
 MAX_DEPTH = 4
 MAX_NESTED = 128           # 0.2.11: substitutions, `sh -c`, eval, code heredocs of one line: more -> opaque (and no quadratic time)
@@ -102,7 +105,8 @@ FILE_READERS = dict({n: 0 for n in ("cat", "head", "tail", "less", "more", "bat"
                                     "zstd", "tar", "zip", "unzip", "7z", "gpg", "jq", "yq", "iconv", "dos2unix", "truncate", "touch", "mkdir",
                                     "rm", "rmdir", "unlink", "shred", "chmod", "chown", "dd", "open", "xdg-open", "pbcopy", "xclip",
                                     "column", "tree")},   # 0.2.51: column / tree (--fromfile) read the files they name
-                    grep=1, egrep=1, fgrep=1, rg=1, ag=1, ack=1, sed=1, awk=1, gawk=1)
+                    grep=1, egrep=1, fgrep=1, rg=1, ag=1, ack=1, sed=1, awk=1, gawk=1,
+                    sqlite3=0, ruff=1)      # r0335: the database / the checked files (a link of one to a cookie store is a secret read)
 # 0.2.73 (N13, polygon series 9): readers whose plain-name operand (`cat h3.txt`, `curl -d @h3.txt`) is resolved too: a hard link of .env (the
 # hook's fact samefile) or a symlink to it has a plain name. Not these: they show only names / sizes / types or change metadata, no content.
 # N16 0.2.74 (series 10): commands that only look at a file's metadata (its name, size, mode, times, whether it exists) and never print a byte
@@ -208,7 +212,7 @@ def is_agent_config_path(p: str) -> bool:
     return bool(AGENT_CONFIG_PATH.search(p))
 
 # Secrets: file names / directories whose CONTENT is a credential. Matched on path segments, not on substrings of words.
-SECRET_NAME = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|\.envrc|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|\.?credentials(\.json)?|"
+SECRET_NAME = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|\w[\w.-]*\.env|\.envrc|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|\.?credentials(\.json)?|"
                          r"\.vault-token|\.terraformrc|credentials\.tfrc\.json|\.s3cfg|\.boto|\.my\.cnf|\.authinfo(\.gpg)?|rclone\.conf|\.(zsh|bash)_history|[\w.-]+\.ovpn|"   # RT-0.2.55 (+history/ovpn by Deus): common plaintext cred files missing before
                          r"id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|ssh_host_[\w-]+_key|[\w.-]+\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|p8)|secrets?\.(ya?ml|json|toml|env)|"
                          r"Login Data|Cookies|Web Data|logins\.json|key4\.db|cookies\.sqlite|Cookies\.binarycookies|[\w .-]*passwords[\w .-]*\.csv|[\w.-]+\.1pux|"   # r0293: browser stores, password exports
@@ -229,7 +233,8 @@ PERSIST_PATH = re.compile(r"(^|/)(\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc
                           r"Library/LaunchAgents(/.*)?|Library/LaunchDaemons(/.*)?|Library/StartupItems(/.*)?|\.config/autostart/.*|\.config/systemd/user/.*|"
                           r"\.claude/settings(\.local)?\.json|\.claude/hooks(/.*)?|\.claude/plugins(/.*)?|\.claude\.json|\.mcp\.json|"
                           r"\.config/deus-witness(/.*)?|\.deus-witness(/.*)?|Library/Application Support/deus-witness(/.*)?|\.local/share/deus-witness(/.*)?|deus-witness/shadow(/.*)?|"
-                          r"\.ssh/(authorized_keys2?|config|rc|environment)|\.config/git/hooks(/.*)?|\.gitconfig|\.config/git/config|"
+                          r"\.ssh/(authorized_keys2?|config|rc|environment)|\.aws/config|"   # r0345: credential_process runs at every aws call
+                          r"\.config/git/hooks(/.*)?|\.gitconfig|\.config/git/config|"
                           r"(site|dist)-packages/[^/]+\.pth|(site|dist)-packages/(sitecustomize|usercustomize)\.py|"     # r0305: every python runs them at start (T1546.018)
                           r"lib/python[0-9.]*/(sitecustomize|usercustomize)\.py|"
                           r"\.ipython/profile_[^/]+/(startup/[^/]+|ipython_(kernel_)?config\.py)|"     # r0305: IPython runs them at start
@@ -251,8 +256,22 @@ PERSIST_PATH = re.compile(r"(^|/)(\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc
                           r"^(~|\$\{?HOME\}?|(/private)?/var/root|/root|/Users/[^/]+|/home/[^/]+)/(\.tmux\.conf|\.config/tmux/tmux\.conf)$", re.I)
 
 
+# r0328 (Я0 16.11, r1-05 / r2-36): the tmux start-up file is persist in the REAL home of the hook, whatever shape that folder has
+# (/var/home/u, /srv/u, a scratch home under /tmp): one source with the shapes above, not a second list. Set by map_event / classify.
+REAL_HOME = _cv_.ContextVar("dw_bp_real_home", default=None)
+_HOME_START = (".tmux.conf", ".config/tmux/tmux.conf")
+
+
+def _real_home_start(p) -> bool:
+    h = REAL_HOME.get()
+    if not h or not isinstance(p, str) or not p.startswith("/"):
+        return False
+    h, q = canon_path(h), canon_path(p)
+    return bool(h) and h != "/" and any(q == h.rstrip("/") + "/" + t for t in _HOME_START)
+
+
 def is_persist_path(p: str) -> bool:
-    return bool(PERSIST_PATH.search(p))
+    return bool(PERSIST_PATH.search(p)) or _real_home_start(p)
 
 
 # r0298 (decision of Deus 14.11, KLIENT-0.2.76-AUTO.md p.4): a RELATIVE write in an unknown directory (LOST_CWD: `false && cd x` + a line
@@ -616,6 +635,70 @@ def code_net(text: str):
 
 
 _CODE = [0]          # 10.11 (r0260): > 0 while interpreter code is scanned (Command.add / host record the origin of a mark)
+
+# r0331 (ARHIV-RESHENIY-OPUS-1611 §2, the catalogue of forms): what the CONSEQUENCE VECTOR (app/vektor.py, SHADOW) reads of a line besides
+# its Command -- each simple command with the directory it runs in and its stdin, and which marks / heads / hosts came ONLY from the text a
+# remote shell carries (`ssh h 'cmd'`, `ssh h <<EOF`): the vector judges that text as a call of its own on the other machine. Recorded only
+# while hookjudge.judge collects for the vector (vk_begin / vk_end); nothing here is read by a decision and no file-system fact is asked.
+_VK = _cv_.ContextVar("dw_vk_collect", default=None)
+_VK_REMOTE = _cv_.ContextVar("dw_vk_remote", default=False)
+VK_MAX_CMDS = 256
+
+
+def vk_begin():
+    return _VK.set({"cmds": [], "rd": [], "rh": [], "rn": [], "cut": False})
+
+
+def vk_end(tok):
+    v = _VK.get()
+    _VK.reset(tok)
+    return v
+
+
+class _VkRemote:
+    """`with _VkRemote(c, on):` -- the marks / heads / hosts the block adds to `c` came from a remote shell's text (when `on`)."""
+
+    def __init__(self, c, on):
+        self.c, self.on = c, bool(on) and _VK.get() is not None
+
+    def __enter__(self):
+        if self.on:
+            self.tok = _VK_REMOTE.set(True)
+            self.before = (set(self.c.danger), set(self.c.heads), set(self.c.net))
+        return self
+
+    def __exit__(self, *exc):
+        if self.on:
+            _VK_REMOTE.reset(self.tok)
+            v = _VK.get()
+            try:
+                for key, now, was in (("rd", self.c.danger, self.before[0]), ("rh", self.c.heads, self.before[1]), ("rn", self.c.net, self.before[2])):
+                    for x in now:
+                        if x not in was and x not in v[key]:
+                            v[key].append(x)
+            except Exception:      # noqa: BLE001  the record never breaks the parser: a broken record is a cut one (not read)
+                if isinstance(v, dict):
+                    v["cut"] = True
+        return False
+
+
+def _vk_cmd(*a):
+    v = _VK.get()
+    if v is None:
+        return
+    try:
+        _vk_record(v, *a)
+    except Exception:      # noqa: BLE001  the record never breaks the parser: a broken record is a cut one (not read)
+        v["cut"] = True
+
+
+def _vk_record(v, hid, name, argv0, args, here, depth, fed, stdin_file, hd_body, herestr):
+    if len(v["cmds"]) >= VK_MAX_CMDS:
+        v["cut"] = True
+        return
+    v["cmds"].append({"hid": hid, "name": name, "argv0": _unmask(argv0), "args": [_unmask(a) for a in args[:128]], "nargs": len(args),
+                      "here": here, "depth": depth, "remote": bool(_VK_REMOTE.get()), "fed": bool(fed), "stdin_file": bool(stdin_file),
+                      "hd": hd_body[:16384] if isinstance(hd_body, str) else None, "hs": herestr[:4096] if isinstance(herestr, str) else None})
 
 
 def _code_scan(code, c, who, obfuscation=True) -> None:
@@ -1007,6 +1090,9 @@ class Command:
     # RT-0271 0.2.72: repository tops into which the line puts the WORK TREE's text (`git stash` / push / save / create, `git add`,
     # `git commit`): what an unseen risky write left there comes back later through an "own" restore (stash pop, restore, checkout -- f)
     gstore: list = field(default_factory=list)
+    # r0325 (live stand 16.11): directories where an EARLIER plain `git init` of this line makes the repository (_lw_init): for the git
+    # add / commit after it in the same line, that directory is the repository's top inside the project (_lw_repo), as it will be when they run
+    git_inits: list = field(default_factory=list)
     rm_judged: int = 0                            # 0.2.90: deletion calls of interpreter code resolved to a literal path (_code_fs_scan)
     deletes: list = field(default_factory=list)   # 0.2.90: of the writes, the paths the line DELETES (rm -rf build, find -delete, rmtree): no code is written there
     # 10.11 (r0260, law 2 / Р-1011 А): where each danger mark and host came from -- interpreter code (`python3 -c`, `perl -e`, a heredoc
@@ -1017,6 +1103,7 @@ class Command:
     code_h: list = field(default_factory=list)
     plain_h: list = field(default_factory=list)
     code_texts: list = field(default_factory=list)
+    carried: list = field(default_factory=list)   # r0329: texts a carrier was handed that carry an article's command (constitution Н6)
 
     def code_only_marks(self):
         return [d for d in self.danger if d in self.code_d and d not in self.plain_d]
@@ -1132,8 +1219,15 @@ def _program_by_path(a0, name, cwd, home, project, fr):
         if e is None:
             return name
         ap = os.path.normpath(e if os.path.isabs(e) else os.path.join(cwd, e))
+        sys_ = _prog_word(ap)[0]
+        if sys_ != ap:
+            return sys_.rsplit("/", 1)[-1]           # r0334: `~/../../BIN/RM` is /bin/rm (the same law, after ~ and .. are known)
         if fr is not None and ap in (fr.get("progs") or {}):
             tn = fr["progs"][ap]
+        elif _ident_list(_fs.current().prog_path(ap), name):
+            same = _ident_list(_fs.current().prog_path(ap), name)
+            _ident_names(_fs.current().prog_path(ap), name, fr, a0)
+            return same[0]                           # r0338: the file IS a system program (a copy, a hard link)
         else:
             tgt = _abspath(e, cwd, home)
             if isinstance(tgt, str) and os.path.normpath(tgt) == ap:
@@ -1145,7 +1239,9 @@ def _program_by_path(a0, name, cwd, home, project, fr):
             if not isinstance(tgt, str) or os.path.normpath(tgt) == ap:
                 return name
             tgt = os.path.normpath(tgt)
-            tn = os.path.basename(tgt)
+            tn = _gnu(os.path.basename(tgt))             # kand8: /bin/rm -> /usr/bin/gnurm is rm (Ubuntu 26.04)
+            if tn in MULTICALL:
+                return name                              # kand8: `/bin/rm` -> busybox, `./cat` -> coreutils: argv[0] is the program
             if isinstance(project, str) and (tgt == project or tgt.startswith(project.rstrip("/") + "/")) and \
                     (_SCRIPT_EXT.search(tn) or _prog_kind(tn) == _prog_kind(name)):
                 return name           # node_modules/.bin/jest -> ../jest/bin/jest.js is the project's jest (r0323: `./bc` -> ./vendor/bitcoin-cli is not)
@@ -1158,6 +1254,109 @@ def _program_by_path(a0, name, cwd, home, project, fr):
         return tn
     except (OSError, ValueError, TypeError):
         return name
+
+
+# r0338 (SIGNATURY-BAZA-FABLE52-1711 §1 "the lesson of Rm"): a program is the FILE the shell runs, not the word typed. The hook reports, for
+# each word of the line, the file it names or finds on Claude Code's PATH (progid.fact: realpath, inode, zone, and the system programs it
+# is byte for byte). A copy or a hard link of a system program under another name is that program (`./r` copied from rm is rm; `cat` on the
+# PATH being a copy of rm is rm); a bare word whose file is a link into a system directory is the program linked (`head` -> /bin/rm is rm).
+# A file of several names (rm = unlink, the Xcode shim = git, python3, clang ...) is judged as EACH of them (the strictest wins: _classify
+# merges them). An older hook (no fact): judged by the name, as before.
+# Shell builtins are what bash runs for a bare word whatever the PATH holds (`echo`, `kill`, `printf`): not looked up unless a wrapper
+# that execs runs them (env, xargs, nice, sudo ...).
+IDENT_HEADS = 4
+IDENT_MAX_NAMES = 128              # the Xcode shim answers to 78 names (git, python3, clang ...): judged as each
+BASH_BUILTINS = frozenset({".", ":", "[", "alias", "bg", "bind", "break", "builtin", "caller", "cd", "command", "compgen", "complete",
+                           "compopt", "continue", "declare", "dirs", "disown", "echo", "enable", "eval", "exec", "exit", "export", "false",
+                           "fc", "fg", "getopts", "hash", "help", "history", "jobs", "kill", "let", "local", "logout", "mapfile", "popd",
+                           "printf", "pushd", "pwd", "read", "readarray", "readonly", "return", "set", "shift", "shopt", "source",
+                           "suspend", "test", "times", "trap", "true", "type", "typeset", "ulimit", "umask", "unalias", "unset", "wait"})
+
+
+def _ident_list(ident, name):
+    """r0338: -> the names of the system program the file `ident` describes IS (a copy, a hard link: ident["same"]), primary first
+    (the shortest name: rm before unlink, ln before link, grep before fgrep), or None when it is no other program than `name`."""
+    if not isinstance(ident, dict):
+        return None
+    same = sorted({_prog_word(x)[0] for x in ident.get("same") or () if isinstance(x, str) and re.fullmatch(r"[\w.+-]{1,64}", x)},
+                  key=lambda x: (len(x), x))
+    if not same or name in same:
+        return None                                  # `./rm` copied from rm: the name it has is the program it is
+    if MULTICALL & set(same):
+        return None                                  # kand8: a copy of coreutils / busybox runs the program its name (argv[0]) says
+    return same
+
+
+def _ident_names(ident, name, fr, a0) -> bool:
+    """r0338: record in fr["ident"][a0] the names the file is (see _ident_list); True when it is another program than `name`."""
+    same = _ident_list(ident, name)
+    if not same:
+        return False
+    if fr is not None:
+        fr.setdefault("ident", {})[a0] = same
+        fr.setdefault("renamed", []).append((a0, same[0]))
+    return True
+
+
+def _word_names(typed, name, winfo):
+    """r0338: -> (names the bare word runs, primary first | None, the hook's identity of its file | None)."""
+    if name in BASH_BUILTINS and not winfo.get("execs"):
+        return None, None
+    if name in _CASE_KEEP or name in KEYWORDS:
+        return None, None
+    try:
+        ident = _fs.current().prog_word(typed) if isinstance(typed, str) else None
+        if ident is None and typed != name:
+            ident = _fs.current().prog_word(name)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None, None
+    if not isinstance(ident, dict):
+        return None, None
+    same = _ident_list(ident, name)
+    if same:
+        return same, ident
+    real = ident.get("real")
+    if ident.get("link") and ident.get("zone") == "sys" and isinstance(real, str):
+        tn = _prog_word(os.path.basename(real))[0]
+        if tn != name and tn not in MULTICALL and re.fullmatch(r"[\w.+-]{1,64}", tn) and _prog_kind(tn) != _prog_kind(name):
+            return [tn], ident                       # `head` on the PATH is a link to /bin/rm: it is rm
+    return None, ident
+
+
+def _program_by_word(typed, name, fr, winfo, c):
+    """r0338: the program a bare word runs, by the file the hook found for it on the PATH (see IDENT_MAX_NAMES above)."""
+    names, ident = _word_names(typed, name, winfo)
+    if names:
+        if fr is not None:
+            if len(names) > 1:
+                fr.setdefault("ident", {})[typed] = names
+            fr.setdefault("renamed", []).append((typed, names[0]))
+        return names[0]
+    if ident is None:
+        try:
+            if not (name in BASH_BUILTINS and not winfo.get("execs")) and _fs.current().word_unlooked(typed if isinstance(typed, str) else name):
+                c.opaque = True                      # a padded line: the hook looked up its first words only; this program is not known
+                c.add("opaque", "%s: the line has more words than the program files looked up" % name)
+        except (AttributeError, TypeError):
+            pass
+        return name
+    return name                                     # (its zone -- "tmp" too -- is the vector's fact, r0331: no verdict of its own here)
+
+
+def judged_names(word, cwd, home, project):
+    """r0338: -> the names of the program `word` (a raw word at the place of a command) runs, as _classify judges it: case folded, a
+    path by the file it is, a bare word by the file the hook found on the PATH. Used where a raw word is compared with a list (PRINTERS)."""
+    w = _prog_word(word)[0] if isinstance(word, str) else word
+    if not isinstance(w, str) or not w:
+        return [w]
+    if "/" in w:
+        e = _expand(w, cwd, home) if isinstance(cwd, str) else None
+        if e is None or re.search(r"[$`*?\[]", w):
+            return [w]
+        ap = os.path.normpath(e if os.path.isabs(e) else os.path.join(cwd, e))
+        return _ident_list(_fs.current().prog_path(ap), os.path.basename(w)) or [_program_by_path(w, os.path.basename(w), cwd, home, project, None)]
+    names, _i = _word_names(w, w, {})
+    return names or [w]
 
 
 def _abspath(p: str, cwd: str, home: str) -> str:
@@ -1177,6 +1376,25 @@ def _abspath(p: str, cwd: str, home: str) -> str:
 
 def is_secret_path(p: str) -> bool:
     return bool(SECRET_NAME.search(p) or SECRET_DIR.search(p))
+
+
+# r0335 (live run nabor-1 17.11, S034): a SAMPLE of `.env` (.env.example / .env.sample / .env.template) is a template of names, not a
+# credential -- but only when the file itself (not a link to `.env`, not a hard link of it) has been looked at by the hook and holds no
+# value that looks like one (samplefile.answer; the fact `sample`). An older hook, a link, a value, an unreadable file: a credential, as
+# before. `NAME.env` (`prod.env`, `primanka.env`) is a credential file too (SECRET_NAME, r0335); `.env.example.bak` stays one.
+SAMPLE_NAME = re.compile(r"(^|/)\.env\.(example|sample|template)$", re.I)
+
+
+def sample_clean(p) -> bool:
+    if not isinstance(p, str) or not SAMPLE_NAME.search(p):
+        return False
+    try:
+        r = _fs.current().realpath(p)
+        if not isinstance(r, str) or not SAMPLE_NAME.search(r) or SECRET_DIR.search(r):
+            return False
+        return _fs.current().sample(r) is True
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 KNOWN_VAR = re.compile(r"\$(?:\{(HOME|PWD)\}|(HOME|PWD)(?![A-Za-z0-9_]))")
@@ -1282,6 +1500,11 @@ class _Unsure(str):
         return o
 
 
+_NORM_SPECIAL_CH = frozenset("\\'\"#<>$(){}[]`\n")
+_NORM_SPECIAL = re.compile(r"[\\'\"#<>$(){}\[\]`\n]")
+_NORM_QUOTED = {"'": re.compile(r"[\\']"), '"': re.compile(r'[\\"]')}
+
+
 def _normalize(cmd: str):
     """Quote-aware pass: an unquoted newline becomes ";", unquoted comments are dropped, heredoc bodies are cut out.
     -> (one-line command, [(line that opened the heredoc, body, delimiter quoted?)], balanced quotes?, why unsure or None)
@@ -1299,6 +1522,14 @@ def _normalize(cmd: str):
     stack = [["R", False, 0]]
     while i < n:
         ch = cmd[i]
+        if q is None and ch not in _NORM_SPECIAL_CH or q is not None and ch != q and ch != "\\":
+            # 17.11 (kand3, test_0217 longest_line): a run of characters no branch below looks at is copied as one slice -- the same
+            # output as the character-by-character walk (each of them only reached `out.append(ch)`), without a dozen startswith each
+            m = (_NORM_SPECIAL if q is None else _NORM_QUOTED[q]).search(cmd, i + 1)
+            j = m.start() if m else n
+            out.append(cmd[i:j])
+            i = j
+            continue
         if q is None:
             top = stack[-1]
             kind, k = top[0], 0
@@ -1457,10 +1688,16 @@ def _mask(line: str) -> str:
     return "".join(out)
 
 
+def _ansi_c(line: str) -> str:
+    """r0338: `$'\\x72m'` is `'rm'`, `$"rm"` is `"rm"` -- progid.ansi_c (one copy for the hook and the witness)."""
+    from . import progid
+    return progid.ansi_c(line, _UNMASK)
+
+
 def _tokens(cmd: str):
     if any(ch in _UNMASK for ch in map(ord, cmd)):
         raise ValueError("a private-use character U+E000..U+E00B")      # it would read as an operator character after _unmask
-    lx = shlex.shlex(_mask(cmd), posix=True, punctuation_chars=";&|<>(){}")
+    lx = shlex.shlex(_mask(_ansi_c(cmd)), posix=True, punctuation_chars=";&|<>(){}")
     lx.whitespace_split = True
     lx.commenters = ""
     return _relex(list(lx))
@@ -1474,12 +1711,18 @@ def _relex(toks):
         if t and set(t) <= PUNCT:
             k = 0
             while k < len(t):
-                op = next(o for o in OPS if t.startswith(o, k))
+                m = _OPS_RX.match(t, k)          # 17.11 (cost): the first of OPS (longest first) at k, as next(o for o in OPS ...) was
+                if m is None:
+                    raise StopIteration
+                op = m.group(0)
                 out.append(op)
                 k += len(op)
         else:
             out.append(t)
     return out
+
+
+_OPS_RX = re.compile("|".join(map(re.escape, OPS)))
 
 
 FD_VAR = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}(?=[<>])")
@@ -1564,6 +1807,10 @@ def _substitute(line, c, cwd, home, depth, project, data=False):
             _merge(c, classify(line[i + 2:j], cwd, home, depth + 1, project, _budget=c.budget))
             if c.budget[0] < 0:
                 return None
+            if ch == "<" and _FRAMES:
+                pt_ = _printer_text(line[i + 2:j], cwd, home, project)
+                if pt_ is not None:                    # r0329: `sh <(echo 'X')`: the text the reader of /dev/fd/63 gets (bashparse._carried)
+                    _FRAMES[-1].setdefault("psub", []).append(pt_)
             out.append("$__SUB__" if ch == "$" else " /dev/fd/63")
             i = j + 1
             continue
@@ -1800,14 +2047,118 @@ def _unwrap_one(name, argv, i):
     return i, issues, outs, seen
 
 
-def _unwrap(argv):
+# r0334 (закон регистра имени программы). macOS (APFS/HFS+ по умолчанию) ищет файл без учёта регистра и формы Unicode: `Rm`, `RM`,
+# `/BIN/RM`, `ſudo` (U+017F) запускают rm / sudo. Имя программы (слово на месте команды и после каждой обёртки) приводится к форме,
+# которую сравнивает такая ФС (NFC + casefold), ЗДЕСЬ, в одном месте (_unwrap), до любой классификации: все правила дальше видят `rm`.
+# Не приводятся: слова с подстановкой ($, `, глоб); путь вне системных каталогов (файл проекта `./Run.sh` сравнивается с записанным);
+# встроенные команды оболочки, меняющие саму оболочку (`Cd` / `Export` / `Eval` -- это внешний /usr/bin/cd или «нет такой команды», не
+# встроенная) и ключевые слова. Имя с не-латинскими буквами, которое не сводится к ASCII (`rм` кириллицей), не приводится и непрозрачно.
+_CASE_KEEP = {"cd", "pushd", "popd", "dirs", "export", "declare", "typeset", "local", "readonly", "unset", "set", "shopt", "enable",
+              "alias", "unalias", "source", ".", "eval", "exec", "builtin", "trap", "shift", "read", "mapfile", "readarray", "hash",
+              "umask", "ulimit", "let", "return", "exit", "logout", "break", "continue", "wait", "jobs", "fg", "bg", "disown", "suspend",
+              "getopts", "times", "type", "history", "fc", "compgen", "complete", "compopt", "caller", "function", "case", "esac", "for",
+              "select", "in", "fi", "done", "coproc", "if", "then", "else", "elif", "do", "while", "until"}
+# the rules' own spelling of a program whose canonical name is not lower case (`rscript` / `RSCRIPT` run Rscript, `r` runs R)
+_CASE_CANON = {n.casefold(): n for n in _runners.SCRIPT_INTERPRETERS if n != n.casefold()}
+# 18.11 (kand8; the Linux run of the open server, Ubuntu 26.04): GNU coreutils there are installed as gnu<name> (/usr/bin/gnurm) and the
+# distribution links the names to them (/usr/bin/rm -> gnurm) or to the uutils multi-call binary (/usr/bin/cat ->
+# /usr/lib/cargo/bin/coreutils/cat, a hard link of /usr/bin/coreutils). Law: `gnurm` IS rm (the same program, another name), and a
+# multi-call binary (coreutils, busybox, toybox) runs the program its argv[0] names -- the word typed, not the file's name. Before:
+# `rm -rf ~` was judged as "gnurm" (an unknown program) and `cat a.txt` as "coreutils" on that system.
+GNU_COREUTILS = frozenset(
+    "arch b2sum base32 base64 basename basenc cat chcon chgrp chmod chown cksum comm cp csplit cut date dd df dir dircolors dirname du "
+    "echo env expand expr factor false fmt fold groups head hostid id install join link ln logname ls md5sum mkdir mkfifo mknod mktemp mv "
+    "nice nl nohup nproc numfmt od paste pathchk pinky pr printenv printf ptx pwd readlink realpath rm rmdir runcon seq sha1sum sha224sum "
+    "sha256sum sha384sum sha512sum shred shuf sleep sort split stat stdbuf stty sum sync tac tail tee test timeout touch tr true truncate "
+    "tsort tty uname unexpand uniq unlink users vdir wc who whoami yes".split())
+MULTICALL = frozenset({"coreutils", "busybox", "toybox"})
+
+
+def _gnu(n):
+    """`gnurm` -> `rm` (GNU coreutils under the gnu prefix, Ubuntu 26.04); any other name stays."""
+    return n[3:] if isinstance(n, str) and n[:3] == "gnu" and n[3:] in GNU_COREUTILS else n
+
+
+_SYS_BIN_DIR = re.compile(r"/(?:usr/(?:local/)?(?:s?bin|libexec)|s?bin|opt/homebrew/s?bin|opt/local/s?bin)")
+
+
+def _fs_fold(w: str) -> str:
+    return unicodedata.normalize("NFC", w).casefold()
+
+
+def _prog_word(w: str):
+    """-> (the program word as the case-insensitive fs finds it, why it is opaque or None). See _CASE_KEEP above."""
+    if w and "\ue00b" in w and w.strip("\ue00b"):
+        w = w.replace("\ue00b", "")                 # r0338: an empty quote inside a word (`t""clsh`) adds nothing: tclsh
+    if w and "/" not in w and w.isascii() and w == w.lower():
+        return _gnu(_CASE_CANON.get(w, w)), None   # 17.11 (kand3, cost): a lowercase Latin name folds to itself -- the same answer as below
+    if not w or re.search(r"[$`*?\[\]{}]", w):
+        return w, None
+    if "/" in w:
+        d, _, b = w.rpartition("/")
+        fd = _fs_fold(d)
+        if fd.startswith("/"):
+            fd = re.sub(r"^/+", "/", posixpath.normpath(fd))     # `/bin/../BIN/RM`, `/usr//BIN/rm`, `//BIN/RM`
+        if _SYS_BIN_DIR.fullmatch(fd):
+            fb = _fs_fold(b)
+            if fb.isascii():
+                return fd + "/" + _gnu(_CASE_CANON.get(fb, fb)), None
+            return w, "a program name with letters outside Latin (looks like another program)"
+        return w, None
+    f = _fs_fold(w)
+    if w in _CASE_CANON.values():
+        return w, None
+    if f == w:
+        return (_gnu(_CASE_CANON.get(w, w)), None) if w.isascii() or not any(ch.isalpha() and not ch.isascii() for ch in w) else \
+            (w, "a program name with letters outside Latin (looks like another program)")
+    if f in _CASE_KEEP:
+        return w, None
+    if not f.isascii():
+        return w, "a program name with letters outside Latin (looks like another program)"
+    return _gnu(_CASE_CANON.get(f, f)), None
+
+
+def _wrapper_by_file(a, where):
+    """r0338: -> the wrapper (env, xargs, sudo, nohup ...) the word `a` at the place of a command runs by its FILE (`./H_xargs` a hard
+    link of xargs, `zzxargs` on the PATH a copy of it, `./L_env` a link to env), or None. `where` = (cwd, home, project) of _classify."""
+    try:
+        if "/" in a:
+            if re.search(r"[$`*?\[]", a):
+                return None
+            cwd, home, project = where
+            nm = _program_by_path(a, os.path.basename(a), cwd, home, project, None)
+            e = _expand(a, cwd, home)
+            ap = os.path.normpath(e if os.path.isabs(e) else os.path.join(cwd, e)) if e is not None else None
+            names = _ident_list(_fs.current().prog_path(ap), os.path.basename(a)) if ap else None
+            cands = (names or []) + [nm]
+        else:
+            names, _i = _word_names(a, a, {"execs": True})
+            cands = names or []
+        return next((_runners.canon(x) for x in cands if _runners.canon(x) in WRAP_SYNTAX or x in ALWAYS_ASK), None)
+    except Exception:      # noqa: BLE001  no fact: the word as written
+        return None
+
+
+def _unwrap(argv, where=None):
     """Drop VAR=value assignments, reserved words and wrappers (env, timeout 5, nice -n 5, time -o F, xargs ...), each read with its own
     option syntax (WRAP_SYNTAX). -> (argv of the command, info): info = {"xargs": bool, "issues": [why the line is opaque],
     "outs": [files a wrapper writes], "tags": [variant tags], "env": an env wrapper}."""
     info = {"xargs": False, "issues": [], "outs": [], "tags": [], "env": False}
+    argv = list(argv)
     i = 0
     while i < len(argv):
         a = argv[i]
+        if a not in KEYWORDS and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", a):
+            info["typed"] = a                        # the word as typed: the hook is asked about that path (`/BIN/RM`), never another
+            a, why = _prog_word(a)                   # r0334: the name the case-insensitive fs runs (`Rm` = rm), before any rule
+            argv[i] = a
+            if why and why not in info["issues"]:
+                info["issues"].append(why)
+            if where is not None and os.path.basename(a) not in WRAP_SYNTAX and os.path.basename(a) not in ALWAYS_ASK and \
+                    not ("/" in a and _SYS_BIN_DIR.fullmatch(a.rsplit("/", 1)[0] or "/")):
+                wf = _wrapper_by_file(info["typed"], where)      # r0338: `./H_xargs git` is xargs git (a wrapper known by its file)
+                if wf is not None:
+                    a = argv[i] = wf
         base = os.path.basename(a)
         if _runners.canon(base) in WRAP_SYNTAX:
             base = _runners.canon(base)              # RT7: gtimeout / gnice / genv / gxargs (Homebrew coreutils) are the same wrappers
@@ -1819,6 +2170,8 @@ def _unwrap(argv):
             info["issues"].append("%s: runs another program as it decides (asked every time)" % ALWAYS_ASK[base])
             break                                    # 0.2.52: strace / ltrace / proxychains / torsocks: not stripped, the head is the tracer
         elif base in WRAP_SYNTAX:
+            if base not in ("time", "command", "builtin", "watch"):
+                info["execs"] = True                 # r0338: the command after it is looked up on the PATH (never a shell builtin)
             if base == "xargs":
                 info["xargs"] = True
             if base == "env":
@@ -1877,6 +2230,7 @@ def _strip_prefix(argv):
 LW_CMDS = ("mkdir", "touch", "cp", "mv", "ln", "chmod", "rm", "rmdir")
 LW_GIT = ("add", "commit", "checkout", "switch", "restore", "mv", "rm")
 LW_LIST = list(LW_CMDS) + ["git " + s for s in LW_GIT]
+LW_GIT_INIT = "git init"           # r0325: listed after the byte dumps (mapping.DEFAULT_SAFE_COMMANDS), judged by the same walk (_lw_init)
 F, V, O = "flag", "value", "optional"
 # short flags (no value), short options with a value, long options {name: kind}; only what GNU and BSD read alike
 LW_SPECS = {
@@ -1912,6 +2266,9 @@ LW_GIT_SPECS = {
     "mv": ("vnfk", "", "", dict(_GQ, **{"--verbose": F, "--dry-run": F, "--force": F, "--sparse": F})),
     "rm": ("qnrf", "", "", dict(_GQ, **{"--cached": F, "--dry-run": F, "--ignore-unmatch": F, "--sparse": F, "--force": F, "--recursive": F,
            "--pathspec-from-file": V})),
+    # r0325: git-init(1) 2.54; --bare / --separate-git-dir / --template / --shared are read so that they are tagged (_lw_init), never plain
+    "init": ("q", "b", "", dict(_GQ, **{"--initial-branch": V, "--object-format": V, "--ref-format": V, "--bare": F, "--template": V,
+             "--separate-git-dir": V, "--shared": O})),
 }
 LW_GIT_UNSURE = {"-i", "-p", "-e", "--interactive", "--patch", "--edit", "--pathspec-from-file"}
 TEMP_IN = re.compile(r"^(/private)?/(tmp|var/tmp)/.|^(/private)?/var/folders/[^/]+/[^/]+/T/.")
@@ -2253,6 +2610,9 @@ def _lw_git(args, lw):
     if i >= len(args):
         return
     sub, rest = args[i], args[i + 1:]
+    if sub == "init":
+        _lw_init(rest, here, lw)
+        return
     top = _lw_repo(here, lw)
     sf, sv, so, lo = LW_GIT_SPECS[sub]
     dd = "--" in rest
@@ -2346,6 +2706,87 @@ def _lw_git(args, lw):
             lw.write(dreal)
 
 
+# r0325 (live stand 16.11: "git init, ls, git add [outside], git commit [outside]" asked for a new project): `git init` makes a repository
+# whose every file is in `<dir>/.git`, inside the project: a local, reversible form like `mkdir`. Plain only when the directory lies in the
+# project (its root included) or a temp directory, at most one operand, and none of the forms that put git's files or hooks elsewhere or
+# change who may write: --bare (git's files land in the directory itself), --separate-git-dir (outside), --template (hooks copied in:
+# constitution Н3 refuses it anyway), --shared (permissions). A `.git` FILE there (a pointer elsewhere) -> outside. The hooks git copies
+# from its own installation are `*.sample` files git never runs; init.templateDir set by the person stays theirs (the agent's write of it
+# is Н3). Re-initialising an existing repository rewrites no hook and no remote.
+LW_INIT_TAGGED = {"--bare", "--separate-git-dir", "--template", "--shared"}
+
+
+def _lw_init(rest, here, lw):
+    sf, sv, so, lo = LW_GIT_SPECS["init"]
+    opts, ops, why = _lw_opts(rest, sf, sv, lo, permute=True, short_o=so)
+    if why or len(ops) > 1 or {k for k, _ in opts} & LW_INIT_TAGGED:
+        lw.tag("unsure")
+        return
+    r = lw.path(ops[0] if ops else ".", here=here, role="read")
+    if r is None or lw.tags:
+        return                                       # tagged already: no fact asked about a place outside the project
+    g = os.path.join(r, ".git")
+    if _fs.current().exists(g) and not _fs.current().isdir(g):
+        lw.tag("outside")
+    if not lw.tags and r not in lw.c.git_inits:
+        lw.c.git_inits.append(r)
+
+
+# r0325 (live stand 16.11: `xattr -l file` of the project was asked): xattr(1) on macOS READS with -l / -p NAME / -r / -s / -v / -x (and no
+# option: the names); -w / -d / -c WRITE (the Н10 quarantine removal is refused by the constitution whatever the tags say). The plain form
+# ("xattr" of the recommended list) is the reading one whose every file lies in the project or a temp directory and is not protected;
+# a write -> [write], any other option (a long one, an unknown letter) or no file -> [unsure], a file elsewhere -> [outside].
+XATTR_READ_FLAGS = set("lrsvxp")
+
+
+def _xattr_tags(args, here, home, project, c) -> list:
+    lw = _LW(here, home, project, c)
+    if project is None:
+        lw.tag("outside")
+    fl, ops, end = set(), [], False
+    for a in args:
+        if not end and a == "--":
+            end = True
+        elif not end and a.startswith("-") and a != "-":
+            fl |= set(a[1:]) if not a.startswith("--") else {"?"}
+        else:
+            ops.append(a)
+    if fl & set("wdc"):
+        lw.tag("write")
+    if fl - XATTR_READ_FLAGS - set("wdc"):
+        lw.tag("unsure")
+    files = ops[1:] if "p" in fl else ops
+    if not files:
+        lw.tag("unsure")
+    for f in files:
+        lw.path(f, role="read")
+    return lw.tags
+
+
+# r0325 (live stand 16.11: "what starts when my Mac starts" was refused FORBIDDEN_AUTOSTART with no question). Law: the article forbids
+# CHANGING what starts at log-in; READING the list changes nothing. A System Events script about login items is a read only when it is
+# given in -e texts (a script file's text is not seen), names no AppleScript verb that changes an element (make, delete, set, move,
+# duplicate, remove, add, save, open, launch, run, do shell script), and carries no raw event code («...»). A read is no `persist` mark:
+# osascript stays an unlisted program (asked); any other form keeps the mark and the article.
+_OSA_WRITE = re.compile(r"\b(make|delete|set|move|duplicate|remove|add|save|open|launch|run|do\s+shell\s+script|copy|put|write|create|"
+                        r"push|unshift|splice)\b|«|<<|\\u00ab", re.I)
+
+
+def _osa_login_read(args) -> bool:
+    texts, k = [], 0
+    while k < len(args):
+        a = args[k]
+        if a == "-e" and k + 1 < len(args):
+            texts.append(args[k + 1])
+            k += 2
+            continue
+        if a in ("-s",) and k + 1 < len(args):
+            k += 2
+            continue
+        return False                                 # a script file, -l JavaScript, an argument list: not read here
+    return bool(texts) and not any(_OSA_WRITE.search(t) for t in texts)
+
+
 def _lw_repo(here, lw):
     """The repository git works on must have its top inside the project, with `.git` a directory there (a `.git` file points to a git directory
     elsewhere: a worktree or a submodule, where git writes outside the project). -> that top, or None (tagged)."""
@@ -2361,6 +2802,8 @@ def _lw_repo(here, lw):
                 lw.tag("outside")
                 return None
             return d
+        if d in getattr(lw.c, "git_inits", ()):
+            return d                                 # r0325: a plain `git init` earlier in this line makes it the repository (_lw_init)
         if d == pr:
             break
         d = os.path.dirname(d)
@@ -3172,6 +3615,35 @@ def _npx_local(pkg: str, here: str) -> bool:
         d = up
 
 
+# r0335 (live run 17.11, S076-like): `for f in app.py src/main.py; do cat "$f"; done` was "opaque: path from expansion" (a dangerous
+# question) -- the 0.2.90 rule above substitutes only plain names of one directory. A loop over relative paths with sub-directories is
+# read the same way (the first path stands for the loop variable) only when EVERY word is a path of the same kind, checked one by one:
+# literal (no $ ` glob ~ \\), relative, no `..`, no component starting with a dot (.git, .claude, .ssh, .env ...), not a credential, not a
+# place that runs later (persist / autostart / git hooks / agent config / Makefile-like), and -- through the hook's own realpath -- a
+# file inside the project (a link to ~/.ssh/id_rsa or out of the project is not alike). Any word that fails: unknown as before (opaque).
+_LOOP_PATH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+@-]*(?:/[A-Za-z0-9_][A-Za-z0-9_.+@-]*)+")
+
+
+def _loop_paths_alike(words, here, home, project) -> bool:
+    if project is None or not words or len(words) > 64 or not any("/" in str(w) for w in words):
+        return False
+    for w in words:
+        w = str(w)
+        if not (_LOOP_PATH.fullmatch(w) or re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", w)) or ".." in w.split("/"):
+            return False
+        a = os.path.normpath(os.path.join(here, w))
+        if is_secret_path(w) or is_secret_path(a) or is_persist_path(a) or is_agent_config_path(a) or is_git_exec_path(a) \
+                or is_later_run_path(a) or is_autostart_tail(w):
+            return False
+        try:
+            r = _fs.current().realpath(a)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(r, str) or not _in_project(r, project) or is_secret_path(r) or is_persist_path(r) or is_later_run_path(r):
+            return False
+    return True
+
+
 def _in_project(p: str, project: str) -> bool:
     return p == project or p.startswith(project.rstrip("/") + "/")
 
@@ -3204,23 +3676,104 @@ def classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proje
                     **({"progs": dict(_par["progs"])} if _par.get("progs") else {})})
     try:
         c = _classify(cmd, cwd, home, _depth, project, _budget)
+        _witness_line(cmd, c, home or _fs.current().home(), project)     # r0333: the witness removed / stopped (Н3), line-level forms
+        if c.net and isinstance(cmd, str) and _NET_SAVE.search(cmd):
+            _net_saves(cmd, cwd, home, c)                  # r0345: inline code that saves a download to a named file
         rn = _FRAMES[-1].get("renamed")
-        if rn and isinstance(cmd, str):
+        cw = _FRAMES[-1].get("cmdwords")
+        al = None
+        if isinstance(cmd, str) and (rn or (cw and not cw <= set(_RAW_WORD.split(cmd))) or _SYS_PATH_WORD.search(cmd) or _QUOTED.search(cmd)):
+            # r0338 (one form before any comparison): the raw-text scans read the line with every program word in the form the parser
+            # judged it -- quotes out, case folded, ANSI-C decoded, a link / copy under the program it is (`wge""t .. | bash`,
+            # `sh <(ECHO ..)`, `curl .. | sudo s''h`); only when a program word is not written in that form
+            al = _canon_line(cmd, dict(rn or ()))
+        if al is None and rn and isinstance(cmd, str):
             # r0319 (Б1): the raw-text scans (a download piped into a shell, Н6) read the line with each linked program under its own
             # name: `ln -s /usr/bin/curl ./c && ./c -fsSL https://x/i.sh | sh` is `curl -fsSL ... | sh`
             al = cmd
             for a0, nm in rn:
                 al = re.sub(r"(?<![\w./~-])%s(?=\s|$|[;&|)])" % re.escape(a0), nm, al)
+        if al is not None:
             if al != cmd:
                 d_ = Command()
                 _raw_scan(al, d_)
-                for x in d_.danger:
-                    if x not in c.danger:
-                        c.danger.append(x)
-                c.alias_line = al
+                new_ = [x for x in d_.danger if x not in c.danger]
+                c.danger.extend(new_)
+                if new_ or rn:
+                    c.alias_line = al                  # r0338: kept (constitution Н6 reads it) only where it shows what the line hides
         return c
     finally:
         _FRAMES.pop()
+
+
+_RAW_WORD = re.compile(r"[\s;&|()<>{}`]+")
+_CMD_NAME = re.compile(r"[A-Za-z0-9_][\w.+-]{0,63}")
+_QUOTED = re.compile(r"""['"\\]""")
+_SYS_PATH_WORD = re.compile(r"(?i)/s?bin/")
+_CANON_OPS = frozenset({";", "&", "&&", "||", "|", "|&", "(", "{", ";;", ";&", ";;&"})
+
+
+def _sys_name(w):
+    """`/usr/bin/sudo` is sudo (a program of a system bin directory is its name); any other path keeps its spelling"""
+    if "/" in w and _SYS_BIN_DIR.fullmatch(w.rsplit("/", 1)[0] or "/"):
+        return w.rsplit("/", 1)[1]
+    return w
+
+
+def _canon_line(cmd, renamed):
+    """r0338: the line re-written from its words with each program word in its judged form (see classify); None when it cannot be."""
+    try:
+        toks = _tokens(cmd)
+    except (ValueError, StopIteration):
+        return None
+    if "<<" in toks or len(toks) > 4096:
+        return None                                    # a here-document: its body is no line of words
+    out, seg, changed = [], [], []
+    raw = set(_RAW_WORD.split(cmd))
+
+    def flush():
+        if not seg:
+            return
+        real, j = [], 0                                # the words of the command, its redirections (an operator and its word) aside
+        while j < len(seg):
+            if seg[j] in OPS:
+                j += 2
+                continue
+            real.append(j)
+            j += 1
+        rest, _info = _unwrap([seg[x] for x in real])
+        k = len(real) - len(rest)
+        pre, head = set(real[:k]), real[k] if rest else None
+        for j, w in enumerate(seg):
+            if j in pre:
+                n_ = w if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", w) else _sys_name(_prog_word(w)[0])
+            elif j == head:
+                bt = w.startswith("`")
+                w0 = w[1:] if bt else w
+                n_ = ("`" if bt else "") + (renamed.get(w0) or _sys_name(_prog_word(w0)[0]))
+            else:
+                n_ = w
+            if n_ != w or ((j == head or j in pre) and n_ not in raw and not _RAW_WORD.search(n_) and "=" not in n_):
+                changed.append(w)                      # a program word judged in a form the line does not show (`wge""t` is wget)
+            out.append(n_)
+        seg.clear()
+    for t in toks:
+        if t in _CANON_OPS or t in (")", "}"):
+            flush()
+            out.append(t)
+        else:
+            seg.append(t)
+    flush()
+    if not changed:
+        return None                                    # every program word is written as judged: the line itself is the canonical one
+    words = []
+    for w in out:
+        u = _unmask(w)
+        if w in OPS or re.search(r"[$`]", u) or not re.search(r"[^\w@%+=:,./~-]", u):
+            words.append(u)
+        else:
+            words.append(shlex.quote(u))
+    return " ".join(words)
 
 
 def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, project: str | None = None, _budget=None) -> Command:
@@ -3268,7 +3821,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
     for head, body, quoted in docs:
         hr = heredoc_reader(head.strip())              # 29.10: == HEREDOC_READER.search(...).group(4), linear
         if hr and hr in SHELLS | {"ssh", "eval", "source", "."}:   # `bash <<EOF`, `ssh host <<EOF`: the body is a shell line
-            _merge(c, classify(body, cwd, home, _depth + 1, project, _budget=c.budget))
+            with _VkRemote(c, hr == "ssh"):                # r0331: the vector judges an ssh body on its machine (decides nothing)
+                _merge(c, classify(body, cwd, home, _depth + 1, project, _budget=c.budget))
         elif hr:                                           # `python - <<EOF`: interpreter code (0.2.90: it was parsed as a shell line
             _code_scan(body, c, hr)                        # before -> "unparsable" on nearly every python heredoc of the owner); its file
                                                            # consequences are scanned in the loop below, with the command's operands
@@ -3309,6 +3863,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
         fed, prev_out = (prev_out if before in ("|", "|&") else None), None
         writes_before = list(c.writes)
         hd_body = herestr = None
+        stdin_file = any(re.fullmatch(r"\d*<[&>]?", t) for t in argv)     # r0331: `< f`, `0<f`, `<&3`: stdin the line does not show
         appended = set()
         for k, t in enumerate(argv):
             if t == "<<":
@@ -3342,6 +3897,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                     _code_scan(_unmask(argv[k + 1]), c, os.path.basename(pre[0]))     # s7 (O1): `python3 <<< "urlopen(...)"`
         argv = [_subst_vars(t) for t in argv]                 # 0.2.90: `$D` of a variable this line set once (outside single quotes)
         fr = _frame()
+        ident_on_ = _fs.current().words_known()               # r0338: the hook looked the line's bare words up (progid)
         if fr is not None and argv and argv[0] in fr["aliases"]:
             argv = list(fr["aliases"][argv[0]]) + argv[1:]    # 0.2.90: `alias x='rm -rf'; x /y` is judged as `rm -rf /y`
         if fr is not None:
@@ -3366,6 +3922,10 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                     and all(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", t) and not is_secret_path(t) for t in rest0[3:]):
                 _set_var(rest0[1], rest0[3])                  # `for d in a b c`: plain names under the directory (no /, ~, dot-files): the
                                                               # first one stands for all (same directory, same kind of path)
+            elif rest0 and os.path.basename(rest0[0]) == "for" and len(rest0) >= 4 and rest0[2] == "in" and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rest0[1]) \
+                    and _loop_paths_alike(rest0[3:], here, home, project):
+                _set_var(rest0[1], rest0[3])                  # r0335 (live run 17.11: `for f in app.py src/main.py; do cat -A "$f"`): relative
+                #                                               paths of the project, each checked as a file (see _loop_paths_alike)
             elif rest0 and os.path.basename(rest0[0]) in ("unset", "read", "mapfile", "readarray", "getopts", "for", "select", "let", "printf") and not bare:
                 for t in rest0[1:]:
                     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t):
@@ -3381,7 +3941,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
         full = argv
         _env_inject(full, c)                               # rt2810: PYTHONSTARTUP / NODE_OPTIONS=--require / PERL5OPT=-M ... (also `export`)
         _env_more(full, here, home, project, c)            # 10.11 (r0260): pagers, git config, search paths outside the project, proxies ...
-        argv, winfo = _unwrap(argv)
+        argv, winfo = _unwrap(argv, (here, home, project) if _fs.current().words_known() or "/" in "".join(argv[:4]) else None)
         via_xargs = winfo["xargs"]
         for why in winfo["issues"]:                        # 0.2.52: a wrapper read with doubt, or one that moves the command elsewhere
             c.opaque = True
@@ -3398,10 +3958,28 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                 c.add("secrets", "whole environment")      # `env -u X` / `env -0` with no command prints the environment
             continue
         name = os.path.basename(argv[0])
+        if "/" in argv[0]:
+            name = os.path.basename(_prog_word(name)[0]) if name else name     # r0334: a path keeps its spelling, its program name is folded
         args = argv[1:]
         if "/" in argv[0] and not re.search(r"[$`*?\[]", argv[0]) and not (here == LOST_CWD and not argv[0].startswith(("/", "~"))):
-            name = _program_by_path(argv[0], name, here, home, project, fr)     # r0319 (RT 15.11 Б1): `./g` = the git it links / copies
+            name = _program_by_path(winfo.get("typed") or argv[0], name, here, home, project, fr)     # r0319 (RT 15.11 Б1): `./g` = the git it links / copies
+        elif ident_on_ and "/" not in argv[0] and argv[0] and not re.search(r"[$`*?\[\]{}]", argv[0]):
+            name = _program_by_word(winfo.get("typed") or argv[0], name, fr, winfo, c)      # r0338: the program a bare word runs, by its file
+        idn_ = (fr.get("ident") or {}).get(winfo.get("typed") or argv[0]) if fr is not None and "ident" in fr else None
+        if idn_ and len(idn_) > 1:
+            # r0338: a file of several names is judged as each of them (`./r` copied from rm = rm and unlink): the strictest wins
+            if len(idn_) > IDENT_MAX_NAMES:
+                c.opaque = True
+                c.add("opaque", "%s is a copy of a system program that answers to %d names" % (argv[0][:100], len(idn_)))
+            for k_, other in enumerate(idn_[1:IDENT_MAX_NAMES]):
+                if other != name:
+                    d_ = classify(" ".join(shlex.quote(w) for w in [other] + [_unmask(a) for a in args]), here, home, _depth + 1, project, _budget=c.budget)
+                    if k_ >= IDENT_HEADS:
+                        d_.heads = []                  # the marks of every name, the heads of the first few (a line lists 32 commands)
+                    _merge(c, d_)
         prev_simple = (name, args)
+        if fr is not None and name and _CMD_NAME.fullmatch(name):
+            fr.setdefault("cmdwords", set()).add(name)        # r0338: the program names of the line (the canonical line, classify)
         if argv[0] == "":
             c.opaque = True                                # 0.2.54: `"" ls` (bash: command not found); kept rather than read as `ls`
             c.add("opaque", "empty command name")
@@ -3423,6 +4001,9 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             _code_fs_scan(fed, c, name, here, home, project, _depth)        # 0.2.90: `echo <b64> | base64 -d | python3`
         if via_xargs:
             _xargs_tail(argv, name, args, fed if before in ("|", "|&") else None, here, home, project, _depth, c)
+        if not _runners.closed_grammar(name):
+            with _VkRemote(c, name in ("ssh", "mosh")):    # r0331 (shadow only)
+                _carried(name, args, fed if before in ("|", "|&") else None, herestr, hd_body, here, home, project, _depth, c)
         prev_out = out_t
         targets = list(redirect_writes)
         if name == "tee":
@@ -3447,7 +4028,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             tags = _variants(name, args, prefix) + [t for t in winfo["tags"]]
             if devnet:
                 tags.append("net")                         # rt2810: `cat /dev/tcp/h/80`, `cat < /dev/tcp/h/80`
-            if "/" not in argv[0] and (name in LW_CMDS or (name == "git" and ident in LW_LIST)):
+            if "/" not in argv[0] and (name in LW_CMDS or (name == "git" and (ident in LW_LIST or ident == LW_GIT_INIT))):
                 n0_ = len(c.writes)
                 lw_tags = _local_write(name, args, here, home, project, c)          # 0.2.53: every path checked
                 if name in DELETERS:
@@ -3459,22 +4040,32 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             if name in TX_NAMES:
                 tx_tags, nonfile = _tx(name, args, here, home, project, c, _depth)     # 0.2.54: find, sed, awk, jq
                 tags += [t for t in tx_tags if t not in tags]
+            if name == "xattr" and "/" not in argv[0]:
+                tags += [t for t in _xattr_tags(args, here, home, project, c) if t not in tags]     # r0325: only the reading form is plain
+            if name in R0341_FORMS and "/" not in argv[0]:
+                t41, id41 = _r0341_tags(name, args, here, home, project, c)                     # r0341: zip / unzip -l / sips closed forms
+                tags += [t for t in t41 if t not in tags]
+                if id41 and not tags:
+                    ident = id41
             if name == "npx" and ident != "npx" and not _npx_local(ident.split(" ", 1)[1], here):
                 tags.append("fetch")                          # 0.2.10: not installed in the project: npx would download it from the registry
             hid = ("sudo " if elevated else "") + ident + (" [%s]" % ", ".join(tags) if tags else "")
             if argv[0].startswith("--") or re.search(r"\s", argv[0]):
                 c.opaque = True                            # 0.2.89: a program named `--version` would be the version entry below
                 c.add("opaque", "command name starting with '--' or with blanks")
-            if not elevated and "/" not in argv[0] and args == ["--version"] and name in VERSION_QUERIES and not prefix:
+            if not elevated and "/" not in argv[0] and name in VERSION_QUERIES and not prefix and \
+                    (args == ["--version"] or (len(args) == 1 and args[0] in _version_short(name))):
                 hid = VERSION_HEAD                         # 0.2.89: `python3 --version` prints a version and exits before it reads anything
             c.head(hid)   # `sudo ls` is not `ls` for the owner's list
+            _vk_cmd(hid, name, argv[0], args, here, _depth, before in ("|", "|&"), stdin_file, hd_body, herestr)     # r0331 (shadow only)
             if project is not None and _outside([a for a in args if a not in nonfile], here, home, project):
                 c.out(hid)
             # RT6 (28.10): the command a program carries (`arch -arm64 python3 f.py`, `hyperfine 'python3 f.py'`, `fd -x python3`,
             # `git submodule foreach 'cmd'`, `tmux new -d 'cmd'`) is judged as a command of its own: its head joins the line's heads, so the
             # owner's permission for the carrier never covers the child (23 of 24 carriers hid an interpreter from the mandate).
-            for ch in dict.fromkeys(_runners.children(name, args)):
-                _merge(c, classify(ch, here, home, _depth + 1, project, _budget=c.budget))
+            with _VkRemote(c, name in ("ssh", "mosh")):    # r0331: what ssh carries runs on its host (shadow only)
+                for ch in dict.fromkeys(_runners.children(name, args)):
+                    _merge(c, classify(ch, here, home, _depth + 1, project, _budget=c.budget))
         if name == "alias" and _set_alias(args):
             continue                                       # 0.2.90: `alias ll='ls -la'`: known for the rest of the line
         new_link = None
@@ -3637,7 +4228,7 @@ def _eval_form(name: str, args) -> bool:
 VERSION_HEAD = "--version"
 VERSION_QUERIES = frozenset({"python", "python2", "python3"} | {"python3.%d" % k for k in range(6, 20)} |
                             {"node", "nodejs", "git", "uv", "cargo", "rustc", "make", "gmake", "gcc", "g++", "clang", "clang++", "cc",
-                             "deno", "bun", "java", "ruby", "perl", "jq", "rg"})
+                             "deno", "bun", "java", "ruby", "perl", "jq", "rg", "ruff"})     # r0335: + ruff (a compiled binary: no startup code)
 # 0.2.89: read-only forms of commands added to the recommended list (git remote / tag / stash / config, pip list / freeze / show, uv pip, ps).
 # The listed name covers only its read-only form; every other form gets a tag ("git tag [write]", "uv pip [install]", "ps [env]") and is asked.
 _GIT_TAG_WRITE = {"-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "--local-user", "-f", "--force", "-m", "--message", "-F", "--file",
@@ -3656,6 +4247,8 @@ def _ro_ident(name, ident, args) -> str:
     a read of git's configuration -> "git config get"
     (entries of the recommended list). Every other form keeps "git stash" / "git tag" exactly as before (an owner's project allowance for
     "git stash" still covers `git stash pop`)."""
+    if name in STATE_READERS:
+        return _state_ident(name, ident, args)      # r0335: the read-only form of a program that reads the machine's state
     if name != "git" or ident not in ("git stash", "git tag", "git config"):
         return ident
     sub = ident.split(" ", 1)[1]
@@ -3679,6 +4272,421 @@ def _ro_ident(name, ident, args) -> str:
         return ident
     listing = bool(fl & {"-l", "--list"}) or any(f.startswith("-n") for f in fl)
     return "git tag list" if (not ops or listing) else ident
+
+
+# r0335 (live run nabor-1 17.11, kind C: S021 ruff, S036 lsof/netstat, S042 top/vm_stat, S055 sqlite3, S064 scutil/sw_vers/uname): programs
+# that only READ the state of the machine (its processes, memory, sockets, name, version) or of a project file, with no write and no
+# network. Each has ONE closed form, named by its own identifier (an entry of the recommended list, like "git config get"); every other
+# form keeps exactly the identifier it had before (the program's name: asked as before, and an owner's allowance for it is unchanged).
+# What the closed forms exclude, on purpose: top without `-l N` (interactive; 0 < N <= 10: -l 0 never ends), `vm_stat N` (never ends),
+# `sysctl -w` / `k=v` (writes), scutil other than `--get` of the three names (--set writes; --dns / --proxy / -r / a prompt read more),
+# netstat with an interval / -w / -c (never ends), ruff with --fix / --unsafe-fixes / --add-noqa / --watch / --output-file / --config /
+# --cache-dir (writes, or reads a configuration that says where to write), sqlite3 without SQL on the line (it reads its input), with
+# -cmd / -init / -A / -deserialize / a URI file name, a dot command other than the listing ones (.shell, .system, .output, .once, .read,
+# .import, .load, .save, .backup, .open ...), a statement that writes or attaches, or ANY function but plain arithmetic / text / date ones
+# (readfile / writefile / edit / load_extension / fsdir / zipfile read or write any file or run code). A path the closed form names is
+# judged as before (a credential: `secrets`; outside the project: [outside]).
+STATE_READERS = frozenset({"top", "vm_stat", "sysctl", "scutil", "sw_vers", "netstat", "ruff", "sqlite3",
+                           "spctl", "hostname"})     # r0341: + spctl --status (Gatekeeper on/off), hostname (the name; -s / -f / -d)
+_STATE_IDENT = {"spctl": "spctl --status", "hostname": "hostname",
+                "top": "top -l", "vm_stat": "vm_stat", "sysctl": "sysctl read", "scutil": "scutil --get", "sw_vers": "sw_vers",
+                "netstat": "netstat", "ruff": "ruff check", "sqlite3": "sqlite3 read"}
+_SW_VERS_OPTS = frozenset({"-productName", "-productVersion", "-productVersionExtra", "-buildVersion", "--productName",
+                           "--productVersion", "--productVersionExtra", "--buildVersion"})
+_NETSTAT_SHORT = frozenset("anrisvWlAbdgmLx")
+_NETSTAT_PROTO = frozenset({"tcp", "udp", "icmp", "ip", "tcp6", "udp6", "icmp6", "ip6", "inet", "inet6", "unix"})
+_RUFF_FLAG = frozenset({"--statistics", "--show-fixes", "--no-fix", "--diff", "--exit-zero", "--exit-non-zero-on-fix", "-q", "--quiet",
+                        "-s", "--silent", "-v", "--verbose", "-e", "-n", "--no-cache", "--preview", "--no-preview", "--isolated",
+                        "--no-show-fixes", "--show-files", "--show-settings", "--respect-gitignore", "--no-respect-gitignore",
+                        "--force-exclude", "--no-force-exclude", "--ignore-noqa"})
+_RUFF_VALUE = frozenset({"--select", "--ignore", "--extend-select", "--extend-ignore", "--line-length", "--target-version",
+                         "--output-format", "--exclude", "--extend-exclude", "--per-file-ignores", "--extend-per-file-ignores",
+                         "--fixable", "--unfixable", "--extend-fixable", "--dummy-variable-rgx"})
+_SQLITE_FLAG = frozenset({"readonly", "header", "noheader", "column", "csv", "json", "line", "list", "box", "markdown", "table", "tabs",
+                          "quote", "ascii", "html", "bail", "batch", "echo", "safe", "nofollow"})
+_SQLITE_VALUE = frozenset({"separator", "newline", "nullvalue"})
+_SQLITE_DOT = re.compile(r"\.(?:tables|schema|fullschema|indexes|indices|databases|dbinfo|headers\s+(?:on|off)|mode\s+[a-z]+|"
+                         r"show|width(?:\s+-?\d+)*|nullvalue\s+\w*)(?:\s+[\w%*.-]+)?\s*", re.I)
+_SQL_WRITE = re.compile(r"\b(?:insert|update|delete|replace|create|drop|alter|attach|detach|vacuum|reindex|analyze|begin|commit|"
+                        r"rollback|savepoint|release|upsert|returning|into|load_extension|readfile|writefile|edit|fsdir|zipfile|sqlar\w*|"
+                        r"fts3_tokenizer|shell|system)\b", re.I)
+_SQL_START = re.compile(r"(?:select|with|explain|values|pragma\s+(?:table_info|table_xinfo|table_list|index_list|index_xinfo|index_info|"
+                        r"foreign_key_list|database_list|user_version|schema_version|compile_options|page_count|page_size)\b(?!\s*=))", re.I)
+_SQL_FN_OK = frozenset({"count", "sum", "avg", "min", "max", "total", "group_concat", "string_agg", "length", "octet_length", "lower",
+                        "upper", "round", "abs", "coalesce", "ifnull", "nullif", "iif", "substr", "substring", "trim", "ltrim", "rtrim",
+                        "typeof", "date", "time", "datetime", "julianday", "strftime", "unixepoch", "instr", "printf", "format",
+                        "cast", "hex", "quote", "char", "unicode", "sign", "ceil", "ceiling", "floor", "like", "glob",
+                        "json_extract", "json_array_length", "json_type", "json_valid", "row_number", "rank", "dense_rank",
+                        "pragma_table_info", "pragma_table_list", "pragma_index_list", "pragma_index_info", "pragma_foreign_key_list",
+                        # words of SQL itself that a parenthesis may follow
+                        "in", "exists", "as", "from", "on", "using", "where", "and", "or", "not", "join", "over", "by", "select",
+                        "then", "else", "when", "is", "values", "with", "having", "case", "between", "partition", "filter",
+                        "table_info", "table_xinfo", "index_list", "index_info", "foreign_key_list"})
+
+
+def _lit_word(a) -> bool:
+    return isinstance(a, str) and not re.search(r"[$`\x00]", a)
+
+
+def _state_closed(name, args) -> bool:
+    try:
+        return bool(_STATE_FORMS[name]([str(a) for a in args])) and all(_lit_word(a) for a in args)
+    except (IndexError, ValueError):
+        return False
+
+
+def _state_ident(name, ident, args) -> str:
+    """r0335: the identifier of the closed read-only form of a STATE_READERS program, or `ident` unchanged (see above). A program whose
+    closed form keeps its own name (vm_stat, sw_vers, netstat) gets the tag "form" for every other form instead (_variants)."""
+    return _STATE_IDENT[name] if _state_closed(name, args) else ident
+
+
+def _top_form(a):
+    i, seen_l = 0, False
+    while i < len(a):
+        o = a[i]
+        if o in ("-l", "-n", "-s"):
+            if not re.fullmatch(r"\d{1,3}", a[i + 1]):
+                return False
+            if o == "-l":
+                if not 1 <= int(a[i + 1]) <= 10:
+                    return False
+                seen_l = True
+            i += 2
+        elif o in ("-o", "-O"):
+            if not re.fullmatch(r"[+-]?[a-z_]{1,16}", a[i + 1]):
+                return False
+            i += 2
+        elif o == "-stats":
+            if not re.fullmatch(r"[a-z_]{1,16}(?:,[a-z_]{1,16}){0,31}", a[i + 1]):
+                return False
+            i += 2
+        elif o in ("-F", "-R"):
+            i += 1
+        else:
+            return False
+    return seen_l
+
+
+def _sysctl_form(a):
+    ops = [x for x in a if not x.startswith("-")]
+    fl = [x for x in a if x.startswith("-")]
+    return all(re.fullmatch(r"-[nheaNd]+", f) for f in fl) and all(re.fullmatch(r"[A-Za-z0-9_.]{1,128}", o) for o in ops) \
+        and (bool(ops) or any("a" in f for f in fl))
+
+
+def _netstat_form(a):
+    i = 0
+    while i < len(a):
+        o = a[i]
+        if o in ("-p", "-f"):
+            if a[i + 1] not in _NETSTAT_PROTO:
+                return False
+            i += 2
+        elif re.fullmatch(r"-[A-Za-z]+", o) and set(o[1:]) <= _NETSTAT_SHORT:
+            i += 1
+        else:
+            return False                             # an operand is an interval (never ends); -w / -c / -I ... are not here
+    return True
+
+
+def _ruff_form(a):
+    if a[:1] != ["check"]:
+        return False
+    i = 1
+    while i < len(a):
+        o = a[i]
+        k = o.split("=", 1)[0]
+        if o in _RUFF_FLAG:
+            i += 1
+        elif k in _RUFF_VALUE:
+            v = o.split("=", 1)[1] if "=" in o else a[i + 1]
+            if not re.fullmatch(r"[\w.,:*/+-]{0,256}", v):
+                return False
+            i += 1 if "=" in o else 2
+        elif o.startswith("-"):
+            return False                             # --fix, --unsafe-fixes, --add-noqa, --watch, -o / --output-file, --config ...
+        else:
+            if o == "-" or not re.fullmatch(r"[\w./@+-]{1,512}", o):
+                return False
+            i += 1
+    return True
+
+
+def _sql_ok(q: str) -> bool:
+    if not q.strip() or len(q) > 4096 or re.search(r"\n\s*\.", q) or q.lstrip().startswith("."):
+        return False
+    if _SQL_WRITE.search(q):
+        return False
+    for fn in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", q):
+        if fn.lower() not in _SQL_FN_OK:
+            return False
+    stmts = [x.strip() for x in q.split(";") if x.strip()]
+    return bool(stmts) and all(_SQL_START.match(x) for x in stmts)
+
+
+def _sqlite_form(a):
+    i, db, cmds = 0, None, []
+    while i < len(a):
+        o = a[i]
+        if db is None and o.startswith("-") and len(o) > 1:
+            k = o.lstrip("-")
+            if k in _SQLITE_FLAG:
+                i += 1
+            elif k in _SQLITE_VALUE:
+                if len(a[i + 1]) > 16:
+                    return False
+                i += 2
+            else:
+                return False                         # -cmd, -init, -A / -archive, -deserialize, -interactive, -vfs, -append, -zip ...
+        elif db is None:
+            if not re.fullmatch(r"[\w./@+-]{1,512}", o) or o.startswith("-") or ":" in o:
+                return False                         # a URI (`file:x?mode=rw`) or ":memory:"
+            db = o
+            i += 1
+        else:
+            cmds.append(o)
+            i += 1
+    if db is None or not cmds:
+        return False                                 # no SQL on the line: sqlite3 reads its input (a heredoc, a pipe, a file)
+    return all(_SQLITE_DOT.fullmatch(c) if c.lstrip().startswith(".") else _sql_ok(c) for c in cmds)
+
+
+_STATE_FORMS = {"spctl": lambda a: a == ["--status"],                      # r0341: --assess / --add / --master-disable ...: as before
+                "hostname": lambda a: not a or (len(a) == 1 and a[0] in ("-s", "-f", "-d")),     # `hostname NAME` sets it: as before
+                "top": _top_form, "vm_stat": lambda a: not a, "sysctl": _sysctl_form,
+                "scutil": lambda a: len(a) == 2 and a[0] == "--get" and a[1] in ("ComputerName", "LocalHostName", "HostName"),
+                "sw_vers": lambda a: not a or (len(a) == 1 and a[0] in _SW_VERS_OPTS), "netstat": _netstat_form,
+                "ruff": _ruff_form, "sqlite3": _sqlite_form}
+
+# r0335 (live run 17.11, S046 `docker ps --format 'table {{.ID}}...'`): every `docker` was the danger `exit` (sandbox.EXIT_PROGRAMS). The
+# listing of containers is a read of the local engine; its plain form (no global option before `ps` -- -H / --host / --context /
+# --config name another engine --, only listing options after it) stays "docker ps" (sandbox.DOCKER_PS_HEAD: no exit); any other
+# `docker ps` is "docker ps [form]" (an exit, asked as before). DOCKER_HOST on the line is an env tag (asked as before).
+_DOCKER_PS_FLAG = frozenset({"-a", "--all", "-q", "--quiet", "-s", "--size", "-l", "--latest", "--no-trunc"})
+_DOCKER_PS_VALUE = frozenset({"-n", "--last", "--format", "-f", "--filter"})
+
+
+# r0341 (step 4 of the plan «база», Fable 17.11: closed forms -- a signature of the GOOD -- for the programs that asked most on harmless
+# lines: live run nabor-1 17.11 re-judged on kand6, 31 questions: printf 5, zip / unzip 3, sips 1, spctl 1, hostname 1, node -v 1 ...).
+# Law: silent only what has its consequence computed. Each form is CLOSED: a table of what is allowed; anything outside it is a tag (asked
+# as before), never a guess. A miss gives a question, not a hole.
+#   printf      prints (bash builtin / BSD printf have no %n): the plain form has a literal format that is not an option; `printf -v VAR`
+#               (sets a variable) or a format from an expansion -> [form]. Its redirection is judged as every redirection (written paths).
+#   unzip -l    a LISTING of an archive (-l / -v / -t / -z / -Z zipinfo, -q): nothing written, the archive (and only it) is read; the
+#               archive must lie in the project or a temp directory and not be protected (lw.path, realpath of the hook). Extraction keeps
+#               the identifier "unzip" (asked as before: which files land, and their text, is not known to the witness).
+#   zip         creates / updates ONE archive NAME.zip strictly inside the project or temp (a write, not protected) from files of the
+#               project / temp (reads); options only from the table (-r -q -X -y -j -D -0..-9 and their long names). Not: -T / -TT /
+#               --unzip-command (runs a program), -m (deletes the sources), -d / -U / -F / -FF / -A (rewrites), -@ / -i@ / -x (names
+#               from elsewhere), -e / -P (password), -b / -O, -u / -f / -o / -l / -c / -z ..., a glob, an expansion. `-r` without `-y`
+#               on a DIRECTORY -> [unsure]: zip follows every symbolic link in the tree (a link to ~/.ssh/id_rsa would put the key's text
+#               into the archive; the witness does not see the tree), as cp -r is not in the local-write table.
+#   sips        macOS image tool: reading properties (-g KEY) and the plain transforms (resample, rotate, flip, crop, pad, format) whose
+#               output (--out PATH, or the images themselves in place) is written strictly inside the project / temp, not protected.
+#               Not: -j / --js (runs JavaScript), -m / -e / -E / -x / -X / -i / -d (profiles, icons, deleting tags), any other key or
+#               option, a value that is not a plain number / word.
+#   node -v, python3 -V, deno -V, uv -V: the short spelling of the version query (checked 17.11 on this Mac: `NODE_OPTIONS=--require x
+#               node -v` and `PYTHONPATH=sitecustomize python3 -V` run no startup code, as --version) -> "--version".
+R0341_FORMS = frozenset({"zip", "unzip", "sips"})
+_PY_NAMES = frozenset({"python", "python2", "python3"} | {"python3.%d" % k for k in range(6, 20)})
+
+
+def _version_short(name):
+    if name in ("node", "nodejs"):
+        return ("-v",)
+    if name in _PY_NAMES or name in ("deno", "uv", "ruff"):
+        return ("-V",)
+    return ()
+
+
+def _printf_plain(args) -> bool:
+    a = [str(x) for x in args]
+    if a[:1] == ["--"]:
+        a = a[1:]
+    return bool(a) and _lit_word(a[0]) and not a[0].startswith("-")
+
+
+_UNZIP_LIST_LETTERS = set("lvtqz")
+_ZIP_SHORT = set("rqXyjD0123456789")
+_ZIP_LONG = {"--recurse-paths": "r", "--quiet": "q", "--no-extra": "X", "--symlinks": "y", "--junk-paths": "j", "--no-dir-entries": "D"}
+_SIPS_NUM = re.compile(r"\d{1,5}(?:\.\d{1,3})?")
+_SIPS_ONE_NUM = {"-Z": 1, "--resampleHeightWidthMax": 1, "--resampleWidth": 1, "--resampleHeight": 1,
+                 "-z": 2, "--resampleHeightWidth": 2, "-c": 2, "--cropToHeightWidth": 2, "-p": 2, "--padToHeightWidth": 2}
+_SIPS_GET_KEY = re.compile(r"[A-Za-z][A-Za-z0-9]{0,40}")
+_SIPS_FORMATS = frozenset({"jpeg", "jpg", "png", "tiff", "gif", "bmp", "heic", "heif", "pdf", "jp2", "psd", "tga", "ico", "icns", "pict"})
+
+
+def _plain_word(a) -> bool:
+    return isinstance(a, str) and bool(a) and _lit_word(a) and not a.startswith("-") and not re.search(r"[*?\[~]", a)
+
+
+def _r0341_tags(name, args, here, home, project, c):
+    """r0341: -> (tags, identifier of the closed form or None). [] tags = the closed form (see above); its writes are added to `c`."""
+    a = [str(x) for x in args]
+    lw = _LW(here, home, project, c)
+    if project is None:
+        lw.tag("outside")
+    if not all(_lit_word(x) for x in a):
+        lw.tag("unsure")
+        return lw.tags, None
+    if name == "unzip":
+        k, fl, zmode = 0, set(), False
+        if a[:1] in (["-Z"], ["-Z1"]):
+            zmode, fl = True, {"Z"}
+            k = 1
+            while k < len(a) and re.fullmatch(r"-[12smlhtz]+", a[k]):
+                k += 1
+        else:
+            while k < len(a) and a[k].startswith("-") and len(a[k]) > 1:
+                if not re.fullmatch(r"-[lvtqz]+", a[k]):
+                    return [], None                  # extraction or another form: the identifier "unzip" as before (asked)
+                fl |= set(a[k][1:])
+                k += 1
+        ops = a[k:]
+        if not zmode and not fl & set("lvtz"):
+            return [], None                          # `unzip -q a.zip` extracts
+        if not ops or not all(_plain_word(o) for o in ops):
+            lw.tag("unsure")
+            return lw.tags, None
+        lw.path(ops[0], role="read")
+        if is_secret_path(ops[0]) or is_secret_path(_abspath(ops[0], here, home)):
+            lw.tag("protected")
+        return lw.tags, (None if lw.tags else "unzip -l")
+    if name == "zip":
+        fl, ops, end = set(), [], False
+        for x in a:
+            if not end and x == "--":
+                end = True
+            elif not end and x.startswith("--"):
+                if x not in _ZIP_LONG:
+                    lw.tag("unsure")
+                    return lw.tags, None
+                fl.add(_ZIP_LONG[x])
+            elif not end and x.startswith("-") and len(x) > 1:
+                if not set(x[1:]) <= _ZIP_SHORT:
+                    lw.tag("unsure")             # -T -TT -m -d -U -F -A -@ -i -x -e -P -b -O -u -f -o -l -c -z -v ...
+                    return lw.tags, None
+                fl |= set(x[1:])
+            else:
+                if ops and not end and x.startswith("-"):
+                    lw.tag("unsure")
+                    return lw.tags, None
+                ops.append(x)
+        if len(ops) < 2 or not all(_plain_word(o) for o in ops) or not ops[0].endswith(".zip") or ops[0] == ".zip":
+            lw.tag("unsure")                     # stdin names (`zip a.zip -`), no source, a name zip would extend with .zip
+            return lw.tags, None
+        out = lw.path(ops[0], role="write")
+        for o in ops[1:]:
+            r = lw.path(o, role="read")
+            if is_secret_path(o) or (r is not None and is_secret_path(r)):
+                lw.tag("protected")
+            if r is not None and "r" in fl and "y" not in fl and _fs.current().isdir(r) is not False:
+                lw.tag("unsure")                 # zip -r follows symbolic links in the tree (see above)
+            if r is not None and "r" in fl and project is not None and r == project.rstrip("/"):
+                lw.tag("unsure")                 # the whole project (its .git, its .env ...) into one file: asked
+        if not lw.tags and out is not None:
+            lw.write(out)
+            for p_ in lw.writes:
+                c.write(p_)
+        return lw.tags, None
+    # sips
+    k, gets, writes_, out_w = 0, False, False, None
+    imgs = []
+    while k < len(a):
+        x = a[k]
+        if x in ("-g", "--getProperty"):
+            if k + 1 >= len(a) or not _SIPS_GET_KEY.fullmatch(a[k + 1]):
+                lw.tag("unsure")
+                return lw.tags, None
+            gets, k = True, k + 2
+        elif x in ("-1", "--oneLine"):
+            k += 1
+        elif x in _SIPS_ONE_NUM:
+            n = _SIPS_ONE_NUM[x]
+            if k + n >= len(a) or not all(_SIPS_NUM.fullmatch(v) for v in a[k + 1:k + 1 + n]):
+                lw.tag("unsure")
+                return lw.tags, None
+            writes_, k = True, k + 1 + n
+        elif x in ("-r", "--rotate"):
+            if k + 1 >= len(a) or not re.fullmatch(r"-?\d{1,3}(?:\.\d{1,3})?", a[k + 1]):
+                lw.tag("unsure")
+                return lw.tags, None
+            writes_, k = True, k + 2
+        elif x in ("-f", "--flip"):
+            if k + 1 >= len(a) or a[k + 1] not in ("horizontal", "vertical"):
+                lw.tag("unsure")
+                return lw.tags, None
+            writes_, k = True, k + 2
+        elif x in ("-s", "--setProperty"):
+            if k + 2 >= len(a) or not ((a[k + 1] == "format" and a[k + 2].lower() in _SIPS_FORMATS) or
+                                       (a[k + 1] == "formatOptions" and re.fullmatch(r"(?:\d{1,3}%?|low|normal|high|best|default)", a[k + 2]))):
+                lw.tag("unsure")
+                return lw.tags, None
+            writes_, k = True, k + 3
+        elif x in ("-o", "--out"):
+            if k + 1 >= len(a) or out_w is not None or not _plain_word(a[k + 1]):
+                lw.tag("unsure")
+                return lw.tags, None
+            out_w, k = a[k + 1], k + 2
+        elif x.startswith("-"):
+            lw.tag("unsure")                     # -j / --js runs JavaScript; profiles, icons, tags, any other option
+            return lw.tags, None
+        else:
+            if not _plain_word(x):
+                lw.tag("unsure")
+                return lw.tags, None
+            imgs.append(x)
+            k += 1
+    if not imgs or (out_w is not None and not writes_) or not (gets or writes_):
+        lw.tag("unsure")
+        return lw.tags, None
+    reals = []
+    for i in imgs:
+        r = lw.path(i, role="write" if writes_ and out_w is None else "read")
+        if r is not None and _fs.current().isdir(r) is not False:
+            lw.tag("unsure")                     # a folder of images (or a path the hook could not look at)
+        if is_secret_path(i) or (r is not None and is_secret_path(r)):
+            lw.tag("protected")
+        reals.append(r)
+    if writes_:
+        if out_w is not None:
+            o = lw.path(out_w, role="write")
+            if o is not None:
+                if _fs.current().isdir(o) is True:
+                    for i in imgs:
+                        lw.write(lw.into(o, out_w, i))
+                elif len(imgs) == 1:
+                    lw.write(o)
+                else:
+                    lw.tag("unsure")             # several images into one file name
+        else:
+            for r in reals:
+                lw.write(r)
+    if not lw.tags:
+        for p_ in lw.writes:
+            if p_ is not None:
+                c.write(p_)
+    return lw.tags, None
+
+
+def _docker_ps_plain(args) -> bool:
+    a = [str(x) for x in args]
+    if a[:1] != ["ps"] or not all(_lit_word(x) for x in args):
+        return False
+    i = 1
+    while i < len(a):
+        o = a[i]
+        k = o.split("=", 1)[0]
+        if o in _DOCKER_PS_FLAG or re.fullmatch(r"-[aqsl]{2,4}", o):
+            i += 1
+        elif k in _DOCKER_PS_VALUE:
+            if "=" not in o and i + 1 >= len(a):
+                return False
+            i += 1 if "=" in o else 2
+        else:
+            return False
+    return True
 
 
 def _ro_tags(name, ident, args) -> list:
@@ -3862,7 +4870,60 @@ def _variants(name: str, args, prefix) -> list:
             k = next((k for k, x in enumerate(args) if not x.startswith("-")), None)
             if k is not None and args[k] in RUNNER_OPTS and args[k] != "npx":
                 tags += [t for t in _variants(args[k], args[k + 1:], []) if t not in tags]
+    if name in STATE_READERS and _STATE_IDENT[name] == name and not _state_closed(name, args) and "form" not in tags:
+        tags.append("form")                                  # r0335: `vm_stat 5`, `netstat -w 1`, `sw_vers -x`: not the closed form
+    if name == "printf" and not _printf_plain(args) and "form" not in tags:
+        tags.append("form")                                  # r0341: `printf -v VAR`, a format from an expansion: as before
+    if name == "docker" and command_id(name, args) == "docker ps" and not _docker_ps_plain(args) and "form" not in tags:
+        tags.append("form")                                  # r0335: not the plain listing (see _docker_ps_plain): an exit as before
+    st = _system_install(name, args)
+    if st and "system" not in tags:
+        tags.append("system")
+    if name == "kill" and _kill_wide(args) and "group" not in tags:
+        tags.append("group")
     return tags
+
+
+# r0333 (Я0 nabor-1 S115 `make install` silent under `unlisted: allow`; law of the consequence, not of the program): a build tool's
+# install step writes into the system's zone (the prefix: /usr/local, /opt/homebrew, a Python's site-packages), outside the project and
+# before any undo -- `make install` of a cloned repository is the README's usual last line. The tag "[system]": asked each time (the
+# closed grammar has no such flag; actions._ALLOW_NEVER_SILENT keeps it asked whatever the runner shelf says), never "from now on" for
+# the project. `make` / `make test` / `make build` stay what they were (kand2, owner 16.11: the project's runner, silent until the
+# default sandbox).
+_INSTALL_TARGET = re.compile(r"^(?:install|uninstall|install[-_][\w.-]+)$")
+
+
+def _system_install(name, args):
+    ops = [str(o) for o in _operands(args)]
+    if name in ("make", "gmake", "bmake", "pmake", "ninja", "samu", "mingw32-make", "nmake", "jom"):
+        return any(_INSTALL_TARGET.match(o) for o in ops)
+    if name in ("meson", "muon"):
+        return ops[:1] == ["install"]
+    if name == "cmake":
+        al = [str(a) for a in args]
+        return "--install" in al or any(al[k] in ("--target", "-t") and k + 1 < len(al) and _INSTALL_TARGET.match(al[k + 1]) for k in range(len(al)))
+    if PY_MODULE.fullmatch(name):
+        return len(ops) >= 2 and ops[0].endswith("setup.py") and ops[1] in ("install", "develop")
+    return False
+
+
+def _kill_wide(args):
+    """r0333: `kill` whose target is not one process the line names: 1 (r0340: launchd / init), -1 (every process of the user), 0 or a negative number (a whole
+    process group), or a PID from a substitution (`kill $(pgrep node)` = `killall node`). By name (pkill / killall): actions."""
+    al = [str(a) for a in args]
+    k = 0
+    if al[:1] and al[0] in ("-s", "-n", "--signal"):
+        k = 2
+    elif al[:1] and al[0].startswith("-") and al[0] not in ("--", "-1") or al[:2] and al[0] == "-1" and len(al) > 1:
+        k = 1                                            # the signal (`-9`, `-KILL`, `-1` = SIGHUP when a target follows)
+    if al[k:k + 1] == ["--"]:
+        k += 1
+    for t in al[k:]:
+        if t in ("$!", "${!}", '"$!"'):
+            continue                                     # the line's own background job (`srv & ...; kill $!`)
+        if t in ("0", "1") or re.fullmatch(r"-\d+", t) or not re.fullmatch(r"%?\d+", t):
+            return True                                  # r0340: PID 1 (launchd / init) is the system, not one process of the agent
+    return False
 
 
 # 0.2.10: installers. `npm install` / `npm ci` / `pip install -e .` / `pip install -r requirements.txt` install what the PROJECT declares
@@ -4055,6 +5116,9 @@ def _merge(c: Command, d: Command) -> None:
         for h in d.net:
             if h not in c.code_h:
                 c.code_h.append(h)
+    for t in d.carried:                               # r0329: a carried command of a nested line (constitution Н6 reads them)
+        if t not in c.carried and len(c.carried) < 16:
+            c.carried.append(t)
     for h in d.heads:
         c.head(h)
     for h in d.outside:
@@ -4854,6 +5918,95 @@ def _secret_detail(name, args, ops, o, p, cwd, home):
     return p
 
 
+# r0329 (РАУНД 3 противника 15.11, закон носителя): a program OFF the shelf "form" (runners.FORM_SHELF: it may run a text it is given) is a
+# CARRIER. The text the line hands it -- an argument with blanks, stdin from a printer / here-string / heredoc, `<(echo ..)`, /dev/stdin --
+# is judged as the command it carries, whatever the program: `vim -c '!git push -f'`, `sqlite3 x '.shell ..'`, `echo 'syscmd(..)' | m4`,
+# `dc -e '!..'`, `psql -c '\! ..'`, `emacs --eval '(shell-command "..")'`, `expect -c 'exec ..'`, `guile -c '(system "..")'`,
+# `make --eval='$(shell ..)'`, `python3 -W x -c '..'`, `sh <(echo ..)`, `echo .. | bash /dev/fd/0`. Every place a command may begin in the
+# text (a word after a blank or one of ! ( " ' ` ; | & { = \) starts a cut up to the next quote / bracket / line end; each cut is
+# classified, and only the marks of what the Constitution refuses or always asks (CARRIED_KINDS) join the line -- a carrier's harmless text
+# (`vim -c 'set nu'`) adds nothing. Not scanned again: what the parser already reads as code or a command (`bash -c X`, `python3 -c X`,
+# a shell's / interpreter's piped program). Before r0329 none of the 26 forms of round 3 was refused (0 of 39 under unlisted: allow).
+CARRIED_KINDS = frozenset({"git-force-push", "defense", "persist", "autostart", "rm-rf", "secrets", "git-config", "money", "agent-config",
+                           "witness", "witness-off"})
+CARRIED_MAX_CUTS = 1024                        # cuts of one simple command (~0.1 ms each); more -> opaque (a question), never unread
+CARRIED_MAX_TEXT = 16 * 1024
+_CARRIED_START = re.compile(r"(?:^|(?<=[\s!(\"'`;|&{=\\]))[A-Za-z_][A-Za-z0-9_.+-]*(?=[ \t]+\S)")
+_CARRIED_END = re.compile(r"[\"'`()\n]")
+STDIN_FILES = frozenset({"/dev/stdin", "/dev/fd/0"})   # `-` (and no operand): the piped program is read above
+
+
+def _printer_text(inner, cwd=None, home=None, project=None):
+    """r0329: the text `<(echo ..)` / `<(printf ..)` gives its reader, or None. r0338: the printer known by its judged name (`ECHO`,
+    `$'\\x65cho'`, a link / copy of echo)."""
+    try:
+        ws = shlex.split(_ansi_c(inner))
+    except ValueError:
+        return None
+    if not ws:
+        return None
+    try:
+        nm = next((n for n in judged_names(ws[0], cwd, home, project) if n in PRINTERS), None)
+    except Exception:      # noqa: BLE001  a word the facts cannot place: read as written
+        nm = ws[0] if ws[0] in PRINTERS else None
+    if nm is None:
+        return None
+    return _out_text(nm, ws[1:], None, None, None)
+
+
+def _carried(name, args, fed, herestr, hd_body, cwd, home, project, depth, c):
+    """r0329: judge the texts a carrier (a program off the shelf "form") is handed as the commands they carry (see CARRIED_KINDS)."""
+    if depth >= MAX_DEPTH or not (args or isinstance(fed, str) or isinstance(herestr, str) or isinstance(hd_body, str)):
+        return
+    ua = [_unmask(a) for a in args]
+    shellish = name in SHELLS or _is_interp(name) or PY_MODULE.fullmatch(name) is not None
+    skip = set()
+    if name in SHELLS:
+        for k, a in enumerate(ua):
+            if k and re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", ua[k - 1]) and not ua[k - 1].startswith("--"):
+                skip.add(k)                        # `bash -c LINE`: the parser reads LINE as a command line already
+    elif _eval_form(name, args):
+        ca = _eval_code_args(name, args)
+        skip |= {k for k, a in enumerate(args) if a in ca}     # `python3 -c CODE`: scanned as code already (_code_fs_scan)
+    texts = [a for k, a in enumerate(ua) if k not in skip and re.search(r"\s", a)]
+    ops = [a for a in ua if not a.startswith("-")]
+    stdin_op = any(a in STDIN_FILES for a in ops)
+    if not shellish or (ops and stdin_op):
+        texts += [t for t in (fed, herestr, hd_body) if isinstance(t, str)]   # a shell's / interpreter's piped PROGRAM: read above
+    if "/dev/fd/63" in ua:
+        fr = _frame()
+        texts += list((fr or {}).get("psub") or [])
+    cuts = []
+    for t in texts:
+        if not isinstance(t, str) or not t.strip():
+            continue
+        if len(t) > CARRIED_MAX_TEXT:
+            c.add("opaque", "%s is handed %d characters of text" % (name, len(t)))
+            return
+        for m in _CARRIED_START.finditer(t):
+            e = _CARRIED_END.search(t, m.start())
+            cut = t[m.start():e.start() if e else len(t)].strip()
+            if " " in cut and cut not in cuts:
+                cuts.append(cut)
+    if len(cuts) > CARRIED_MAX_CUTS:
+        c.add("opaque", "%s is handed more text than the witness reads (%d places a command may begin)" % (name, len(cuts)))
+        return
+    for cut in cuts:
+        try:
+            d = classify(cut, cwd, home, depth + 1, project, _budget=[MAX_NESTED])
+        except Exception:      # noqa: BLE001 -- a cut that is not a command line: nothing carried
+            continue
+        hit = False
+        for x in d.danger:
+            k, _, det = x.partition(":")
+            if k in CARRIED_KINDS:
+                c.add(k, det)
+                hit = True
+        if hit or cut.split(" ", 1)[0].rsplit("/", 1)[-1] in REMOTE_SHELLS:
+            if cut not in c.carried and len(c.carried) < 16:
+                c.carried.append(cut[:512])
+
+
 def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=False, nonfile=frozenset()):
     """lw_plain (0.2.53): a command of LW_CMDS whose every path _local_write read for sure; its writes are already judged (exactly: a
     directory destination is not itself written, an option's value is not a file), so the coarse extraction below is skipped for it."""
@@ -4900,7 +6053,8 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
             #                                               a file's text (a file inside it, `ls -R`, `cat`, `stat ~/.ssh/id_rsa` stay questions)
         plain = e is not None and (PATHLIKE.match(e) or "/" in e or (o in uploads or (name in FILE_READERS and name not in META_ONLY and
                                                                       o in ops[FILE_READERS[name]:] and _lit_ok(o))))
-        if is_secret_path(o) or (plain and is_secret_path(_abspath(e, cwd, home))):
+        if (is_secret_path(o) or (plain and is_secret_path(_abspath(e, cwd, home)))) and \
+                not (e is not None and sample_clean(_abspath(e, cwd, home))):        # r0335: a template of .env read by its own name
             c.add("secrets", _secret_detail(name, args, ops, o, _abspath(e, cwd, home) if e is not None else o, cwd, home))
         elif e is None and (o.startswith("~") or "/" in o or o in uploads or (name in FILE_READERS and o not in ops[:FILE_READERS[name]])):
             c.opaque = True                               # 0.2.11 (R6-02): `cat ${KEY}`, `cp $(..) x`, `less ~user/x`: a path the hook cannot
@@ -4931,6 +6085,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         _code_fs_scan(_eval_code(name, args), c, name, cwd, home, project, depth, operands=[o for o in ops if _lit_ok(o)])   # 0.2.90
     _gates(name, args, ops, short, long_, cwd, home, c)                                  # 0.2.90: G2 egress, G3 keychain, G4 persistence
     _defense(name, args, ops, short, long_, c)                                           # r0305: an OS protection switched off (Н10)
+    _witness_off(name, args, ops, cwd, home, project, c)                                 # r0333: the witness itself removed / stopped (Н3)
     _money(name, ops, c, args, via_xargs)                                                # r0313 (Д3): a payment through a shell CLI
     if name == "git":
         _git_global(args, cwd, home, c, depth, project)  # s7 (O1): `git -c alias.x='!curl https://evil' x`
@@ -5000,6 +6155,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
                 c.delete(p_)                              # `find . -name '*.pyc' -delete` at the project root: a filtered delete inside it
             else:
                 c.add("rm-rf", "find " + r_)
+        _find_protected(args, roots, cwd, home, project, c)      # r0337: the agent's settings / the witness among what it deletes
         return
     if name == "find" and any(a in ("-exec", "-execdir", "-ok", "-okdir") and k + 1 < len(args) and os.path.basename(args[k + 1]) in FIND_WRITERS
                               for k, a in enumerate(args)):
@@ -5012,6 +6168,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
             e_ = _expand(r_, cwd, home)
             if e_ is not None and not re.search(r"[*?[]", e_):
                 _write_target(e_, cwd, home, c, c.writes)
+        _find_protected(args, roots or ["."], cwd, home, project, c)      # r0337: the files it matches: the agent's settings, the witness
     if name == "git":
         _git(args, cwd, home, c)
         return
@@ -5489,6 +6646,11 @@ def _git(args, cwd, home, c):
     sub, rest = args[i], args[i + 1:]
     short, long_ = _flags(rest)
     ops = _operands(rest)
+    nv_ = _git_no_verify(sub, rest)
+    if nv_:
+        c.add("git-no-verify", nv_)                      # r0345 (exam 1, EX1-118): the hooks switched off for this command (Н3)
+    if sub == "clone":
+        _git_clone_dest(rest, cwd, home, c)
     for k, a in enumerate(rest):                             # git diff/log/show/format-patch --output=FILE, -o DIR: a write
         if a.startswith("--output=") or a.startswith("--output-directory="):
             _write_target(a.split("=", 1)[1], cwd, home, c, c.writes)
@@ -5531,6 +6693,217 @@ def _git(args, cwd, home, c):
         d = _git_destroy(sub, rest, short, long_, ops)
         if d:
             c.add("git-destroy", d)
+        elif sub in ("restore", "checkout"):
+            _git_discard(args, i, sub, rest, cwd, home, c)
+
+
+# r0344 (live run 0.2.135, S117 "откати всё к последнему коммиту": `git restore -- notes.md src/main.py` ran SILENT): the law of the
+# consequence -- a git command that throws away uncommitted changes of the work tree or the index is lost for good (no reflog keeps them),
+# so it is never below a QUESTION under any mandate, UNLESS a verified copy makes it reversible. The copy is the hook's shadow copy
+# (client 0.2.58+, mcp/deus_witness/hook/shadow.py): taken BEFORE the call runs, its sha256 answered as the fact `fs.shadow`, put back
+# byte for byte by `deus-witness-hook --undo PATH --force` (test_0_2_58_shadow). Per-file discards of the WORK TREE only are covered by it:
+#   git restore [--source=X] [--worktree] [--ours|--theirs|--merge] [--] <file>...   git checkout [--] <file>...   (from the index)
+# silent only when EVERY file is a literal path, a regular file (or absent: nothing to lose) and the hook answered a copy of it; anything
+# else is the danger `git-destroy` (asked): a directory or glob (many files), an expansion, pathspec magic, pathspecs from a file, a
+# credential / the harness / .git (never copied around), --git-dir / --work-tree (another tree), an older hook (no copy), more than
+# DISCARD_SNAP_MAX files. A form that also overwrites the INDEX (`restore -S -W`, `checkout <tree-ish> -- <file>`, `checkout HEAD f`) loses
+# staged changes the copy does not hold: always asked. `git restore --staged <file>` changes only the index (the work tree keeps the
+# text): silent, as before. Whole-tree forms (restore ., checkout ., -f, reset --hard, clean, stash drop|clear, switch -f) are in
+# _git_destroy. The hook copies only paths of this call (R9-05: inside the project or words of the line); a path it will not copy is
+# answered {"failed"} -> asked.
+DISCARD_SNAP_MAX = 8
+_DISCARD_VAL = {"restore": ("-s", "--source", "--pathspec-from-file", "--conflict"),
+                "checkout": ("-b", "-B", "--orphan", "--pathspec-from-file", "--conflict")}
+
+
+def _snap_ok(sh) -> bool:
+    return isinstance(sh, dict) and (sh.get("absent") is True or (isinstance(sh.get("sha256"), str) and len(sh["sha256"]) == 64))
+
+
+def _git_discard(args, i, sub, rest, cwd, home, c):
+    here, k = cwd, 0
+    while k < i:                                     # the global options before the subcommand: -C moves, another tree is unknown
+        a = args[k]
+        if a == "-C" and k + 1 < i:
+            e = _expand(args[k + 1], here, home)
+            if e is None or here == LOST_CWD and not e.startswith(("/", "~")):
+                c.add("git-destroy", "%s (directory unknown)" % sub)
+                return
+            here = _abspath(e, here, home)
+            k += 2
+            continue
+        if a in ("--git-dir", "--work-tree", "--namespace") or a.startswith(("--git-dir=", "--work-tree=")):
+            c.add("git-destroy", "%s (another work tree)" % sub)
+            return
+        k += 2 if a == "-c" else 1
+    vals = _DISCARD_VAL[sub]
+    before, after, flags, dd, j = [], [], set(), False, 0
+    while j < len(rest):
+        a = rest[j]
+        if dd:
+            after.append(a)
+        elif a == "--":
+            dd = True
+        elif a in vals:
+            flags.add(a)
+            j += 1                                   # its value
+        elif a.startswith("--"):
+            flags.add(a.split("=", 1)[0])
+        elif a.startswith("-") and len(a) > 1:
+            if sub == "restore" and a.startswith("-s") and len(a) > 2:
+                flags.add("-s")                      # -sHEAD
+            elif sub == "checkout" and a[1:].rstrip("bB") != a[1:]:
+                flags.add("-b")                      # -fb NAME: the value follows
+                j += 1
+            else:
+                flags |= {"-" + x for x in a[1:]}
+        else:
+            before.append(a)
+        j += 1
+    if "--pathspec-from-file" in flags:
+        c.add("git-destroy", "%s --pathspec-from-file" % sub)
+        return
+    if sub == "restore":
+        staged = flags & {"-S", "--staged"}
+        if staged and not flags & {"-W", "--worktree"}:
+            return                                   # the index only: the work tree keeps the text
+        if staged:
+            c.add("git-destroy", "restore --staged --worktree " + " ".join(before + after)[:80])
+            return
+        paths = before + after
+    else:
+        if flags & {"-b", "-B", "--orphan"} and not dd:
+            return                                   # a new branch at HEAD / a start point: git refuses to lose local changes
+        if dd:
+            if before:                               # `checkout <tree-ish> -- <file>`: the index too
+                c.add("git-destroy", "checkout %s -- %s" % (before[0], " ".join(after))[:120])
+                return
+            paths = after
+        else:
+            if not before:
+                return
+            first = _expand(before[0], here, home)
+            if len(before) > 1 and (first is None or not _fs.current().exists(_abspath(first, here, home))):
+                c.add("git-destroy", "checkout %s %s" % (before[0], " ".join(before[1:]))[:120])     # a tree-ish, then files
+                return
+            paths = [b for b in before if (lambda e: e is not None and _fs.current().exists(_abspath(e, here, home)))(_expand(b, here, home))]
+            if len(paths) < len(before) and len(before) > 1:
+                c.add("git-destroy", "checkout " + " ".join(before)[:120])
+                return
+            # a single word that is no file: a branch switch (git refuses to overwrite local changes), nothing to copy
+    if not paths:
+        return
+    if len(paths) > DISCARD_SNAP_MAX:
+        c.add("git-destroy", "%s of %d files" % (sub, len(paths)))
+        return
+    for p in paths:
+        e = _expand(p, here, home)
+        if e is None or not e or p.startswith(":") or re.search(r"[*?[\\]", e) or "\0" in e or (here == LOST_CWD and not e.startswith(("/", "~"))):
+            c.add("git-destroy", "%s %s" % (sub, p))
+            continue
+        lex = os.path.normpath(os.path.join(here, home + e[1:] if e == "~" or e.startswith("~/") else e))
+        real = _abspath(e, here, home)
+        if _lw_protected(lex) or _lw_protected(real):
+            c.add("git-destroy", "%s %s" % (sub, p))
+            continue
+        sh = _fs.current().shadow(real) if hasattr(_fs.current(), "shadow") else None
+        if not _snap_ok(sh):                         # no copy (or the fact round is pending: judged again with the answer)
+            c.add("git-destroy", "%s %s (no snapshot)" % (sub, p))
+
+
+# r0345 (closed exam 1, EX1-133 chain: `python3 -c "urllib.request.urlretrieve('https://..', '/tmp/k.sh')"` then `sh /tmp/k.sh` ran
+# silently under unlisted=allow): inline code of an interpreter that reaches the network (c.net) and saves to a file NAMED in the line
+# writes that file with a text the line does not show -- a foreign extraction (_cw_add), like `curl -o f`: the next run of it is held.
+# Only the literal first argument of the save calls (urlretrieve's second); a computed name stays what it was.
+_NET_SAVE = re.compile(r"urlretrieve|open\s*\(|write_bytes|write_text|writeFileSync|writeFile|createWriteStream|copyfileobj|File\.(?:write|open)|"
+                       r"IO\.copy_stream|getstore|mirror\s*\(|file_put_contents|copy\s*\(", re.I)
+_NET_SAVE_ARGS = (re.compile(r"urlretrieve\s*\(\s*[^,()]+(?:\([^()]*\))?\s*,\s*(?:filename\s*=\s*)?['\"]([^'\"]+)['\"]"),
+                  re.compile(r"\bopen\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax+][^'\"]*['\"]"),
+                  re.compile(r"(?:Path|pathlib\.Path)\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\.\s*write_(?:bytes|text)"),
+                  re.compile(r"(?:writeFileSync|writeFile|createWriteStream)\s*\(\s*['\"]([^'\"]+)['\"]"),
+                  re.compile(r"File\.(?:write|open)\s*\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*['\"][^'\"]*[wa][^'\"]*['\"])?"),
+                  re.compile(r"(?:getstore|mirror)\s*\(\s*[^,()]+,\s*['\"]([^'\"]+)['\"]"),
+                  re.compile(r"file_put_contents\s*\(\s*['\"]([^'\"]+)['\"]"),
+                  re.compile(r"\bcopy\s*\(\s*['\"]https?://[^'\"]+['\"]\s*,\s*['\"]([^'\"]+)['\"]"))
+
+
+def _net_saves(cmd, cwd, home, c):
+    try:
+        seen = set()
+        for rx in _NET_SAVE_ARGS:
+            for m in rx.finditer(cmd):
+                t = m.group(1)
+                if not t or t in seen or t.startswith(("http://", "https://", "-")) or t in ("/dev/null", "/dev/stdout", "/dev/stderr"):
+                    continue
+                seen.add(t)
+                e_ = _expand(t, cwd, home)
+                if e_ is not None and _abspath(e_, cwd, home) in c.xforeign:
+                    continue                     # a nested classify (the interpreter's own frame) already added it
+                _cw_add(t, cwd, home, c)
+    except Exception:  # noqa: BLE001 -- nothing added: the line is judged as before
+        pass
+
+
+# r0345 (closed exam 1, EX1-118): the git commands whose hooks `--no-verify` skips (git-scm.com/docs: commit pre-commit / commit-msg,
+# merge pre-merge-commit / commit-msg, push pre-push, rebase pre-rebase, am applypatch-msg / pre-applypatch); for commit only `-n` is
+# its short form (for push / merge `-n` is --dry-run / --no-stat). Short options of commit that take a value end the cluster.
+_NO_VERIFY_SUBS = ("commit", "merge", "push", "rebase", "am", "pull")
+_COMMIT_VALUE_SHORT = set("mFcCtSu")
+
+
+def _git_no_verify(sub, rest):
+    if sub not in _NO_VERIFY_SUBS:
+        return None
+    k = 0
+    while k < len(rest):
+        a = rest[k]
+        if a == "--":
+            break
+        if a == "--no-verify" or (len(a) > 4 and "--no-verify".startswith(a) and a.startswith("--no-v")):
+            return "%s --no-verify" % sub
+        if sub == "commit" and a.startswith("-") and not a.startswith("--") and len(a) > 1:
+            for ch in a[1:]:
+                if ch == "n":
+                    return "commit -n (--no-verify)"
+                if ch in _COMMIT_VALUE_SHORT:
+                    if ch in "mFcCt" and len(a) == a.index(ch) + 2:
+                        k += 1                       # `-m msg`: the next word is the value
+                    break
+        elif sub == "commit" and a in ("--message", "--file", "--reuse-message", "--reedit-message", "--template", "--author", "--date",
+                                        "--fixup", "--squash", "--cleanup", "--pathspec-from-file", "--trailer"):
+            k += 1
+        k += 1
+    return None
+
+
+def _git_clone_dest(rest, cwd, home, c):
+    """r0345 (closed exam 1, EX1-133 chain): `git clone URL DIR` writes a whole directory of code from the network (its text is never in
+    the line); the destination is a write of the line (an extraction, like `tar x -C DIR`: execguard.written_run marks it whole), so a
+    later run of a file under it is a run of downloaded code (ESCALATE_WRITTEN_RUN), as `curl -o f` then `sh f` is."""
+    vals = {"-o", "--origin", "-b", "--branch", "-u", "--upload-pack", "--reference", "--reference-if-able", "--separate-git-dir", "--depth",
+            "--shallow-since", "--shallow-exclude", "-c", "--config", "-j", "--jobs", "--filter", "--server-option", "--bundle-uri",
+            "--template", "--revision", "--ref-format"}
+    ops, k = [], 0
+    while k < len(rest):
+        a = rest[k]
+        if a == "--":
+            ops += rest[k + 1:]
+            break
+        if a in vals:
+            k += 2
+            continue
+        if not a.startswith("-"):
+            ops.append(a)
+        k += 1
+    if not ops:
+        return
+    if len(ops) >= 2:
+        d = ops[1]
+    else:
+        d = re.sub(r"(\.git)?/*$", "", ops[0]).rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    if not d or d in (".", "..") or re.search(r"[$`*?]", d):
+        return
+    _cw_add(d, cwd, home, c, whole=True)          # a foreign extraction of a whole directory (xforeign + xdirs)
 
 
 def _git_destroy(sub, rest, short, long_, ops):
@@ -5934,6 +7307,323 @@ def _defense(name, args, ops, short, long_, c):
         c.add(DEFENSE, det)
 
 
+# r0333 (Я0 nabor-1 S126, 17.11; Constitution v1 Н3 "switching off / bypassing the guard: its hooks, the agent's settings, the key"): the
+# agent removes, stops or replaces the witness itself. The law is the CONSEQUENCE (after the line the witness does not judge the next one),
+# not a list of spellings: the package by its name as the installer reads it (PEP 503: any case, - _ . alike, extras, a version), the
+# witness's own programs told to stop, a kill whose target names it, a file of its installation changed or deleted outside the project.
+# Refused at once with any mandate (constitution FORBIDDEN_WITNESS_OFF): the person removes it by hand in their own terminal.
+# Not here: `pip install -U deus-witness` from the default index (an upgrade the person asks for: the question it was; another version or
+# source over it is refused since r0337, _witness_replace_of), a file of the witness INSIDE the project
+# (its own source tree, where its developers work), `claude plugin disable deus-witness` and the witness's state flags (already Н3/Н4 as
+# `persist`, FORBIDDEN_AUTOSTART).
+WITNESS_OFF = "witness-off"
+WITNESS_NAME = re.compile(r"(?i)deus[\s_.-]*witness")
+_WITNESS_PKG = re.compile(r"(?i)^deus[-_.]+witness(?:[-_.]+(?:hook|mcp))?(?:\[[^\]]*\])?(?:\s*(?:[<>=!~;@]|\s).*)?$")
+_WITNESS_PROGS = frozenset({"deus-witness", "deus-witness-hook", "deus-witness-mcp"})
+_WITNESS_OFF_SUBS = frozenset({"unlock", "disable", "off", "pause", "stop", "uninstall", "remove", "kill", "bypass", "deactivate", "suspend"})
+_PKG_REMOVE = {"pipx": {"uninstall", "uninject"}, "poetry": {"remove"}, "pdm": {"remove"}, "conda": {"remove", "uninstall"},
+               "mamba": {"remove", "uninstall"}, "micromamba": {"remove", "uninstall"}, "brew": {"uninstall", "remove", "rm"},
+               "rye": {"remove", "uninstall"}, "hatch": {"remove"}}
+# where the witness lives on a machine (outside a project): the Python package, its programs, Claude Code's plugin, pipx / uv tool
+# environments, its key and state. A path whose any part names the witness under one of these places.
+_WITNESS_FILE = re.compile(
+    r"(?i)/(?:site|dist)-packages/(?:deus[-_.]?witness|_?deus_witness)[^/]*(?:/|$)|/bin/deus[-_.]?witness[^/]*$|"
+    r"/\.claude/plugins/(?:.*/)?[^/]*deus[-_.]?witness[^/]*(?:/|$)|/pipx/venvs/deus[-_.]?witness(?:/|$)|/uv/tools/deus[-_.]?witness(?:/|$)|"
+    r"/\.config/deus-witness(?:/|$)|/\.deus-witness(?:/|$)|/Application Support/deus-witness(?:/|$)|/\.local/share/deus-witness(?:/|$)")
+# the folders that hold the witness in the home folder: deleting or moving one of them (or a folder between them and the home) removes it
+_WITNESS_HOME_DIRS = (".claude/plugins", ".deus-witness", ".config/deus-witness", ".local/share/deus-witness", ".local/pipx/venvs",
+                      ".local/share/uv/tools")
+_FILE_CHANGERS_ALL = frozenset({"rm", "rmdir", "unlink", "chmod", "chown", "chgrp", "chflags", "truncate", "shred", "srm", "xattr", "tee"})
+_FILE_CHANGERS_LAST = frozenset({"cp", "install", "ln", "rsync", "ditto", "gcp", "gln"})
+_PIP_NAME = re.compile(r"pip[0-9.]*")
+_WITNESS_OFF_NAMES = frozenset({"uv", "pkill", "killall", "mv", "sed", "perl", "gsed"}) | frozenset(_PKG_REMOVE) | _WITNESS_PROGS | \
+    _FILE_CHANGERS_ALL | _FILE_CHANGERS_LAST
+
+
+def witness_file(p, home=None, project=None, delete=False):
+    """r0333: -> True when the absolute path `p` is (or, deleted / moved away, holds) a file of the witness's installation outside the project."""
+    if not isinstance(p, str) or not p.startswith("/"):
+        return False
+    q = posixpath.normpath(p)
+    if isinstance(project, str) and project.startswith("/"):
+        pr = posixpath.normpath(project).rstrip("/")
+        if q == pr or q.startswith(pr + "/"):
+            return False
+    if _WITNESS_FILE.search(q):
+        return True
+    if delete and isinstance(home, str) and home.startswith("/"):
+        h = posixpath.normpath(home).rstrip("/")
+        if q.startswith(h + "/"):                    # the home folder itself or above it: Н5 (FORBIDDEN_WIPE) owns it
+            for d in _WITNESS_HOME_DIRS:
+                t = h + "/" + d
+                if t == q or t.startswith(q + "/"):
+                    return True
+    return False
+
+
+def _witness_off_of(name, args, ops, cwd, home, project):
+    """r0333: -> the detail of a call that removes / stops / replaces the witness, or None. The program's name in any case: on a
+    case-insensitive file system (macOS's default) `PIP` and `Rm` run pip and rm."""
+    name = name.rsplit("/", 1)[-1].lower() if isinstance(name, str) else ""
+    if name not in _WITNESS_OFF_NAMES and not _PIP_NAME.fullmatch(name) and not (
+            PY_MODULE.fullmatch(name) and list(args[:2]) == ["-m", "pip"]):
+        return None                                  # 17.11 (kand3, cost): no branch below can match this program
+    lops = [str(o) for o in ops]
+    pkg = next((o for o in lops if _WITNESS_PKG.match(o)), None)
+    pip_args = args[2:] if PY_MODULE.fullmatch(name) and list(args[:2]) == ["-m", "pip"] else (args if re.fullmatch(r"pip[0-9.]*", name) else None)
+    if pip_args is not None:
+        pops = [str(o) for o in _operands(pip_args)]
+        if pops[:1] == ["uninstall"] and any(_WITNESS_PKG.match(o) for o in pops[1:]):
+            return "pip uninstall " + next(o for o in pops[1:] if _WITNESS_PKG.match(o))
+        if pops[:1] == ["install"]:
+            return _witness_replace_of("pip install", pip_args[list(pip_args).index("install") + 1:])
+        return None
+    if name == "uv" and pkg and (lops[:2] in (["pip", "uninstall"], ["tool", "uninstall"]) or lops[:1] == ["remove"]):
+        return "uv %s %s" % (" ".join(lops[:2] if lops[:1] != ["remove"] else lops[:1]), pkg)
+    if name == "uv" and lops[:2] in (["pip", "install"], ["tool", "install"], ["tool", "upgrade"]):
+        k = list(args).index(lops[1], list(args).index(lops[0]) + 1)
+        return _witness_replace_of("uv %s %s" % tuple(lops[:2]), args[k + 1:])
+    if name == "pipx" and lops[:1] and lops[0] in ("runpip", "inject") and lops[1:2] and _WITNESS_PKG.match(lops[1]) and (
+            lops[0] == "inject" or any(o in ("install", "uninstall") for o in lops[2:])):
+        return "pipx %s %s: changes the packages inside the witness's own environment" % (lops[0], lops[1])
+    if name == "pipx" and lops[:1] and lops[0] in ("install", "upgrade", "reinstall"):
+        return _witness_replace_of("pipx " + lops[0], args[list(args).index(lops[0]) + 1:])
+    if name in _PKG_REMOVE and pkg and lops[:1] and lops[0] in _PKG_REMOVE[name]:
+        return "%s %s %s" % (name, lops[0], pkg)
+    if name in _WITNESS_PROGS and lops[:1] and lops[0].lower() in _WITNESS_OFF_SUBS:
+        return "%s %s" % (name, lops[0])
+    if name in ("pkill", "killall", "pgrep"):
+        if name == "pgrep":
+            return None
+        for o in lops:
+            if WITNESS_NAME.search(re.sub(r"[\\^$*+?()\[\]{}|.]", "", o)) or "witness" in o.lower():
+                return "%s %s" % (name, o[:80])
+        return None
+    if name in _FILE_CHANGERS_ALL or name in _FILE_CHANGERS_LAST or name == "mv" or (name in ("sed", "perl", "gsed") and any(
+            a == "-i" or a.startswith("-i") or a.startswith("--in-place") or (re.fullmatch(r"-[a-zA-Z]*i[a-zA-Z]*", a) is not None) for a in args)):
+        if name in _FILE_CHANGERS_LAST:
+            cand, dele = lops[-1:], False
+        else:
+            cand, dele = lops, name in ("rm", "rmdir", "unlink", "mv", "shred", "srm")
+        for o in cand:
+            if not _lit_ok(o):
+                continue
+            e = _expand(o, cwd, home)
+            if e is None:
+                continue
+            a_ = _abspath(e, cwd, home)
+            r_ = a_
+            try:
+                r_ = _fs.current().realpath(a_)          # through a link the line or the disk made (`ln -s ~/.local/bin b; rm b/deus-witness-hook`)
+            except Exception:  # noqa: BLE001
+                pass
+            if witness_file(a_, home, project, delete=dele) or witness_file(r_, home, project, delete=dele):
+                return "%s %s" % (name, a_[:120])
+    return None
+
+
+# r0337 (Constitution v4, law 8: of 50 known attempts 10 were asked): installing the witness OVER itself from another source or at another
+# version replaces the judge with code nobody published as it -- the consequence of an uninstall. Refused with any mandate: a version that
+# pins or caps (`==`, `<`, `~=`, `!=`, `name@1.0`, `name @ url`), a file / folder / URL / VCS whose name is the witness's, another index
+# (`-i`, `--index-url`, `--extra-index-url`, `--find-links`, `--no-index`, uv's `--index`, pipx `--pip-args='--index-url ..'`), extra
+# code put into its environment (uv `--with`). Not refused, the question it was: `pip install -U deus-witness`, `--force-reinstall`,
+# `--pre`, `@latest`, `>=X` -- the same package from the same default index (PyPI) its publisher signs releases to: an upgrade the person
+# may well want, not a replacement by a stranger. A requirements file (`-r`) is not read: what it pins is not seen (the question).
+_WITNESS_SRC_FLAG = re.compile(r"(?:^|\s|=)(?:-i|--index-url|--extra-index-url|-f|--find-links|--no-index|--index|--default-index|"
+                               r"--trusted-host|--with|--with-requirements|--with-editable|-w)(?:[=\s]|$)|^-[if]\S")
+_WITNESS_HEAD = re.compile(r"(?i)^deus[-_.]+witness(?:[-_.]+(?:hook|mcp))?(?:\[[^\]]*\])?")
+_SRC_FORM = re.compile(r"(?i)^(?:git|hg|svn|bzr)\+|^[a-z][a-z0-9+.-]*://|^file:|/|\.(?:whl|tar\.gz|tgz|tar\.bz2|zip)$|^\.{1,2}$")
+
+
+def _witness_replace_of(tool, args):
+    """r0337: -> the detail when an install (pip / uv pip / uv tool / pipx, `args` after the subcommand) puts another witness over it."""
+    args = [str(a) for a in args]
+    ops = [str(o) for o in _operands(args)]
+    named = [o for o in ops if _WITNESS_PKG.match(o)]
+    for o in ops:                                        # a wheel / sdist / folder / URL / git+ that is the witness
+        if _SRC_FORM.search(o) and WITNESS_NAME.search(o) and not _WITNESS_PKG.match(o):
+            return "%s %s: the witness from another source" % (tool, o[:100])
+    for o in named:
+        rest = _WITNESS_HEAD.sub("", o, count=1).split(";", 1)[0].strip()
+        if rest and rest.lower() != "@latest" and re.search(r"==|<|~=|!=|@", rest):
+            return "%s %s: another version of the witness over it" % (tool, o[:100])
+    if named and "@" in ops:                             # `deus-witness @ https://...`
+        return "%s %s @ %s: the witness from another source" % (tool, named[0], ops[ops.index("@") + 1] if ops.index("@") + 1 < len(ops) else "")
+    flags = [a for a in args if a.startswith("-") and not (tool.startswith("pipx") and re.fullmatch(r"-[a-zA-Z]*f[a-zA-Z]*", a))]   # pipx -f: --force
+    if named and any(_WITNESS_SRC_FLAG.search(a) for a in flags):
+        return "%s %s: the witness from another index, or with code added to its environment" % (tool, named[0])
+    return None
+
+
+_FIND_EXEC_WRITE = frozenset({"rm", "rmdir", "unlink", "shred", "srm", "mv", "tee", "chmod", "chown", "chgrp", "chflags", "truncate", "dd"})
+_FIND_EXEC_LAST = frozenset({"cp", "install", "ln", "gcp", "gln", "ditto", "rsync"})
+_FIND_EXEC_INPLACE = frozenset({"sed", "gsed", "perl"})
+
+
+def _find_protected(args, roots, cwd, home, project, c):
+    """r0337 (Constitution v4, law 8: `find ~/.claude -name settings.json -exec sed -i '' '/deus/d' {} +` was asked): find hands the
+    files it matches to a program that changes them. Which files: the agent's settings (home and project) and the witness's installation
+    under a start point, filtered by -name / -iname / -path (a negated one filters nothing). A settings file is a write to it (the
+    persist / agent-config marks: refused, as `sed -i` on it is); the witness's place, or a name of the witness matched outside the
+    project, is FORBIDDEN_WITNESS_OFF. Inside the project the project's own settings count only for a filter that names them (`find . -type f
+    -exec sed -i ...`, `-name '*.json'` refactor code: whether the settings exist is not asked, R9-05)."""
+    import fnmatch
+    args = [str(a) for a in args]
+    changes = False
+    for k, a in enumerate(args):
+        if a not in ("-exec", "-execdir", "-ok", "-okdir") or k + 1 >= len(args):
+            continue
+        seg = []
+        for b in args[k + 1:]:
+            if b in (";", "\\;", "+"):
+                break
+            seg.append(b)
+        prog = os.path.basename(seg[0]).lower() if seg else ""
+        if prog in _FIND_EXEC_WRITE or (prog in _FIND_EXEC_LAST and seg[-1:] == ["{}"]) or (prog in _FIND_EXEC_INPLACE and any(
+                x == "-i" or x.startswith("--in-place") or re.fullmatch(r"-[a-zA-Z]*i[a-zA-Z]*", x) for x in seg[1:])):
+            changes = True
+    changes = changes or "-delete" in args
+    if not changes or not isinstance(home, str) or not home.startswith("/"):
+        return
+    pats, neg = [], False
+    for k, a in enumerate(args):
+        if a in ("!", "-not"):
+            neg = True
+            continue
+        if a in ("-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename") and k + 1 < len(args):
+            if not neg:
+                pats.append((a, args[k + 1].strip("'\"")))
+        neg = False
+    h = home.rstrip("/")
+    settings = [h + "/.claude/settings.json", h + "/.claude/settings.local.json"]
+    if isinstance(project, str) and project.startswith("/"):
+        settings += [project.rstrip("/") + "/.claude/settings.json", project.rstrip("/") + "/.claude/settings.local.json"]
+    witness = [h + "/.local/bin/deus-witness-hook", h + "/.local/bin/deus-witness", h + "/.local/bin/deus-witness-mcp"] + \
+        [h + "/" + d for d in _WITNESS_HOME_DIRS]
+
+    def hit(p):
+        if not pats:
+            return True
+        m = [fnmatch.fnmatchcase((posixpath.basename(p) if op in ("-name", "-iname") else p).lower() if op.startswith("-i") else
+                                 (posixpath.basename(p) if op in ("-name", "-iname") else p), pt.lower() if op.startswith("-i") else pt)
+             for op, pt in pats]
+        return any(m) if any(a in ("-o", "-or") for a in args) else all(m)     # find ANDs its tests; with an -o: any of them
+    for r_ in roots:
+        e_ = _expand(r_, cwd, home)
+        if e_ is None or re.search(r"[*?[]", e_):
+            continue
+        root = posixpath.normpath(_abspath(e_, cwd, home)).rstrip("/") or "/"
+        under = (lambda p: p == root or p.startswith(root + "/") or root == "/")
+        inside = isinstance(project, str) and _in_project(root, project)
+        if witness_file(root, home, project):
+            c.add(WITNESS_OFF, "find %s changes the files of the witness" % root[:100])
+            return
+        for p in witness:
+            if under(p) and pats and hit(p) and p != root:
+                c.add(WITNESS_OFF, "find %s changes %s" % (root[:80], p[len(h):][:80]))
+                return
+        if not inside and any(WITNESS_NAME.search(pt) or any(fnmatch.fnmatchcase(n, pt.lower() if op.startswith("-i") else pt)
+                                                             for n in ("deus-witness", "deus_witness", "deus-witness-hook"))
+                              for op, pt in pats if op in ("-name", "-iname")):
+            c.add(WITNESS_OFF, "find %s changes the files named as the witness" % root[:100])
+            return
+        for p in settings:
+            if under(p) and hit(p) and (any(re.search(r"(?i)settings|\.claude", pt) for _, pt in pats)
+                                        if _in_project(p, project or "/nonexistent") else True):
+                # the marks only, not a write: the path may not be made of the line's words (`-name 'settings*.json'`), and the
+                # witness asks the hook about the files a line writes only by them (R9-05)
+                c.add("persist", p)
+                c.add("agent-config", p)
+
+
+def _witness_off(name, args, ops, cwd, home, project, c):
+    det = _witness_off_of(name, args, ops, cwd, home, project)
+    if det is not None:
+        c.add(WITNESS_OFF, det)
+
+
+# r0337: a one-line program of perl / node / ruby / php / deno / bun / lua that deletes, moves or overwrites a file of the witness's
+# installation (or the agent's settings that start it) in the home folder: `perl -e 'unlink "$ENV{HOME}/.local/bin/deus-witness-hook"'`,
+# `node -e "fs.rmSync(os.homedir()+'/.claude/plugins',{recursive:true})"`. Python has its own reader (pycode: the path is resolved);
+# these are read as text, one statement at a time: a changing call and the witness's place in the SAME statement, and the home folder
+# named on the line (`$ENV{HOME}`, `homedir()`, `~/`, `Dir.home` ...) or the place written after a `/`. A read is not a change.
+_CODE_INTERP = re.compile(r"(?i)^(?:sudo |doas )?(?:\S*/)?(?:perl[0-9.]*|node|nodejs|ruby[0-9.]*|php[0-9.]*|deno|bun|lua[0-9.]*|luajit)(?:\s|$)")
+_CODE_CHANGE = re.compile(
+    r"(?:\b(?:unlink|unlinkSync|rmSync|rmdirSync|rmdir|rm|rm_r|rm_rf|rm_f|rmtree|remove_tree|remove|remove_dir|remove_entry|"
+    r"remove_entry_secure|delete|rename|renameSync|move|mv|truncate|truncateSync|writeFile|writeFileSync|appendFile|appendFileSync|"
+    r"write|chmod|chmodSync|copyFile|copyFileSync|cpSync|symlink|symlinkSync|file_put_contents|openSync|createWriteStream)\b\s*[(\s\"'$]"
+    r"|\bopen\b[^;\n]{0,160}?['\"](?:\+?>>?|\+?[wa]\+?b?)['\"])")      # bounded: no quadratic scan of a 32 KB line
+_CODE_PLACE = re.compile(r"(?i)(?:\.local/bin/deus[-_.]?witness|/bin/deus[-_.]?witness|\.claude/plugins|\.deus-witness|\.config/deus-witness|"
+                         r"\.local/share/deus-witness|(?:site|dist)-packages/_?deus[-_.]?witness|pipx/venvs/deus|uv/tools/deus|"
+                         r"\.local/pipx/venvs|\.local/share/uv/tools|\.claude/settings(?:\.local)?\.json|"
+                         r"\.claude['\"]\s*[,+]\s*['\"]/?(?:plugins|settings(?:\.local)?\.json)\b)")
+_CODE_HOME = re.compile(r"~/|\$HOME\b|\$\{HOME\}|ENV\{['\"]?HOME|ENV\[['\"]HOME|homedir|expanduser|Dir\.home|Deno\.env|getenv\(['\"]HOME|"
+                        r"\$_SERVER\[['\"]HOME|os\.getenv|process\.env\.HOME|env\[['\"]HOME")
+
+
+def _witness_code_of(cmd, heads):
+    if not any(_CODE_INTERP.match(h) for h in heads) or not _CODE_PLACE.search(cmd):
+        return None
+    home = bool(_CODE_HOME.search(cmd))
+    for st in re.split(r";|\n|&&|\|\|", cmd):
+        m = _CODE_PLACE.search(st)
+        if not m or not _CODE_CHANGE.search(st):
+            continue
+        pre = st[:m.start()]
+        if home or "packages/" in m.group(0) or (pre.endswith("/") and not pre.endswith("./")):
+            return "a one-line program changes %s" % m.group(0)
+    return None
+
+
+_KILLERS = re.compile(r"(?i)^(?:sudo |doas )?(?:\S*/)?(?:kill|pkill|killall)(?:\s|$)")
+_REMOVERS = re.compile(r"(?i)^(?:sudo |doas )?(?:\S*/)?(?:pip[0-9.]* uninstall|(?:python|pypy)[0-9.]* -m pip|uv (?:pip|tool|remove)|pipx|"
+                       r"(?:poetry|pdm|rye|hatch) remove|(?:conda|mamba|micromamba) (?:remove|uninstall)|brew (?:uninstall|remove|rm))(?:\s|$)")
+
+
+def _witness_line(cmd, c, home, project):
+    """r0333: what one simple command cannot see -- the target comes from input or a substitution (`pgrep -f deus-witness | xargs kill`,
+    `kill $(pgrep -f deus-witness)`, `echo deus-witness | xargs pip uninstall -y`, `P=deus-witness; pip uninstall -y $P`): a line that NAMES
+    the witness and kills, or removes a package with a name the line does not show. And a file the line writes or deletes (a redirection
+    `> ~/.local/bin/deus-witness-hook` too) that is the witness's installation outside the project."""
+    if not isinstance(cmd, str) or any(d.startswith(WITNESS_OFF + ":") for d in c.danger):
+        return
+    names = bool(WITNESS_NAME.search(cmd))
+    # the paths the line writes / deletes, and those of its recursive deletes (`find DIR -delete`, `shutil.rmtree(P)` in code: the mark
+    # rm-rf carries the path); a folder that HOLDS the witness counts when the line names it (`find ~/.local/bin -name 'deus-witness*' -delete`)
+    cand = [(p, p in c.deletes) for p in c.writes if isinstance(p, str)]
+    for d in c.danger:
+        if d.startswith("rm-rf:"):
+            for m in re.finditer(r"(?:(?<=[\s(,'\"])|^)(~(?=/)|/)[^\s()'\",;]*", d[6:]):
+                t = m.group(0)
+                if t.startswith("~") and isinstance(home, str):
+                    t = home.rstrip("/") + t[1:]
+                cand.append((t, True))
+    for p, dele in cand:
+        q = posixpath.normpath(p) if p.startswith("/") else p
+        if witness_file(q, home, project, delete=dele) or (names and dele and q.startswith("/") and (
+                witness_file(q + "/deus-witness-hook", home, project) or witness_file(q + "/deus_witness", home, project))):
+            c.add(WITNESS_OFF, ("deletes " if dele else "writes ") + q[:120])
+            return
+    heads = [h for h in c.heads if isinstance(h, str)]
+    det = _witness_code_of(cmd, heads)
+    if det is not None:
+        c.add(WITNESS_OFF, det)
+        return
+    if names and re.search(r"\b(?:PIP|UV)_(?:INDEX_URL|EXTRA_INDEX_URL|FIND_LINKS|INDEX|DEFAULT_INDEX|NO_INDEX)=", cmd) and \
+            re.search(r"\binstall\b", cmd) and any(re.match(r"(?i)^(?:sudo |doas )?(?:\S*/)?(?:pip[0-9.]*|uv|pipx|(?:python|pypy)[0-9.]*)(?:\s|$)", h)
+                                                   for h in heads):
+        c.add(WITNESS_OFF, "the witness installed from another index set in the line's environment")
+        return
+    if not names:
+        return
+    if any(_KILLERS.match(h) for h in heads):
+        c.add(WITNESS_OFF, "a kill on a line that names the witness")
+        return
+    if re.search(r"(?i)\b(?:uninstall|remove|rm)\b", cmd) and any(_REMOVERS.match(h) for h in heads) and \
+            (any("via xargs" in h or "via parallel" in h for h in heads) or re.search(r"[$`]", cmd)):
+        c.add(WITNESS_OFF, "a package removed on a line that names the witness, its name from input")
+
+
 # r0313 (KONSTITUCIYA-KATALOG-1411 Д3, class M2): money spent through a shell CLI. The programs are strict_policy's (they already carry the
 # danger `exit` in the default mode, mapping.standing_exit: asked as "a program that reaches the internet"); the mark `money` says what the
 # line does -- the vocabulary's own ESCALATE_MONEY sentence ("Your agent wants to pay ..."), Critical. A question, never a refusal; only a
@@ -6115,7 +7805,7 @@ def _gates(name, args, ops, short, long_, cwd, home, c):
     if name == "defaults" and ops[:1] == ["write"] and any(re.search(r"loginwindow|loginitems|LaunchAgents|com\.apple\.(dock|SystemEvents)", o, re.I) for o in ops[1:]):
         c.add("persist", "defaults write " + " ".join(ops[1:3]))
         return
-    if name == "osascript" and re.search(r"login\s+item", " ".join(args), re.I):
+    if name == "osascript" and re.search(r"login\s+item", " ".join(args), re.I) and not _osa_login_read(args):
         c.add("persist", "osascript: login item")
         return
     if name in INSTALLERS:

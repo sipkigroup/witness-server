@@ -181,6 +181,13 @@ def _facts(body) -> dict:
             _bad("facts.fs.archive: path -> null or {links, more}")
         n += sum(1 + len(v["links"]) if isinstance(v, dict) else 1 for v in ar.values())
         clean["archive"] = ar
+    if "sample" in sfs:                              # r0335: {path of a .env template: true | false | null} (samplefile.answer)
+        sm = sfs["sample"] if sfs["sample"] is not None else {}
+        if not isinstance(sm, dict) or len(sm) > 16 or not all(isinstance(k, str) and len(k) <= fs.MAX_PATH and (v is None or isinstance(v, bool))
+                                                               for k, v in sm.items()):
+            _bad("facts.fs.sample: path -> true, false or null")
+        n += len(sm)
+        clean["sample"] = sm
     if n > MAX_FACTS:
         raise Err(413, "BODY_TOO_LARGE", "too many file-system facts")
     ex = f.get("exec")
@@ -192,6 +199,9 @@ def _facts(body) -> dict:
             isinstance(v, list) and 1 <= len(v) <= 2 and all(isinstance(x, str) and x.startswith("/") and len(x) <= fs.MAX_PATH for x in v)))
             for k, v in wh.items()):
         out["which"] = dict(wh)                      # malformed or absent = no fact: EXEC_CHANGED asks as before
+    pg = f.get("prog")                               # r0338 (client r0338): the identity of the line's programs by their files (progid.fact)
+    if _prog_fact(pg):
+        out["prog"] = {"v": pg["v"], "w": dict(pg["w"]), "p": dict(pg["p"])}     # malformed or absent = no fact: judged by the name
     gs = f.get("git_self")                           # 0.2.95 (client 0.2.63): SHA-256 of the person's own git user.email (datarule.own_addresses)
     if isinstance(gs, list) and 0 < len(gs) <= 4 and all(isinstance(x, str) and re.fullmatch(r"[0-9a-f]{64}", x) for x in gs):
         out["git_self"] = list(gs)                   # malformed or absent = no fact: an address in the line is judged as before
@@ -211,6 +221,28 @@ def _facts(body) -> dict:
 
 
 WHICH_NAME = re.compile(r"[A-Za-z][A-Za-z0-9._+-]{0,31}")
+_PROG_ZONES = frozenset({"sys", "proj", "tmp", "home", "other"})
+_PROG_NAME = re.compile(r"[A-Za-z0-9_.+-]{1,64}")
+
+
+def _prog_ident(v) -> bool:
+    if v is None:
+        return True
+    if not isinstance(v, dict) or not set(v) <= {"path", "real", "link", "dev", "ino", "nlink", "size", "zone", "same"}:
+        return False
+    sm = v.get("same", [])
+    return (all(isinstance(v.get(k), str) and v[k].startswith("/") and len(v[k]) <= fs.MAX_PATH for k in ("path", "real"))
+            and v.get("zone") in _PROG_ZONES and isinstance(v.get("link", False), bool)
+            and all(isinstance(v.get(k, 0), int) and not isinstance(v.get(k, 0), bool) and v.get(k, 0) >= 0 for k in ("dev", "ino", "nlink", "size"))
+            and isinstance(sm, list) and len(sm) <= 128 and all(isinstance(x, str) and _PROG_NAME.fullmatch(x) for x in sm))
+
+
+def _prog_fact(pg) -> bool:
+    """r0338: {"v": 1, "w": {word: ident | null}, "p": {path: ident | null}} (progid.fact), at most 64 + 64 entries."""
+    return (isinstance(pg, dict) and pg.get("v") == 1 and isinstance(pg.get("w"), dict) and isinstance(pg.get("p"), dict)
+            and len(pg["w"]) <= 64 and len(pg["p"]) <= 64
+            and all(isinstance(k, str) and 0 < len(k) <= 64 and _prog_ident(v) for k, v in pg["w"].items())
+            and all(isinstance(k, str) and k.startswith("/") and len(k) <= fs.MAX_PATH and _prog_ident(v) for k, v in pg["p"].items()))
 
 
 def _shadow_value(v) -> bool:
@@ -247,6 +279,18 @@ def _gitref_value(v) -> bool:
     return (set(v) == {"commit", "paths", "more", "special"} and isinstance(v["more"], bool)
             and isinstance(ps, list) and len(ps) <= 1000 and all(isinstance(p, str) and 0 < len(p) <= fs.MAX_PATH for p in ps)
             and isinstance(sp, list) and len(sp) <= 64 and all(isinstance(x, str) and len(x) <= fs.MAX_PATH + 64 for x in sp))
+
+
+def _vk_rp(fx):
+    """r0331 + r0338: the realpath facts the shadow vector reads -- the ones the witness asked, and the real file of every path word the
+    hook reported a program identity for (progid: the file run, so `~/x.sh` is no longer "no fact of where it really is")."""
+    out = dict(fx.rp) if isinstance(fx.rp, dict) else {}
+    pg = getattr(fx, "prog", None)
+    if isinstance(pg, dict):
+        for k, v in (pg.get("p") or {}).items():
+            if isinstance(v, dict) and isinstance(v.get("real"), str) and k not in out:
+                out[k] = v["real"]
+    return out
 
 
 class _Facts(fs.FactsFS):
@@ -294,7 +338,12 @@ def classify_event(body: dict):
                 # 0.2.94 (r0264, L3 12.11): a hook that does not say "tmpdir" (client 0.2.61) refuses the whole call HOOK_ERROR when asked
                 # the realpath of <its TMPDIR>/x (not a word of its line, R9-05). For it $TMPDIR stays unknown: the 0.2.92 question.
                 env_ = {k: v for k, v in env_.items() if k != "TMPDIR"}
-            parts = mapping.map_event(body.get("event"), home=facts["home"], env=env_)
+            from . import bashparse as _bp_
+            vtok_ = _bp_.vk_begin()                  # r0331: what the shadow vector reads of the line (decides nothing, asks no fact)
+            try:
+                parts = mapping.map_event(body.get("event"), home=facts["home"], env=env_)
+            finally:
+                vk_ = _bp_.vk_end(vtok_)
             try:                                     # r0262: where a written file's text is judged (strict_policy.PLACE, actions);
                 ev_ = body.get("event") if isinstance(body.get("event"), dict) else {}      # never in `body` (its hash is signed)
                 cwd_ = ev_.get("cwd") if isinstance(ev_.get("cwd"), str) else None
@@ -303,7 +352,8 @@ def classify_event(body: dict):
                 pr_ = e_.get("CLAUDE_PROJECT_DIR") if isinstance(e_.get("CLAUDE_PROJECT_DIR"), str) and e_["CLAUDE_PROJECT_DIR"].startswith("/") else cwd_
                 rp_ = (lambda q: fx.rp[q] if isinstance(q, str) and isinstance(fx.rp.get(q), str) else q)
                 _LAST_PLACE.set({"project": rp_(pr_) if isinstance(pr_, str) and pr_.startswith("/") else None, "home": facts["home"],
-                                 "cwd": rp_(cwd_) if isinstance(cwd_, str) and cwd_.startswith("/") else None})
+                                 "cwd": rp_(cwd_) if isinstance(cwd_, str) and cwd_.startswith("/") else None,
+                                 "vk": vk_, "rp": _vk_rp(fx)})     # r0331: the vector's (shadow) only
             except Exception:      # noqa: BLE001
                 _LAST_PLACE.set(None)
         except mapping.Refuse as e:
@@ -421,7 +471,7 @@ def refused_text(ctx, agent, tool, res):
             "asked again after that" % (t, tool, (x["recipient"] or "-")[:160], ": " + shown if shown else "", until))
 
 
-LATEST_CLIENT = "0.2.77"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
+LATEST_CLIENT = "0.2.79"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
 
 
 def notify_view(ctx, agent) -> dict:
@@ -586,6 +636,8 @@ def _judge_parts(ctx, agent, body, parts, only, capable, created, sid, out):
         if res.get("verdict") == "deny" or res.get("status") in ("refused", "expired"):
             break                                         # the first refusal decides (as the 0.2.15 hook did): nothing more is judged
     _one_question(ctx, agent, out, created, only)
+    from app import vektor as _vk                      # r0330: the consequence vector in SHADOW (next to the verdict; decides nothing)
+    _vk.note(ctx, agent, [(m.tool, m.args) for m in parts], [p["result"].get("rid") for p in out], _LAST_PLACE.get())
     res = {"v": 1, "n_parts": len(parts), "parts": [{k: v for k, v in p.items() if k != "ash"} for p in out], "texts": texts_for([p["result"].get("reason") for p in out]),
            "statement_b64": statement(ctx, body, only, parts, out)}
     if any(p["result"].get("status") in ("pending_approval", "held") for p in out):

@@ -210,7 +210,7 @@ def test_b_preview_is_dropped_once_decided(client, dev):
 # ---------------------------------------------------------------- C: the last poll says so
 def test_c_final_poll_marks_not_run_timeout(client, dev):
     proj, run, hdr = dev
-    rid = _rid(run("hostname")[1])
+    rid = _rid(run("pmset -g")[1])
     assert client.get("/v1/actions/%s?wait=1&final=1" % rid, headers=hdr).json()["status"] == "pending_approval"
     g = client.get("/api/approvals/" + rid).json()
     assert g["agent_waiting"] is False and g["gave_up_at"] and g["status"] == "pending_approval"     # at once; still approvable
@@ -224,7 +224,7 @@ def test_c_final_poll_marks_not_run_timeout(client, dev):
 
 def test_c_final_without_timeout_marks_nothing(client, dev, owner):
     proj, run, hdr = dev
-    rid = _rid(run("hostname")[1])
+    rid = _rid(run("pmset -g")[1])
     owner_ok = client.get("/v1/actions/%s?wait=0" % rid, headers=hdr).json()      # a status read (no wait), not final
     assert owner_ok["status"] == "pending_approval"
     assert "gave_up_at" not in client.get("/api/approvals/" + rid).json()
@@ -239,7 +239,7 @@ def test_c_thin_hook_says_its_last_poll(client, dev, monkeypatch):
         seen.append((wait, final))
         return orig(self, rid, wait=wait, final=final)
     monkeypatch.setattr(dwc.Witness, "get", spy)
-    d, why = run("hostname", wait="2")
+    d, why = run("pmset -g", wait="2")
     assert d == "deny" and "nobody approved it" in why, why
     assert seen and seen[-1][1] is True and all(not f for _, f in seen[:-1]), seen
     g = client.get("/api/approvals/" + _rid(why)).json()

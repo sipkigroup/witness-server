@@ -216,10 +216,11 @@ class DB:
                                     ("actions", "line_lead", "TEXT"),    # 04.11 (L3): rid of the question that stands for this one (one tool call = one question)
                                     ("actions", "deny_key", "TEXT"),     # 05.11 (RT hole 1): normalized key of a dangerous shell line, to keep a refused line refused in the window
                                     ("sandbox_sessions", "strict", "INTEGER"),   # r0261c (д): the session had a strict Bash fact
-                                    ("allowances", "branch", "TEXT"), ("allowances", "end_reason", "TEXT"),   # 0.2.96: "from now on" ends on a branch change
+                                    ("allowances", "branch", "TEXT"), ("allowances", "end_reason", "TEXT"), ("allowances", "trust_v", "TEXT"),   # r0327: text of trust signed   # 0.2.96: "from now on" ends on a branch change
                                     ("actions", "shown_at", "INTEGER"),  # 0.2.96: the first time a person's page loaded this question ("approved unread")
                                     ("actions", "reconcile", "TEXT"),    # rel 28.10: "ledger:<outcome>" brought in line on start / "manual:<why>" left for a person
                                     ("actions", "fx_keys", "TEXT"),      # r0275: keys of the call's effect (provenance.effect_keys): a refused effect by another tool
+                                    ("actions", "shadow", "TEXT"),       # r0330: the consequence vector and its level (app/vektor.py), shadow: decides nothing
                                     ("actions", "push_state", "TEXT"), ("actions", "push_at", "INTEGER"),     # r0276: the push ladder of a question
                                     ("actions", "push_state_at", "INTEGER"), ("actions", "push_tries", "INTEGER"),
                                     ("agents", "created_by", "TEXT"),    # r0284: the member who made the agent (no self-approval in a team); NULL = made before r0284

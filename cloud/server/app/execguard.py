@@ -342,6 +342,25 @@ def gitcfg_of(args):
     return out
 
 
+def gitcfg_covered(args) -> set:
+    """r0342 (17.11): the config files whose program keys the hook reported WELL-FORMED (`gitcfg` a dict, not cut). Their whole-file digest is not
+    a reason to ask: the law is "code execution", and every key that runs a program is judged by its own pseudo path (GITCFG). A change of
+    url.insteadOf / user.name / a remote URL / a branch gives no execution and is silent. Empty for a hook without `gitcfg` (before 0.2.46) or a
+    malformed / cut report: the file digest decides there, as before."""
+    w = args.get("_witness") if isinstance(args, dict) else None
+    ex = w.get("exec") if isinstance(w, dict) else None
+    if gitcfg_of(args) in (None, False):
+        return set()
+    out = set()
+    for ap, ent in ex["gitcfg"].items():
+        if git_programs_of([tuple(e) for e in ent]):
+            continue                 # a file that runs a program the owner confirmed: its whole-file digest stays a second lock (as before)
+        if any(len(v) >= MAX_GITCFG_VALUE for _k, v in ent):
+            continue                 # a value cut at MAX_GITCFG_VALUE could hide a `!` behind padding: the file digest decides
+        out.add(ap)
+    return out
+
+
 def _gitcfg_digest(progs) -> str:
     """0.2.46: the digest of the program keys IN FILE ORDER (not sorted): git uses the last of two equal keys (diff.external twice), so swapping
     them changes the program git runs, and the owner's confirmation of one order must not cover the other."""
@@ -518,8 +537,11 @@ def check(ctx, agent_id, tool, args, dry=False):
         for r in ctx.db.q("SELECT * FROM exec_files WHERE agent_id=? AND state='dirty'", (agent_id,)):
             rows.setdefault(r["path"], r)
     changed = set()
+    cfgcov = gitcfg_covered(args) if "git" in fams else set()      # r0342: config files judged by their program keys, not by the file digest
     if rep is not None:
         for p, dg in rep[1].items():
+            if p in cfgcov:
+                continue
             if not (hit(p) or (p in gitset and "git" in fams)):
                 continue
             r = rows.get(p)
@@ -529,6 +551,8 @@ def check(ctx, agent_id, tool, args, dry=False):
             elif r["state"] == "dirty" or r["digest"] != dg:
                 changed.add(p)
     for p, r in rows.items():                # a write the witness allowed, not (or no longer) in the report: still a change
+        if p in cfgcov:
+            continue
         if r["state"] == "dirty" and hit(p) and (rep is None or p not in rep[1]):
             changed.add(p)
     changed = {p for p in changed if not _venv_idle(p, args, root)}     # 0.2.89: the project's venv, not run by this line
@@ -550,7 +574,7 @@ def check(ctx, agent_id, tool, args, dry=False):
         # walk was complete, the incompleteness itself is asked about (fail-closed). No report at all (no project named, scan off, an old
         # hook) is not a cut walk: then the dirty marks of judged writes decide, as before.
         for p, r in rows.items():
-            if r["state"] == "ok" and hit(p) and p not in rep[1]:
+            if r["state"] == "ok" and hit(p) and p not in rep[1] and p not in cfgcov:
                 changed.add(p)
         base = ctx.db.one("SELECT truncated FROM exec_roots WHERE agent_id=? AND root=?", (agent_id, root))
         if base is not None and not base["truncated"]:
@@ -1066,7 +1090,39 @@ def _n_text(text, project=None, home=None):
     except Exception:  # noqa: BLE001 -- a text the scan cannot read: judged by the gates below, as before
         return None
     kinds = {d.split(":", 1)[0] for d in c.danger if isinstance(d, str)}
-    return "N" if kinds & {"git-force-push", "defense", "money"} else None
+    if kinds & {"git-force-push", "defense", "money"}:
+        return "N"
+    return "N" if _built_force_push(text) else None
+
+
+# r0340 (DWB-0046..0051, R-1511 part 4): a force-push the written text BUILDS at run time -- `'git push -f ...'.split()`, a list
+# `['push', '-f', ...]` spread into the call, a command string in a variable handed to execSync / subprocess, GitPython's
+# `remote().push(force=True)`. The code scan sees no `git push -f` line, so under a signed "from now on" rule a clean text in the
+# project ran unasked. Law (Н: a force-push is never covered by "from now on"): the text is read as its WORDS -- it names git (a string
+# 'git ...', `import git`, simple-git), it can start a program or is GitPython, and a `push` word is followed (close by) by a force word.
+# All three or nothing: `arr.push(x)` in JS, a doc string about `git push`, a `-f` of another tool stay quiet.
+_BF_GIT = re.compile(r"""(?:['"`]git(?:\.exe)?['"`\s]|\bimport\s+git\b|\bfrom\s+git\s+import\b|\bgit\.Repo\b|\bRepo\s*\(|simple-git|simpleGit|nodegit)""")
+_BF_RUN = re.compile(r"\b(?:subprocess|child_process|exec(?:Sync|File|FileSync|a)?|spawn(?:Sync)?|Popen|popen|system|call|check_call|"
+                     r"check_output|run|Repo|remote|Command|Process|ProcessBuilder|Deno|Bun|shell|sh|cmd)\b")
+_BF_PUSH = re.compile(r"\bpush\b")
+_BF_FORCE = re.compile(r"""(?:(?<=[\s'"`\[,(])-(?:[a-zA-Z]*f[a-zA-Z]*)(?=[\s'"`\],)])|--force(?:-with-lease|-if-includes)?\b|"""
+                       r"""\bforce\s*[=:]\s*(?:True|true|1)\b|['"`]\+[^'"`\s]*['"`]|['"`\s]\+(?:refs/|HEAD|main|master)\b)""")
+
+
+def _built_force_push(text):
+    if len(text) > 262144 or not _BF_GIT.search(text) or not _BF_RUN.search(text):
+        return False
+    for m in _BF_PUSH.finditer(text):
+        tail = text[m.end():m.end() + 160]
+        keep = []
+        for ln in tail.split("\n"):                      # the statement of the `push` word (a list / call continued on the next line too)
+            keep.append(ln)
+            if not ln.rstrip().endswith((",", "(", "[", "{", "\\", "+")):
+                break
+        tail = "\n".join(keep)
+        if _BF_FORCE.search(tail):
+            return True
+    return False
 
 
 def _gate_text(text, project=None, shell_writes=None, home=None):
@@ -1197,6 +1253,7 @@ def written_run(tool, args, git_taint=False, info=None):
     if isinstance(info, dict):
         info["unseen"] = bool(unseen)
         info["gate"] = g_
+        info["repo_only"] = bool(repo_only)          # r0332: what git restores from the repository's own objects is not the agent's text
     if content:
         return {p: ({"dir": True} if p in xdirs else "risky") for p in ps}
     if unseen:

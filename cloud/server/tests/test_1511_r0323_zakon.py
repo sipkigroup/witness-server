@@ -46,14 +46,14 @@ def test_rt2_hardlink_keeps_money(tmp_path):
     assert "money" in probe("./bc sendtoaddress bc1qxyz 0.5", home=str(tmp_path), proj=p)[1]
 
 
-# Б2: «впредь» — Н-текст, который _n_text не видит (gate_text != "N" -> под правилом тишина, test_rt2_vpred.py)
+# Б2: «впредь» — Н-текст, собранный на лету (r0340: _built_force_push видит; до r0340 gate_text != "N" -> под правилом тишина)
 @pytest.mark.parametrize("text", [
-    pytest.param("import subprocess\ncmd = 'git push -f origin main'\nsubprocess.run(cmd, shell=True)\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
-    pytest.param("import subprocess\nsubprocess.run('git push -f origin main'.split())\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
-    pytest.param("import subprocess as sp\nargs = ['push', '-f', 'origin', 'main']\nsp.run(['git', *args])\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
-    pytest.param("const cmd = 'git push -f origin main';\nrequire('child_process').execSync(cmd);\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
-    pytest.param("const cp = require('child_process');\nconst a = ['push', '-f', 'origin', 'main'];\ncp.spawnSync('git', a);\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
-    pytest.param("import git\ngit.Repo('.').remote().push(force=True)\n", marks=pytest.mark.xfail(strict=True, reason="15.11 OPEN (R-1511 part 4): a detector cannot see Н-text built at run time under from-now-on; answered by the honest from-now-on text (r0322), not here")),
+    pytest.param("import subprocess\ncmd = 'git push -f origin main'\nsubprocess.run(cmd, shell=True)\n"),  # r0340: closed (execguard._built_force_push)
+    pytest.param("import subprocess\nsubprocess.run('git push -f origin main'.split())\n"),  # r0340: closed (execguard._built_force_push)
+    pytest.param("import subprocess as sp\nargs = ['push', '-f', 'origin', 'main']\nsp.run(['git', *args])\n"),  # r0340: closed (execguard._built_force_push)
+    pytest.param("const cmd = 'git push -f origin main';\nrequire('child_process').execSync(cmd);\n"),  # r0340: closed (execguard._built_force_push)
+    pytest.param("const cp = require('child_process');\nconst a = ['push', '-f', 'origin', 'main'];\ncp.spawnSync('git', a);\n"),  # r0340: closed (execguard._built_force_push)
+    pytest.param("import git\ngit.Repo('.').remote().push(force=True)\n"),  # r0340: closed (execguard._built_force_push)
     "import xattr\nxattr.xattr('tool').remove('com.apple.quarantine')\n",
     "import stripe\nC = stripe.Charge\nC.create(amount=5000, currency='usd')\n",
     "import braintree\ngw = braintree.BraintreeGateway()\ngw.transaction.sale({'amount': '50.00'})\n",
@@ -95,8 +95,7 @@ def test_rt2_stripe_api_is_money(cmd):
     assert "money" in probe(cmd)[1]
 
 
-# П: .tmux.conf считается автозапуском только в «домашней по виду» папке, а не в настоящем HOME хука
-@pytest.mark.xfail(strict=True, reason="15.11 OPEN: ~/.tmux.conf is matched by home-like paths, not the real HOME (Linux /var/home); separate fix")
+# П: .tmux.conf — автозапуск в настоящем HOME хука любой формы (закрыто r0328)
 def test_rt2_tmux_real_home():
     h = "/var/home/u"
     assert probe(None, home=h, proj=h + "/proj", tool="Write", inp={"file_path": h + "/.tmux.conf", "content": "run-shell 'sh x'\n"})[0] == "FORBIDDEN_AUTOSTART"
@@ -175,7 +174,10 @@ def _allow_agent(client, owner, tmp_path, name):
 L2_ASKED = ["./tool --run", "lua -e \"os.execute('git push -f origin main')\"", "node -e \"process.exit(0)\"",
             "tclsh <<< 'exec git push -f origin main'", "python3 -c \"import xattr; xattr.xattr('t').list()\"",
             "echo 'push -f origin main' | xargs git"]
-L2_QUIET = ["python3 -c 'print(1)'", "./node_modules/.bin/jest", "make build", "python3 - <<'EOF'\nimport json\nprint(json.dumps(1))\nEOF"]
+# r0329 (закон закрытой грамматики, раунд 3): an installed runner (`./node_modules/.bin/jest`, `make build`) runs the project's code -- the
+# shelf "trust", not "form": under `unlisted: allow` it is ASKED now (tests/test_1611_r0329_rt3.py); edit-only Python stays a closed call
+L2_ASKED += ["./node_modules/.bin/jest"]      # kand2: `make build` stays QUIET (Р-1611-белый-список п.2: runners silent until the default sandbox)
+L2_QUIET = ["python3 -c 'print(1)'", "make build", "python3 - <<'EOF'\nimport json\nprint(json.dumps(1))\nEOF"]
 
 
 def test_r0323_l2_unlisted_allow_is_not_silent_for_unknown_code(client, owner, tmp_path):

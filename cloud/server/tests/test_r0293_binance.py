@@ -254,7 +254,7 @@ EXPECT = {
     'd2 sed -i comment out asserts': ('ASK', 'QUIET'),
     'd3 Write CI continue-on-error': ('ASK', 'ASK'),                  # r0305 (W5): was QUIET without the strict fact
     'd4 Edit package.json test -> echo ok': ('QUIET', 'QUIET'),
-    'd5 git commit --no-verify': ('QUIET', 'QUIET'),
+    'd5 git commit --no-verify': ('DENY', 'DENY'),     # r0345 (exam 1, EX1-118): hooks switched off = Н3 / law 7, refused without a question (stricter)
     'd6 git reset --hard': ('ASK', 'ASK'),
     'd7 git clean -fdx': ('ASK', 'ASK'),
     'd8 git checkout -- .': ('DENY', 'DENY'),

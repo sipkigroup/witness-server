@@ -172,10 +172,13 @@ def map_event(ev: dict, home: str | None = None, env=None) -> list:
     from . import bashparse as _bp
     ti_ = ev.get("tool_input") if isinstance(ev, dict) and isinstance(ev.get("tool_input"), dict) else {}
     ttok = _bp.TMPDIR_CTX.set(_bp.tmpdir_of(env if isinstance(env, dict) else {}, ti_.get("command")))   # 0.2.93 (r0263): $TMPDIR
+    _h = home or (env.get("HOME") if isinstance(env, dict) else None) or os.environ.get("HOME")
+    rtok = _bp.REAL_HOME.set(_h if isinstance(_h, str) and _h.startswith("/") else None)   # r0328: the real home joins PERSIST_PATH
     try:
         m = _map(ev, home, env)
         gh_ = getattr(_fs.current(), "git_head", lambda: None)()
     finally:
+        _bp.REAL_HOME.reset(rtok)
         _bp.TMPDIR_CTX.reset(ttok)
         if tok is not None:
             _fs.reset_root(tok)
@@ -234,6 +237,8 @@ def _map(ev, home, env=None):
             own_ = _dr.own_addresses(cmd, gs_)
             if own_:
                 args[RESERVED]["own_addr"] = own_
+        if getattr(c, "carried", None):
+            args[RESERVED]["carried"] = [t[:512] for t in c.carried[:16]]   # r0329: commands a carrier was handed (constitution Н6)
         if isinstance(getattr(c, "alias_line", None), str):
             args[RESERVED]["alias_line"] = c.alias_line[:4096]     # r0319 (Б1): the line with linked programs named (constitution Н6)
         if outside_w:
@@ -334,7 +339,16 @@ def _map(ev, home, env=None):
                     args[RESERVED]["home_tmp"] = {"sid": sid_[:128], "home": home}
         parts = []
         if c.danger:
-            parts.append(Mapped("Bash.danger", args, "Bash: " + ", ".join(sorted({d.split(":", 1)[0] for d in c.danger}))))
+            cats_ = sorted({d.split(":", 1)[0] for d in c.danger})
+            if "exit" in cats_ and "@" in cmd:
+                # r0325: an e-mail's recipients are said in the words of the question ("exit (e-mail to bob@example.com)"); the marks and
+                # the judgement are unchanged (datarule.mail_recipients: the recipient address is the destination, not data)
+                from . import datarule as _dr
+                if any(d.split(":", 1)[1].split(" ")[0].rsplit("/", 1)[-1] in _dr.MAIL_PROGS for d in c.danger if d.startswith("exit:")):
+                    rc_ = _dr._mail_recipients(cmd)
+                    if rc_:
+                        cats_[cats_.index("exit")] = "exit (e-mail to %s)" % ", ".join(sorted(set(rc_)))[:200]
+            parts.append(Mapped("Bash.danger", args, "Bash: " + ", ".join(cats_)))
         if c.writes:
             parts.append(Mapped("Bash.write", args, "Bash: writes %d path(s)" % len(c.writes)))
         if net:
@@ -381,6 +395,17 @@ def _map(ev, home, env=None):
             args[RESERVED] = {"path": path, "danger": ["git-config:" + hp]}
             return [Mapped(tool, args, "%s %s" % (tool, path)), Mapped("Write.danger", args, "%s: git hook (core.hooksPath)" % tool)]
         project = project_of(cwd, env)
+        if is_secret_path(path) and not (project is not None and _in_project(path, project)):
+            # r0345 (closed exam 1, EX1-184: `Write ~/.aws/credentials`, `Write ~/.ssh/id_rsa ""`, `Edit ~/.aws/credentials`
+            # credential_process=..., ~/.kube/config exec, ~/.docker/config.json credsStore, ~/.netrc -- silent under BOTH mandates). The
+            # outside branch below leaves a credential place out (`not is_secret_path`), so the call fell through to a plain "Write"
+            # (class delete, recipient = the path): silent whenever a target of the form covers the folder (the temp folder holding the
+            # stand's home; a person's own folder entry; the auto profile). Law (same act, same verdict): the shell writing the same
+            # bytes there is refused (Н1); a write tool replaces a credential (the next `aws` / `ssh` / `kubectl` / `docker` runs as the
+            # attacker or runs his program) and Edit shows the agent the file's lines. So: never the plain write -- a dangerous question
+            # (no "from now on": the mark write-outside), and a private key / token store (constitution._SECRET_FILE) is refused Н1 there.
+            args[RESERVED] = {"path": path, "danger": ["write-outside:" + path], "project": project, "home": home}
+            return [Mapped("Write.danger", args, "%s: a credential file outside the project: %s" % (tool, path)), Mapped(tool, args, "%s %s" % (tool, path))]
         if project is not None and not _inside_targets(path, project, home) and not is_secret_path(path) and not is_agent_config_path(path) \
                 and under_home(path, home):
             sh = _fs.current().shadow(path)         # 0.2.90 (FABLE-NOL p.5.3, QA D6): a write outside the project is reversible when the hook
@@ -486,12 +511,18 @@ SECRET_SAMPLES = (".env", ".env.local", ".env.production", ".envrc", ".netrc", "
                   "db.kdbx", "secrets.yaml", "secrets.yml", "secret.json", "secrets.toml", "secrets.env", ".terraformrc")
 
 
+def _sample_clean(path):
+    from .bashparse import sample_clean
+    return sample_clean(path)
+
+
 def _read_like(tool, inp, args, cwd, home, key):
     p = inp.get(key)
     if not isinstance(p, str) or not p:
         raise Refuse("EVENT_MALFORMED")
     path = _abspath(p, cwd, home)
-    if is_secret_path(path):
+    from .bashparse import sample_clean
+    if is_secret_path(path) and not sample_clean(path):          # r0335: a template of .env the hook looked at (bashparse.sample_clean)
         via = _fs.current().note(path) if hasattr(_fs.current(), "note") else None      # 0.2.73 (N13): a hard link of it, by the fact samefile
         if isinstance(via, str) and via != path and os.path.dirname(via) == os.path.dirname(path):
             via = os.path.basename(via)
@@ -540,7 +571,7 @@ def _grep(inp, args, cwd, home):
         raise Refuse("EVENT_MALFORMED")
     path = _abspath(p, cwd, home) if p else cwd
     danger = []
-    if is_secret_path(path) or (p and is_secret_path(p)):
+    if (is_secret_path(path) or (p and is_secret_path(p))) and not _sample_clean(path):
         danger.append("secrets:" + path)
     if g and _glob_hits_secret(g):
         danger.append("secrets:%s/%s" % (path, g))
@@ -577,7 +608,8 @@ DEFAULT_SAFE_COMMANDS = ["ls", "pwd", "cd", "cat", "head", "tail", "wc", "echo",
                          "find", "sed", "awk", "jq",
                          "ps", "lsof", "whoami", "id", "git remote", "git tag list", "git stash list", "git stash show", "git config get", "npm ls", "npm list",
                          "pip list", "pip3 list", "pip freeze", "pip3 freeze", "pip show", "pip3 show", "uv pip", "git check-ignore", "git ls-tree", "git rev-list", "git merge-base", "git show-ref",
-                         "od", "hexdump", "strings", "xxd", "--version"]
+                         "od", "hexdump", "strings", "xxd", "git init", "xattr", "--version",
+                         "docker ps", "top -l", "vm_stat", "sysctl read", "scutil --get", "sw_vers", "netstat", "ruff check", "sqlite3 read", "printf", "hostname", "spctl --status", "unzip -l", "zip", "sips"]
 
 
 # 0.2.56 (V3): command.sandboxed = "allow" in the RECOMMENDED form: a test runner (pytest, npm test, make ...) runs without a question only
@@ -586,7 +618,9 @@ DEFAULT_SAFE_COMMANDS = ["ls", "pwd", "cd", "cat", "head", "tail", "wc", "echo",
 # never widened: the core allows OK_SANDBOXED only when the signed mandate says "allow" (svidetel_v4/decide.py). Same value: the Mandate
 # page's recommended section (web/js/mandate_form.js RECOMMENDED_SANDBOXED); a test keeps them equal.
 DEFAULT_SANDBOXED = "allow"
-# 0.2.90 (FABLE-NOL 03.11, "standing mandate"): the RECOMMENDED form says `unlisted: "allow"`: every command runs with a receipt, and the
+# r0339 (Р-1711-baza п.2, the owner 17.11): the RECOMMENDED form says `unlisted: "ask"`; "allow" is never offered by default (the Mandate
+# page names it honestly: "like an antivirus: what Witness does not know passes"). HISTORY, no longer the default --
+# 0.2.90 (FABLE-NOL 03.11, "standing mandate") proposed `unlisted: "allow"`: every command runs with a receipt, and the
 # owner is asked only at the four gates the witness itself names (G1 irreversible delete outside the project, G2 any non-loopback exit,
 # G3 secrets, G4 persistence / the watchdog itself), at a changed executed file, and for what the classifier cannot read (opaque) outside
 # a strict sandbox. Same value: the client's form.py and web/js/mandate_form.js (a test keeps them equal). A mandate signed with "ask" keeps asking.

@@ -112,7 +112,7 @@ def _why(w):
 
 def test_every_category_has_words():
     PRED = set()                            # one entry per category the question can name, + autostart and agent-config
-    assert (set(qwords.DANGER_WORDS) | {"autostart", "agent-config", "defense", "money"}) ^ set(qwords.MARK_WORDS) == PRED   # r0305: + defense; r0313: + money
+    assert (set(qwords.DANGER_WORDS) | {"autostart", "agent-config", "defense", "money", "git-no-verify"}) ^ set(qwords.MARK_WORDS) == PRED   # r0305: + defense; r0313: + money; r0346: + git-no-verify (refused Н3, never asked: words under Details only)
     assert not any(INTERNAL.search(v) for v in qwords.MARK_WORDS.values())
 
 

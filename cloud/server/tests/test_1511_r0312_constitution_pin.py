@@ -24,11 +24,22 @@ VERSIONS = WEB / "constitution" / "versions.json"
 # a published text or hash fails test_published_versions_are_never_rewritten.
 PUBLISHED = {1: "39e384ebd215fc28d22b01470f7f0a6fef83e496914c0de628621ae3f903b4d1",
              2: "2a322f50d5e12243760ffa8c41b62a56cd05fa3e111c1b6eed83fcd30fb0bb73",
-             3: "97ac9580ff04b5d43486e25fb7663a899deaec54285f056b6e7a0260ae463867"}
+             3: "97ac9580ff04b5d43486e25fb7663a899deaec54285f056b6e7a0260ae463867",
+             4: "daa3477652af6fd08e0a0920cf07dcabe7583c3b4756172296664abca015194a"}
 
 
 def _vs():
     return json.loads(VERSIONS.read_text())
+
+
+def _line():
+    e = _vs()[-1]
+    return ("Version %d (%s)" % (e["version"], e["date"])).encode()
+
+
+def _mark():
+    e = _vs()[-1]
+    return ('data-effective="%s" data-corrects="%s"' % (e["effective"], " ".join(c["law"] for c in e["corrects"]))).encode()
 
 
 def _web_copy(tmp_path):
@@ -66,7 +77,7 @@ def test_one_character_edit_without_a_new_version_is_invalid():
     edited = page[:i] + b"s" + page[i + 1:]
     ok, why = CC.check_constitution(edited, VERSIONS.read_bytes())
     assert not ok and "no published version" in why, why
-    ok, why = CC.check_constitution(page.replace(b"Version 3 (2026-11-15)", b"Version 3 (2026-11-16)"), VERSIONS.read_bytes())
+    ok, why = CC.check_constitution(page.replace(_line(), _line()[:-3] + b"28)"), VERSIONS.read_bytes())
     assert not ok, why
     ok, why = CC.check_constitution((WEB / "constitution" / "v1.html").read_bytes(), VERSIONS.read_bytes())
     assert not ok and "not the latest" in why, why                 # serving an old version as the current page
@@ -131,21 +142,23 @@ def test_a_new_version_not_in_the_log_fails(tmp_path):
     app = _app(tmp_path, web)
     ctx = app.state.ctx
     logged = _leaves(ctx)
-    page = PAGE.read_bytes().replace(b"Version 3 (2026-11-15)", b"Version 4 (2026-11-20)").replace(b"<h2>More laws", b"<h2>Other laws")
-    page = page.replace(b'data-effective="2026-11-15" data-corrects="by-construction silence-is-a-no"', b'data-effective="2026-11-20" data-corrects=""')
-    (web / "constitution" / "v4.html").write_bytes(page)
-    vs = _vs() + [dict(_vs()[-1], version=4, date="2026-11-20", sha256=CC.page_hash(page), path="constitution/v4.html", effective="2026-11-20",
+    n = _vs()[-1]["version"] + 1
+    assert PAGE.read_bytes().count(_mark()) == 1
+    page = PAGE.read_bytes().replace(_line(), b"Version %d (2026-11-20)" % n).replace(b"<h2>More laws", b"<h2>Other laws")
+    page = page.replace(_mark(), b'data-effective="2026-11-20" data-corrects=""')
+    (web / "constitution" / ("v%d.html" % n)).write_bytes(page)
+    vs = _vs() + [dict(_vs()[-1], version=n, date="2026-11-20", sha256=CC.page_hash(page), path="constitution/v%d.html" % n, effective="2026-11-20",
                        corrects=[])]
     ok, why = CC.check_constitution(page, json.dumps(vs), journal=logged)
-    assert not ok and "version 4 is not in the signed log" in why, why
+    assert not ok and "version %d is not in the signed log" % n in why, why
     # the server logs it on its next start, once
     (web / "constitution" / "versions.json").write_text(json.dumps(vs))
-    assert tlog.record_constitution(ctx, str(web)) == [4]
+    assert tlog.record_constitution(ctx, str(web)) == [n]
     assert CC.check_constitution(page, json.dumps(vs), journal=_leaves(ctx))[0]
     # versions.json rewritten in place (version 4 with another text): not logged, an ERROR, and INVALID offline
     page2 = page.replace(b"<h2>Other laws", b"<h2>Further laws")
-    (web / "constitution" / "v4.html").write_bytes(page2)
-    vs[3]["sha256"] = CC.page_hash(page2)
+    (web / "constitution" / ("v%d.html" % n)).write_bytes(page2)
+    vs[n - 1]["sha256"] = CC.page_hash(page2)
     (web / "constitution" / "versions.json").write_text(json.dumps(vs))
     n = len(_leaves(ctx))
     assert tlog.record_constitution(ctx, str(web)) == [] and len(_leaves(ctx)) == n

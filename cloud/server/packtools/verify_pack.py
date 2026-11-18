@@ -30,7 +30,7 @@ TEE (Intel TDX, only when the pack has tee/ or an anchor record with a `tee` mem
 TEE_MEASUREMENT_UNKNOWN)` (INVALID) | `tee: KEY OUTLIVED CODE (TEE_KEY_OUTLIVED_CODE ...)` (INVALID) | `tee: N of M anchored checkpoints ...`.
 Flags: --tee-expect=<expect.json>, --tee-intel-root=<pem>, --tee-collateral=<dir>, --tee-now=<unix t>, --require-tee.
 0.2.83 (server; the step of the deus-witness client 0.2.52, mandate_check.py): `decisions: N/N replayed against the signed mandate`;
-views/<rid>.json, views/allowance-<id>.json, views/release-<rid>.json: the shown object; `VIEW_MISMATCH` / `VIEW_NOT_SIGNED` are INVALID;
+views/<rid>.json, views/allowance-<id>.json (r0327: {v: dw-allow-view-1, page, text_v, text}: the page AND the text of trust), views/release-<rid>.json: the shown object; `VIEW_MISMATCH` / `VIEW_NOT_SIGNED` are INVALID;
 a signed presentation hash without its object is `warning VIEW_UNVERIFIABLE` (INVALID with --require-views).
 0.2.84 (R5): every signed record is walked (APPROVAL, ALLOWANCE, signed release advisory/<rid>.json): a withheld release object is
 VIEW_UNVERIFIABLE, a release page that signed no hash VIEW_NOT_SIGNED (warning; INVALID with --require-views); a repeated member name in
@@ -373,6 +373,9 @@ def _main(argv):
                          "or its vocabulary is not in the pack)" % (sw.count("WORDING_LEGACY") + sw.count("WORDING_UNVERIFIABLE")))
         if "OMITTED_UNDECLARED" in sw:
             trust.append("what %d page(s) did not show whole on the first screen: not signed (a page older than r0277)" % sw.count("OMITTED_UNDECLARED"))
+        if "ALLOW_TEXT_NOT_SIGNED" in sw:        # r0327
+            trust.append("the text of trust shown with %d \"from now on\" rule(s): not signed (signed before the text became part of the "
+                         "signature; the page itself is signed)" % sw.count("ALLOW_TEXT_NOT_SIGNED"))
         if any(line.startswith("screen ") and "words rebuilt" in line for line in vl):
             trust.append("the reason code and the parse behind the rebuilt words are the witness's (P1 proves the sentence is the pinned "
                          "vocabulary's, not that the code was right)")

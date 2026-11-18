@@ -58,6 +58,7 @@ def _amend(d, got, days=30):
              "nbf": o["t"], "exp": o["t"] + days * DAY}
         res = d.owner.post("/api/allowances", rid=rid, envelope_b64=d.owner.sign(al.TYP, wa.cde(a)))
         assert res.status_code == 200, res.text
+        d.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (a["id"],))     # r1611: signed with the text
         ids.append((a["id"], o["commands"]))
     return ids
 

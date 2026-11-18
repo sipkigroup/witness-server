@@ -52,6 +52,7 @@ def _vpred(a, line):
               "nbf": o["t"], "exp": o["t"] + 30 * 86400}
         r = a.o.post("/api/allowances", rid=rid, envelope_b64=a.o.sign(allowances.TYP, wa.cde(al)))
         assert r.status_code == 200, r.text
+        a.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (al["id"],))   # r1611: a rule signed with the text
     _bump(a)
     return out
 
@@ -132,3 +133,17 @@ def test_trust_text_names_the_limit():
     t = allowances.TRUST_TEXT
     assert "without asking you when Witness could read what it wrote" in t
     assert "network" in t and "keys" in t and "outside this project" in t
+
+
+def test_trust_text_does_not_overpromise_r0326():
+    # RT 15.11 B2: a dangerous command assembled inside a project file runs silently under "from now on"; the text must not say "every time" for it
+    t = allowances.TRUST_TEXT
+    assert "Dangerous commands the agent types" in t and "are still asked every time" in t
+    assert "cannot promise to find every one" in t and "allow only a project whose code you trust" in t
+    assert "Dangerous commands (recursive" not in t
+
+
+def test_rule_signed_with_old_text_stays_valid_r0326():
+    # the text is shown, never inside the signed allowance map: nothing in the payload or the check depends on it
+    import inspect
+    assert "TRUST_TEXT" not in inspect.getsource(allowances.create)

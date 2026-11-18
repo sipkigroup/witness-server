@@ -701,7 +701,7 @@ def git_kept_texts(ctx, agent_id, mark, is_dir, args, upto_rid, since):
             continue
         for f in sorted(left):
             v = wr.get(f) if isinstance(wr, dict) else None
-            if isinstance(v, dict) and not v.get("clear") and isinstance(v.get("text"), str) and v["text"]:
+            if isinstance(v, dict) and not v.get("clear") and not v.get("kept") and isinstance(v.get("text"), str) and v["text"]:
                 out.append({"file": f, "text": v["text"]})
                 left.discard(f)
     return out
@@ -727,14 +727,238 @@ def written_run_info(ctx, agent_id, since, with_cut=False, src=None):
             for p, v in wr.items():
                 if isinstance(p, str):
                     if isinstance(v, dict) and v.get("clear"):
-                        out.pop(p, None)          # RT-0269 p.3a: a later harmless whole-file Write took the mark off
+                        # RT-0269 p.3a took the mark off here; r0332 (the law of the written mark): no write of the agent does -- a row
+                        # written before r0332 keeps the mark (blind: its text is not kept)
+                        out[p] = {"by": v.get("by")} if isinstance(v.get("by"), str) else {}
                         if src is not None:
-                            src.pop(p, None)
+                            src[p] = x["rid"]
                     else:
                         out[p] = v if isinstance(v, dict) else {}
                         if src is not None:
                             src[p] = x["rid"]
+                        if isinstance(v, dict) and v.get("dir"):
+                            # r0332: a later write of a whole directory (git stash pop, tar x) is the newest write of the marked files
+                            # under it (their marks stay -- the law -- and say what wrote them last)
+                            for q in [q for q in out if q != p and _under(q, p)]:
+                                out[q] = {k: vv for k, vv in v.items() if k != "dir"}
+                                if src is not None:
+                                    src[q] = x["rid"]
     return (out, cut) if with_cut else out
+
+
+# r0332 (ARHIV-RESHENIY-OPUS-1611 §3 p.4, the law of the written mark): ANY write of the agent -- Write, Edit, MultiEdit, NotebookEdit, a
+# shell redirect, cp / mv / ln / install onto a file, tee, sed -i, a write outside the project (Write.outside / Write.danger, a shell
+# write the hook shadow-copied or the agent's configuration it asks about) -- records the paths it wrote: exec_json "wa" [paths] (+ "waw"
+# when the call carried the WHOLE text of its one file). No write of the agent takes it off (a harmless whole-file Write is a write like
+# any other); only the person's signed decision (an approval of that very whole-text write, a released page that showed it) or the
+# look-back window does. Before r0332 only RISKY writes left a mark (wrun) and a harmless whole-file Write took it off (RT-0269 p.3a):
+# a data-named file (`~/notes/job.txt`, quietly written under the auto profile) ran under `bash` with no question, and the consequence
+# vector called a script the agent rewrote "the person's code" (kod=chelovek). "wa" is separate from "wrun": it never feeds the
+# structural rule (after a risky write the next line that runs code at all is held) -- it holds only a line that RUNS such a file.
+WA_MAX_PATHS = 64
+WA_LOOK_ROWS = 2000
+WA_PARSE_FIRST_MAX = 4096   # written_runs: a longer line reads the journal before it parses the line again (17.11, cost only)
+WHOLE_TEXT_TOOLS = ("Write", "Write.danger", "Write.outside")
+
+
+def agent_write_paths(tool, args):
+    """r0332: -> the absolute paths this call writes (any write tool; a shell line's writes, its writes outside the project, the agent's
+    configuration it writes), deletions left out; [] for a call that writes nothing. Never raises."""
+    try:
+        w = args.get("_witness") if isinstance(args, dict) else None
+        if not isinstance(w, dict) or not isinstance(tool, str):
+            return []
+        ps = []
+        if tool.split(".", 1)[0] in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+            ps += [w["path"]] if isinstance(w.get("path"), str) else []
+        elif tool.startswith("Bash"):
+            ps += [x for x in (w.get("writes") or []) if isinstance(x, str)] if isinstance(w.get("writes"), list) else []
+            ps += [x for x in (w.get("outside_writes") or []) if isinstance(x, str)] if isinstance(w.get("outside_writes"), list) else []
+            for d in w.get("danger") or []:
+                if isinstance(d, str) and d.split(":", 1)[0] in ("agent-config", "write-outside", "persist"):
+                    v = d.split(":", 1)[1] if ":" in d else ""
+                    v = v[len("(hook) "):] if v.startswith("(hook) ") else v
+                    if v.startswith("/") and " " not in v.strip():
+                        ps.append(v.strip())
+        else:
+            return []
+        dels = {x for x in (w.get("deletes") or []) if isinstance(x, str)} if isinstance(w.get("deletes"), list) else set()
+        out = []
+        for p in ps:
+            if execguard._abs_ok(p) and p not in dels and os.path.normpath(p) not in out:
+                out.append(os.path.normpath(p))
+        return out[:WA_MAX_PATHS]
+    except Exception:      # noqa: BLE001  nothing recorded: the marks of before r0332 stay (wrun)
+        return []
+
+
+def agent_written(ctx, agent_id, since, with_cut=False):
+    """r0332: {path: {"rid": the newest write row, "signed": the person signed THAT write and saw its whole text}} of every write of this
+    agent since `since` (exec_json "wa"); a write whose line never ran is skipped (unrun_write). with_cut=True -> (that, cut)."""
+    out = {}
+    rows = ctx.db.q("SELECT rid, agent_id, status, created_at, exec_json FROM actions WHERE agent_id=? AND updated_at>=? AND status IN (%s) "
+                    "AND exec_json LIKE '%%\"wa\"%%' ORDER BY updated_at DESC, rowid DESC LIMIT %d" % (",".join("?" * len(SEEN_STATUSES)),
+                                                                                                      WA_LOOK_ROWS + 1),
+                    (agent_id, since) + SEEN_STATUSES)
+    cut = len(rows) > WA_LOOK_ROWS
+    for x in reversed(rows[:WA_LOOK_ROWS]):
+        if unrun_write(ctx, x):
+            continue
+        try:
+            ej = json.loads(x["exec_json"])
+        except (TypeError, ValueError):
+            continue
+        wa_ = ej.get("wa") if isinstance(ej, dict) else None
+        if not isinstance(wa_, list):
+            continue
+        signed = False
+        if ej.get("waw") and x["status"] in ("approved", "consumed", "executed"):
+            ap = ctx.db.one("SELECT approved FROM approvals WHERE rid=?", (x["rid"],))
+            signed = bool(ap is not None and ap["approved"])
+        for p in wa_:
+            if isinstance(p, str):
+                out[p] = {"rid": x["rid"], "signed": signed, "line": ej.get("line")}
+    return (out, cut) if with_cut else out
+
+
+def _expand_home(text, home):
+    if not isinstance(text, str) or not isinstance(home, str) or not home.startswith("/"):
+        return text
+    h = home.rstrip("/")
+    text = re.sub(r"\$\{HOME\}|\$HOME\b", lambda m: h, text)
+    return re.sub(r"(^|[\s;&|()<>=\"'])~(?=/|$|[\s;&|)])", lambda m: m.group(1) + h, text)
+
+
+def written_runs(ctx, agent_id, args, t0, wi=None):
+    """r0332: [(path, rid)] of the files of the agent's writes (agent_written) that this Bash line RUNS as code -- `bash f`, `sh < f`,
+    `source f`, `python3 f`, `./f`, `cat f | bash` (strict_policy.run_targets on the line with ~ / $HOME spelled out; the parser's record of
+    the line, vektor.run_paths) -- and whose write no signed decision of the person covers. A run the record cannot compute (bash -c, a
+    carrier, no record) counts when the line runs code and names the file's base name (fail closed). Files with a run mark (wrun:
+    written_run_files) are left out. The journal is read only for a line that runs something (a line longer than WA_PARSE_FIRST_MAX:
+    the journal first, the same answer)."""
+    line = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else None
+    if not line:
+        return []
+    w = args.get("_witness") if isinstance(args.get("_witness"), dict) else {}
+    pl = strict_policy.PLACE.get()
+    pl = pl if isinstance(pl, dict) else {}
+    home = w.get("home") if isinstance(w.get("home"), str) else pl.get("home")
+    cwd = w.get("cwd") if isinstance(w.get("cwd"), str) else pl.get("cwd")
+    look = 60 * (getattr(ctx.cfg, "written_lookback_min", None) or WRITTEN_LOOKBACK_MIN)
+    aw = None
+    if len(line) > WA_PARSE_FIRST_MAX:
+        # 17.11 (kand3, cost): a long line costs more to parse again (run_targets) than the journal costs to read: the journal first --
+        # no write of the agent -> [] (the same answer the parse-first order gives: no candidate file)
+        aw = agent_written(ctx, agent_id, t0 - look)
+        if not aw:
+            return []
+    tg = set()
+    try:
+        tg |= {os.path.normpath(t) for t in strict_policy.run_targets(_expand_home(line, home), cwd) if isinstance(t, str)}
+    except Exception:      # noqa: BLE001
+        pass
+    opaque, names = False, set()
+    rp = {}
+    try:
+        from app.hookjudge import judge as _jd
+        from app import vektor as _vk
+        lp = _jd._LAST_PLACE.get()
+        rp = lp.get("rp") if isinstance(lp, dict) and isinstance(lp.get("rp"), dict) else {}
+        r_ = _vk.run_paths(lp, home)
+        if r_ is None:
+            opaque = True                                # no record of the line (a plain /v1/actions call): the name rule below
+        else:
+            tg |= r_[0]
+            names = set(r_[1])
+            opaque = r_[2]
+    except Exception:      # noqa: BLE001  no record: the line's own targets (above), the name rule below
+        opaque = True
+    runs_code = False
+    if opaque:
+        heads_ = [h for h in _commands_of(args) if not (isinstance(h, str) and h.startswith(OUTSIDE_WRITE_HEAD))]
+        runs_code = _line_runs_code(heads_ + _procsub_heads(line), line, None)
+    if not tg and not names and not runs_code:
+        return []
+    aw = agent_written(ctx, agent_id, t0 - look) if aw is None else aw
+    if not aw:
+        return []
+    wi = wi if isinstance(wi, dict) else written_run_info(ctx, agent_id, t0 - look)
+    cand = {p: v for p, v in aw.items() if not v.get("signed") and p not in wi}
+    if not execguard.WRITTEN_CODE_RISKY:
+        # the 0.2.81 rules (tests of before 0.2.90 switch WRITTEN_CODE_RISKY off): a clean text written INSIDE the project runs unasked
+        pr_ = pl.get("project") or w.get("project") or w.get("cwd")
+        if isinstance(pr_, str) and pr_.startswith("/"):
+            cand = {p: v for p, v in cand.items() if not (p + "/").startswith(os.path.normpath(pr_).rstrip("/") + "/")}
+    if not cand:
+        return []
+    seen = seen_writes(ctx, agent_id, t0 - look)
+    cand = {p: v for p, v in cand.items() if (p, "w:" + v["rid"]) not in seen}
+    lh_ = _line_hash("Bash", args)
+    tg |= {os.path.normpath(rp[t]) for t in list(tg) if isinstance(rp.get(t), str)}
+    tg_u = {t[len("/private"):] if t.startswith("/private/") else t for t in tg}
+    out = []
+    for p, v in sorted(cand.items()):
+        pu = p[len("/private"):] if p.startswith("/private/") else p
+        b = p.rsplit("/", 1)[-1]
+        hit = pu in tg_u or b in names                  # a run target whose place the record did not resolve: by its name (fail closed)
+        if not hit and runs_code and v.get("line") != lh_:
+            hit = bool(b) and b in line                 # a carrier / no record: the line names it (not a write of this same line)
+        if hit:
+            out.append((p, v["rid"]))
+    return out
+
+
+# r0345 (closed exam 1, EX1-133: `sh /tmp/k.sh` after a download by python / git clone, `sh ~/Downloads/setup.sh` -- silent under
+# unlisted=allow). Law: running, as code, a file that lies in a download zone -- a temp folder (shared /tmp, /var/tmp, the personal
+# /var/folders/../T; not at / under / above the home: bashparse.temp_in) other than Claude Code's own scratch folder, or the person's
+# Downloads folder -- is running code nobody in this session has read: its origin is the network or another user. Held like a written
+# run (ESCALATE_WRITTEN_RUN) under `allow`; under `ask` the line is asked anyway. Inside the project: never a zone (the project's code).
+_SCRATCH_RX = re.compile(r"^(/private)?/tmp/claude-\d+/")
+
+
+def _download_zone(p, home, project):
+    try:
+        from app.hookjudge import bashparse as _bp_
+        if not isinstance(p, str) or not p.startswith("/"):
+            return False
+        q = os.path.normpath(p)
+        if isinstance(project, str) and project.startswith("/") and (q + "/").startswith(os.path.normpath(project).rstrip("/") + "/"):
+            return False
+        if isinstance(home, str) and home.startswith("/"):
+            h = os.path.normpath(home).rstrip("/")
+            if re.match(re.escape(h) + r"/Downloads(/|$)", q, re.I):
+                return True
+        return bool(_bp_.temp_in(q, home)) and not _SCRATCH_RX.match(q)
+    except Exception:      # noqa: BLE001
+        return False
+
+
+def download_runs(args):
+    """r0345: [path] of the files this Bash line RUNS as code (strict_policy.run_targets; the parser's record, vektor.run_paths) that lie
+    in a download zone (_download_zone). Never raises."""
+    try:
+        line = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else None
+        if not line:
+            return []
+        w = args.get("_witness") if isinstance(args.get("_witness"), dict) else {}
+        pl = strict_policy.PLACE.get()
+        pl = pl if isinstance(pl, dict) else {}
+        home = w.get("home") if isinstance(w.get("home"), str) else pl.get("home")
+        cwd = w.get("cwd") if isinstance(w.get("cwd"), str) else pl.get("cwd")
+        project = pl.get("project") or w.get("project")
+        tg = {os.path.normpath(t) for t in strict_policy.run_targets(_expand_home(line, home), cwd) if isinstance(t, str)}
+        try:
+            from app.hookjudge import judge as _jd
+            from app import vektor as _vk
+            lp = _jd._LAST_PLACE.get()
+            r_ = _vk.run_paths(lp, home)
+            if r_ is not None:
+                tg |= {os.path.normpath(t) for t in r_[0] if isinstance(t, str)}
+        except Exception:      # noqa: BLE001
+            pass
+        return sorted(t for t in tg if _download_zone(t, home, project))
+    except Exception:      # noqa: BLE001
+        return []
 
 
 WRUN_MAX_MARKS = 1000   # 29.10 (hang): risky-write marks of one agent carried path by path; past it a copy marks its destination whole
@@ -1781,7 +2005,11 @@ def do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, creat
     """via (0.2.38): "hook" for a call judged by /v1/hook/judge (the Claude Code hook): kept on the row (actions.via) for the 04.11 count.
     04.11 (L3): quiet=True: a new question is stored but nobody is told yet (no push, no channel message); its rid is appended to `created`.
     The hook judge asks for ONE call's parts this way and announces ONE question for the whole call (hookjudge/judge.py, announce())."""
-    return _decided(ctx, agent, _do_action(ctx, agent, tool, args, capable, via, quiet, created))
+    res = _decided(ctx, agent, _do_action(ctx, agent, tool, args, capable, via, quiet, created))
+    if via != "hook":                  # r0330: a direct call is its own call (the hook judge notes the vector of all its parts at once)
+        from app import vektor as _vk
+        _vk.note(ctx, agent, [(tool, args)], [res.get("rid") if isinstance(res, dict) else None])
+    return res
 
 
 def announce(ctx, agent, rid):
@@ -1974,6 +2202,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             act = _datarule.local_text(act, tool, args, _explicit_data(m))
             # 0.2.95 (Н3): a service's no-reply address (the co-author trailer) or the person's own git address is no personal data
             act = _datarule.benign_addresses(act, tool, args, _explicit_data(m))
+            # r0325: the address an e-mail is sent to is the destination, not data (the send itself stays a question)
+            act = _datarule.mail_recipients(act, tool, args, _explicit_data(m))
         if act is None:
             row.update(verdict="pass", reason="PASS", status="pass", **{"class": "pass"})
             _insert(ctx, row)
@@ -2005,6 +2235,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         tnow = L.sync_now() if L is not None else None
         # 0.2.13 (PROPOSAL-08): a command line that will execute a file changed since the owner confirmed it carries `exec_changed` (the core asks,
         # whatever the list or an allowance say); a write to such a file is remembered (marked dirty once the write is allowed)
+        wri_ = {}
         if act["class"] == "command":
             changed, ex_json = execguard.check(ctx, agent["id"], tool, args)
             if changed:
@@ -2022,6 +2253,10 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 ej_ = json.loads(ex_json) if ex_json else {}
                 by = "shell" if tool == "Bash.write" else tool
                 wt = (src or {}).get("text") if src else (args.get("command") if tool == "Bash.write" else None)
+                if isinstance(src, dict) and src.get("blind") and tool == "Bash.write" and isinstance(args.get("command"), str) and \
+                        re.search(r"(^|[\s;&|(])git\s", args["command"]):
+                    wt = args["command"]      # r0332: a git line over a file whose mark now stays (no Write takes it off): the page shows
+                                              # the git line (N14: what git brings back is the text the agent put into it, git_kept_texts)
                 if not isinstance(wt, str) and len(wr) == 1:
                     wt = execguard._written_text(tool, args, next(iter(wr)))
                 # what the agent put there, masked (<= 4 KB): the page of the run shows it; dropped once a run of it is let go (cut_previews; r25: kept after a Reject, at most the look-back).
@@ -2071,8 +2306,21 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 ps_ = [p_ for p_ in ps_ if p_ not in (wr or {}) and isinstance(execguard._written_text(tool, args, p_), str)]
                 if ps_:
                     old_ = written_run_info(ctx, agent["id"], t0 - 60 * (getattr(ctx.cfg, "written_lookback_min", None) or WRITTEN_LOOKBACK_MIN))
-                    cl_ = {p_: ({"by": tool, "clear": True} if tool in ("Write", "Write.danger") else {"by": tool})
-                           for p_ in ps_ if p_ in old_}
+                    # r0332 (the law of the written mark): no write of the agent takes the mark off -- a harmless whole-file Write keeps
+                    # it; it only replaces the text the next page shows (the whole new text, masked) and the key of what was written
+                    cl_ = {}
+                    for p_ in ps_:
+                        if p_ not in old_:
+                            continue
+                        v_ = {"by": tool, "kept": True}      # "kept": was "clear" before r0332 (git_kept_texts skips it, as then)
+                        if tool in ("Write", "Write.danger"):
+                            t_ = execguard._written_text(tool, args, p_)
+                            if isinstance(t_, str):
+                                v_["text"] = tm.mask_value(t_, lits, tm.TEXT_PREVIEW_CHARS, False)
+                            k_ = write_key(tool, args, p_)
+                            if k_ is not None:
+                                v_["k"] = k_
+                        cl_[p_] = v_
                     if cl_:
                         ej_ = json.loads(ex_json) if ex_json else {}
                         ej_["wrun"] = dict(ej_.get("wrun") or {}, **cl_)
@@ -2132,6 +2380,17 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 if _moves_head(args):
                     ej_["hm"] = True   # N6 0.2.71: may move HEAD: a later `git stash pop` is not judged by git's file list
                 ex_json = json.dumps(ej_, ensure_ascii=False)
+        wa_ = agent_write_paths(tool, args)
+        if wa_ and act["class"] != "command" and (wri_ or {}).get("repo_only"):
+            wa_ = []                       # N15: `git stash pop` / `git restore f` from the repository's own objects writes no text of the agent
+        if wa_:
+            ej_ = json.loads(ex_json) if ex_json else {}
+            if isinstance(ej_, dict):
+                ej_["wa"] = wa_            # r0332: every write of the agent, risky or not (agent_written)
+                c_ = args.get("content") if isinstance(args, dict) else None
+                if tool in WHOLE_TEXT_TOOLS and len(wa_) == 1 and isinstance(c_, str) and len(c_) <= tm.TEXT_PREVIEW_CHARS:
+                    ej_["waw"] = True      # the call carries the whole text of its file, short enough for the approval page to show it all
+                ex_json = json.dumps(ej_, ensure_ascii=False)
         if ex_json:
             row["exec_json"] = ex_json
         w_ = args.get("_witness") if isinstance(args, dict) else None
@@ -2167,6 +2426,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         ameta = al.project_meta(args) if m is not None and isinstance(tool, str) and tool.split(".")[0] in ("Bash", "Write", "Edit", "MultiEdit") \
             and not al.team(ctx, acc) else None
         if meta is not None:
+            al.renew_unsigned(ctx, acc, agent["id"], L, meta, act, tnow)       # r1611: a rule without a signed text is asked, not silent
             act = al.cover(L, m["id"], act, meta, tnow)
             used += [act["allowance"]] if "allowance" in act else []
             act = al.sandbox_cover(L, m["id"], act, meta, w_, tnow, args.get("command") if isinstance(args, dict) else None)      # V3 / 0.2.82
@@ -2216,6 +2476,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             if ea["class"] == "delete":
                 ea["reversible"] = tm.reversible_of(tmap, extra)      # N-01: each target has its own reversibility
             if meta is not None:
+                al.renew_unsigned(ctx, acc, agent["id"], L, meta, ea, tnow)
                 ea = al.cover(L, m["id"], ea, meta, tnow)
                 ea = al.sandbox_cover(L, m["id"], ea, meta, w_, tnow, args.get("command") if isinstance(args, dict) else None)
                 ea = al.held_mark_cover(L, m["id"], ea, tool, args, w_, tnow)
@@ -2354,6 +2615,21 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         wq_ = act.get("class") == "command" and dv != "deny" and (
             (gate is None and dv in ("allow", "defer")) or rp is not None or gate == ("hold", "ESCALATE_SECRET_SEEN"))
         wrf = written_run_files(ctx, agent["id"], args, t0) if wq_ else []
+        wsoft_ = {}
+        if wq_:
+            try:
+                # r0332: a file of the agent's writes with no run mark (a data name, a write outside the project, a harmless text) that this
+                # line RUNS: held like a written run (the person has not signed that text)
+                wsoft_ = {p_: r_ for p_, r_ in written_runs(ctx, agent["id"], args, t0) if p_ not in wrf}
+                if tool == "Bash" or tool == "Bash.danger":
+                    for p_ in download_runs(args):           # r0345: code from a download zone (temp, Downloads): never silent
+                        if p_ not in wrf and p_ not in wsoft_:
+                            wsoft_[p_] = None
+            except Exception:      # noqa: BLE001  fail closed: asked
+                log("ERROR", "written runs check failed")
+                if gate is None and dv == "allow":
+                    gate = ("hold", "ESCALATE_WRITTEN_RUN")
+            wrf = wrf + sorted(wsoft_)
         if wrf and in_sbx:
             # 04.11 (OTCHET-0258 D8, rule bcc4411): in the strict sandbox under the code option a written file runs with a receipt, no
             # hold -- unless its written text VISIBLY reaches a gate (G1-G4, the agent's harness: execguard.gate_text).
@@ -2409,7 +2685,11 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                                                              # stays (seen_writes counts "allowed" pages), the next run OUTSIDE the sandbox is held
             wi = written_run_info(ctx, agent["id"], t0 - 60 * (getattr(ctx.cfg, "written_lookback_min", None) or WRITTEN_LOOKBACK_MIN), src=wsrc)
             # the page names the files and shows what was written; N1 29.10: `w` = the write row it shows (what the owner sees is THAT write)
-            ej_["written_run"] = [dict(wi.get(f) or {}, file=f, **({"w": wsrc[f]} if wsrc.get(f) else {})) for f in wrf[:16]]
+            for f_, r_ in wsoft_.items():
+                if f_ not in wi:
+                    wsrc[f_] = r_                            # r0332: the page shows THAT write (seen_writes: released = seen)
+            ej_["written_run"] = [dict(wi.get(f) or {}, file=f, **({"w": wsrc[f]} if wsrc.get(f) else {}),
+                                       **({"zone": True} if f in wsoft_ and wsoft_[f] is None and f not in wi else {})) for f in wrf[:16]]
             for w_ in ej_["written_run"]:
                 # N14 0.2.73: a mark set by a git line (stash pop / restore / checkout under "gt"): what comes back is what the agent put into
                 # git; the witness saw that text when the agent wrote it (Write / Edit): shown, labelled as such, instead of "blind"
@@ -2548,7 +2828,11 @@ def refused_outside_write(ctx, agent_id, L, mid, act, now, t0, tool=None, args=N
 # be undone or seen -- a recursive delete, root rights, a hand-off to another app or the browser, code from a variable, a local service's
 # socket. Under unlisted "ask" these are asked anyway (not on the list); only the silence of OK_UNSPECIFIED is narrowed.
 _ALLOW_NEVER_SILENT = re.compile(r"^(?:rm \[[^\]]*\brecursive\b|find \[[^\]]*\bdelete\b|(?:sudo|doas|pkexec|su|runas)(?:\s|$)|"
-                                 r"(?:open|xdg-open|osascript|start|explorer(?:\.exe)?)(?:\s|$|\s*\[))")
+                                 r"(?:open|xdg-open|osascript|start|explorer(?:\.exe)?)(?:\s|$|\s*\[)|"
+                                 # r0333 (law of the consequence, Я0 nabor-1 S142 / S115): processes chosen by NAME (other programs'
+                                 # too) and an install into the system's zone are asked whatever the runner / closed-grammar shelves say
+                                 r"(?:\S*/)?(?:pkill|killall)(?:\s|$|\s*\[)|(?:\S*/)?kill \[[^\]]*\b(?:group|via xargs)\b|"   # r0340: /bin/kill too
+                                 r"[^\[]*\[[^\]]*\bsystem\b)")
 _EVAL_FROM_VAR = re.compile(r"(?:^|\s)-[A-Za-z]*[ce]\s+[\"']?\$|(?:^|[\s;&|(])eval\s|--unix-socket\b|docker\.sock\b")
 
 
@@ -2588,6 +2872,13 @@ _SYSTEM_PROG = re.compile(r"^/(?:usr/(?:local/)?(?:s?bin|libexec)|s?bin|opt/home
 _INSTALLED_RUNNER = re.compile(r"(?:^|/)(?:node_modules/\.bin|\.?venv/bin|\.tox/[^/]+/bin)/[^/]+$")
 
 
+def _py_edit_only(text):
+    """every Python program of the line is of the closed edit-only list (inline.edit_only: stdlib only, no network / exec / import machinery)"""
+    from app.hookjudge import inline as _inl
+    r_ = _inl.py_codes(text)
+    return bool(r_ and r_[0] and len(r_[0]) == r_[1] and all(_inl.edit_only(c_) is not None for c_ in r_[0]))
+
+
 def unknown_code(rc, text):
     """-> why the head `rc` of a Bash line runs code the agent could have written, or None (r0323, Р-1511 (1)-(2))."""
     try:
@@ -2608,26 +2899,65 @@ def unknown_code(rc, text):
             re.search(r"\|&?\s*(?:\S*/)?%s(?:\s+-)?\s*(?:$|[;&|)\n])" % b_, text)
         if not inline:
             return None
-        if py:
-            from app.hookjudge import inline as _inl
-            r_ = _inl.py_codes(text)
-            if r_ and r_[0] and len(r_[0]) == r_[1] and all(_inl.edit_only(c_) is not None for c_ in r_[0]):
-                return None
+        if py and _py_edit_only(text):
+            return None
         return "code in the line given to " + base
     except Exception:      # noqa: BLE001  fail closed: asked
         return "unreadable head"
 
 
+# r0329 (РАУНД 3 противника 15.11: 39 форм тихо под `unlisted: allow`; закон закрытой грамматики, BELYY-SPISOK-FABLE-1511 §3 полка
+# «форма»): "run other commands without asking" covers ONLY a call whose grammar is closed -- a program of the shelf "form"
+# (runners.FORM_SHELF: it runs no text it is handed), named bare or by a system path, with no flag outside the grammar the parser reads
+# (no "[..]" variant: `git -c core.fsmonitor=./tool status` is "git status [-c]", `make --eval=..` is "make [--eval]"). Any other program
+# (vim, sqlite3, m4, an interpreter, a runner, a program the parser does not know) is asked: its text may be code the agent wrote, and
+# no list of carriers can be complete. A pseudo-recipient "(..)" (a write outside the project, the agent's memory ...) keeps its own gates.
+# the tags of the parser that name WHAT a closed program does to data (bashparse TX_TAG_ORDER, _local_write, _recursive_outside), judged
+# by their own gates (writes, deletes, reads outside the project, secrets): not a flag outside the grammar. `exec`, `unsure`, a flag, an
+# environment variable, `via xargs` ... are.
+_DATA_TAGS = frozenset({"write", "delete", "read", "outside", "follow", "protected", "branch", "dir", "force", "recursive"})
+
+
+RUNNERS_SILENT_UNTIL_SANDBOX = True
+_PROJECT_RUNNERS = frozenset({"pytest", "py.test", "python", "python3", "node", "nodejs", "bash", "sh", "zsh", "make", "gmake"})
+
+
+def closed_grammar_call(rc, text=""):
+    """-> None when the head `rc` of a Bash line is a closed-grammar call (r0329), else why not. Python whose every program on the line
+    is of the closed edit-only list (r0323 _py_edit_only: a grammar of code, closed by inline.edit_only) is a closed call too."""
+    if not isinstance(rc, str) or not rc or rc.startswith("("):
+        return None
+    from app.hookjudge import runners as _rn
+    tags = [t.strip() for t in rc.split(" [", 1)[1].rstrip("]").split(",")] if " [" in rc else []
+    if _rn.PY_RE.fullmatch(rc.split(" [", 1)[0]) and set(tags) <= {"eval"} and _py_edit_only(text):
+        return None
+    if tags:
+        if any(t not in _DATA_TAGS for t in tags):
+            return "a flag outside the grammar the witness reads: " + rc[:80]
+    prog = rc.split(" ", 1)[0]
+    # kand2 (Р-1611-белый-список п.2, владелец 16.11): runners of the project's own code (pytest, python3 file, bash script, node, make) stay
+    # SILENT under `unlisted: allow` while there is no sandbox by default -- as in main. Only THIS part of r0329 is off; inline code
+    # ([eval] tags, `python -c`) and the other 39 forms keep the law. Turn on (False) together with the default sandbox.
+    if RUNNERS_SILENT_UNTIL_SANDBOX and (prog.rsplit("/", 1)[-1] in _PROJECT_RUNNERS or _rn.PY_RE.fullmatch(prog.rsplit("/", 1)[-1])) and ("/" not in prog or _SYSTEM_PROG.match(prog)):
+        return None
+    if prog in ("sudo", "doas"):
+        return "root rights"
+    base = prog.rsplit("/", 1)[-1]
+    if "/" in prog and not _SYSTEM_PROG.match(prog):
+        return "a program of the agent: " + prog[:80]
+    return None if _rn.closed_grammar(base) else "a program that may run a text it is given: " + base[:80]
+
+
 def unlisted_allow_gate(L, mid, act, tool, args, now):
     """r0305: an action the core lets through ONLY because of `unlisted: "allow"` (OK_UNSPECIFIED) whose command head is one of the
     above, or whose line runs code from a variable / talks to a local service's socket, is asked (marked dangerous: no list covers it).
-    Only narrows; anything else unchanged."""
+    r0329: and every head that is not a closed-grammar call (closed_grammar_call). Only narrows; anything else unchanged."""
     if not isinstance(act, dict) or act.get("class") != "command" or act.get("dangerous") is True or "allowance" in act \
             or act.get("sandboxed") is True or not (isinstance(tool, str) and tool.startswith("Bash")):
         return act
     rc = str(act.get("recipient") or "")
     text = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else ""
-    if not (_ALLOW_NEVER_SILENT.match(rc) or _EVAL_FROM_VAR.search(text) or unknown_code(rc, text)):
+    if not (_ALLOW_NEVER_SILENT.match(rc) or _EVAL_FROM_VAR.search(text) or unknown_code(rc, text) or closed_grammar_call(rc, text)):
         return act
     try:
         if L.S.decide_for(mid, act, now)[1:] != ("allow", "OK_UNSPECIFIED"):

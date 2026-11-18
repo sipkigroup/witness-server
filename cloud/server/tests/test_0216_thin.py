@@ -154,6 +154,20 @@ def _lw_head(h):
 
 # rt2810 (cloud/OTCHET-RT2810-PRAVKI.md): obfuscated interpreter code, code injected through the environment and /dev/tcp sockets are
 # dangerous now (or a host of the line): only ever stricter than 0.2.15, which asked them as ordinary commands.
+# r0335: the closed read-only forms of programs that read the machine's state (bashparse.STATE_READERS, docker ps): own identifiers
+R0335_CLOSED = ("docker ps", "top -l", "vm_stat", "sysctl read", "scutil --get", "sw_vers", "netstat", "ruff check", "sqlite3 read",
+                "printf", "hostname", "spctl --status", "unzip -l", "zip", "sips", "--version")      # r0341: closed forms (test_1711_r0341)
+
+
+def _r0335_closed(ev):
+    from app.hookjudge.mapping import DEFAULT_SAFE_COMMANDS
+    if not isinstance(ev, dict) or ev.get("tool_name") != "Bash":
+        return False
+    from app.hookjudge.bashparse import classify
+    hs = classify(ev["tool_input"]["command"], ev.get("cwd") or "/", "/nonexistent-home").heads
+    return bool(hs) and any(h in R0335_CLOSED for h in hs) and all(h in DEFAULT_SAFE_COMMANDS for h in hs)
+
+
 RT2810 = ("opaque:obfuscated code", "opaque:code injected through", "opaque:network: /dev/tcp", "opaque:network: /inet", "opaque:network: listening")
 
 
@@ -390,6 +404,9 @@ def test_same_parts_as_0215_on_the_hostile_set(ref, tmp_path, monkeypatch, which
             if touched:
                 lw += 1                               # 0.2.53: a command of the local-write list (exact writes): see LW_TAGS
                 continue
+            if _r0335_closed(ev):
+                lw += 1                               # r0335: the closed read-only form of a state reader has its own identifier
+                continue
             diff.append((ev, a, b))
     assert not diff, "%d of %d differ; first: %r" % (len(diff), n, diff[0])
     assert lw <= max(30, n // 10), (lw, n)
@@ -528,6 +545,10 @@ def test_same_decisions_as_0215_end_to_end(ref, tmp_path, monkeypatch):
             continue
         if a[0] == b[0] == "deny" and any(k in a[1] and k in b[1] for k in ("FORBIDDEN_",)):
             continue                                  # 06.11 (Constitution v1): the same refusal; the thin side also carries its reason text
+        m42 = re.search(r"\[changed: ([^\]]*)\]", a[1]) if a[0] == "ask" and "ESCALATE_EXEC_CHANGED" in a[1] else None
+        if b[0] == "allow" and m42 and all(re.search(r"/\.git/config(\.worktree)?$", x.strip()) for x in m42.group(1).split(",")):
+            lw += 1                                   # r0342 (17.11): a change of git's config without a program key is no execution: allowed now
+            continue
         inp = lines[i]["tool_input"]
         cl = classify(inp["command"], proj, os.environ.get("HOME", "/"), project=proj) if isinstance(inp.get("command"), str) else None
         heads = cl.heads if cl else []
@@ -553,6 +574,9 @@ def test_same_decisions_as_0215_end_to_end(ref, tmp_path, monkeypatch):
         if any(h.partition(" [")[0] in TX_NAMES for h in heads) and (a[0] == b[0] or rank.get(b[0], 3) > rank.get(a[0], 3)
                                                                      or (b[0] == "allow" and all(h in DEFAULT_SAFE_COMMANDS for h in heads))):
             lw += 1                                   # 0.2.54: find / sed / awk / jq: listed, variant tags in the question text, or stricter
+            continue
+        if b[0] == "allow" and any(h in R0335_CLOSED for h in heads) and all(h in DEFAULT_SAFE_COMMANDS for h in heads):
+            lw += 1                                   # r0335: a state reader's closed read-only form is listed now (ruff check src)
             continue
         diff.append((inp, a, b))
     assert not diff, "%d of %d differ; first: %r" % (len(diff), len(lines), diff[:3])

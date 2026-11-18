@@ -30,7 +30,8 @@ GIT_ASK = ["git restore -SW .", "git restore :/", "git reset --merge HEAD~1", "g
            "git reflog expire --expire=now --all", "git reflog delete HEAD@{1}", "git gc --prune=now", "git gc --prune=all", "git prune",
            "git repack -a -d", "git update-ref -d refs/heads/x", "git update-ref --stdin", "git symbolic-ref -d HEAD", "git filter-branch -f",
            "git filter-repo --path x", "git worktree remove --force ../wt", "git merge --abort", "git rm -f a.py", "git rm -rf src",
-           "git mv -f a.py b.py", "git checkout-index -a -f", "git read-tree --reset -u HEAD", "git -C . reset --merge"]
+           "git mv -f a.py b.py", "git checkout-index -a -f", "git read-tree --reset -u HEAD", "git -C . reset --merge",
+           "git checkout HEAD -- a.py"]     # r0344: the index too -- staged changes the copy does not hold
 GIT_KEEP = ["git reset --soft HEAD~1", "git reset HEAD~1", "git reset --keep HEAD~1", "git reset -- a.py", "git rebase main", "git rebase -i HEAD~3",
             "git rebase --abort", "git rebase --skip", "git commit --amend --no-edit", "git branch -d feat", "git branch -f feat HEAD~1",
             "git branch -m old new", "git switch -c feat", "git switch -C feat", "git checkout -b feat", "git restore --staged a.py",
@@ -39,7 +40,8 @@ GIT_KEEP = ["git reset --soft HEAD~1", "git reset HEAD~1", "git reset --keep HEA
             "git tag v1", "git tag -a v1 -m msg", "git cherry-pick abc", "git revert abc", "git merge feat", "git status", "git log -5",
             "git diff", "git add -A", "git commit -m 'x -d'",
             # 0.2.53 light writes the owner's mandate lists, judged path by path like `rm <file>` (not a question for show):
-            "git checkout -- src/a.py", "git checkout HEAD -- a.py", "git restore a.py", "git restore --worktree a.py",
+            # r0344: silent only with the hook's copy of each file (here LocalFS copies; no copy -> git-destroy, test_1811_r0344_otkat)
+            "git checkout -- src/a.py", "git restore a.py", "git restore --worktree a.py",
             "git restore --source=HEAD~2 a.py"]
 
 

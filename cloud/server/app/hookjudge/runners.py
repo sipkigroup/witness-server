@@ -111,11 +111,36 @@ NOT_RUNNERS = frozenset({
     # stripped before the command they prefix. seq / kill run no code. NOT here: eval, exec, source, ., coproc, trap (they run code).
     "for", "while", "until", "do", "done", "if", "then", "else", "elif", "fi", "case", "esac", "break", "continue", "function",
     "{", "}", "[[", "]]", "!", "time", "seq", "kill"})
+# kand8 (live run nabor-1 18.11 on 0.2.135, S048 / S064: `spctl --status`, `hostname; scutil --get ComputerName; sw_vers` held as
+# ESCALATE_WRITTEN_RUN after an unseen write of the session): the closed read-only forms of the state readers (bashparse.STATE_READERS,
+# r0335 / r0341) are heads the parser gives ONLY to the closed form -- a read of the machine's state, no text run. Such a head, with no
+# "[..]" variant, runs no code (the "once" rule of a risky write does not hold it). Any other form keeps the program's name: a run as before.
+STATE_FORM_HEADS = frozenset({"spctl --status", "hostname", "top -l", "vm_stat", "sysctl read", "scutil --get", "sw_vers", "netstat",
+                              "sqlite3 read"})
 # RT7 (28.10): mypy / pylint / flake8 / pyright / markdownlint LEFT this list. Each imports code its configuration names (mypy.ini plugins,
 # .pylintrc load-plugins / init-hook, setup.cfg [flake8:local-plugins], pyrightconfig.json venv -> runs that python, --rules ./r.js). The
 # server sees a config's digest, never its text, so "does the config name a plugin" cannot be decided here without a client release; and a
 # rule "a config of the tool exists" is the same as removal (pyproject.toml / setup.cfg are in nearly every project). Cost: one question per
 # risky write when one of them runs next (the "once" rule). ruff / black / isort / tsc do not import project code: they stay.
+
+# r0329 (РАУНД 3 противника, 15.11; закон закрытой грамматики): the shelf "form" -- programs whose every argument is data or a flag the
+# parser reads, which never run text they are handed (an argument, stdin, a here-string, a process substitution). Built from NOT_RUNNERS
+# (one list), minus the ones that DO run a text they are given in some form the parser does not tag: tar (--to-command, -I, --use-compress-
+# program), zip (-TT), man / less / more (a pager / preprocessor command, `!cmd`), patch (an ed-style diff runs `!cmd`). Plus shell words that
+# set or read the shell's own state. Two consequences (bashparse._carried, actions.unlisted_allow_gate):
+#   (1) a program OFF this shelf is a carrier: the text the line hands it is judged as the command it carries (an article -> refused);
+#   (2) under `unlisted: "allow"` only a call of this shelf with no flag outside its grammar (no "[..]" variant) runs silently.
+FORM_SHELF = (NOT_RUNNERS - {"tar", "zip", "man", "less", "more", "patch"} - CARRIERS - SHELLS - INTERPRETERS - TASK_RUNNERS) | frozenset({
+    "local", "declare", "typeset", "readonly", "shift", "exit", "return", ":", "let", "getopts", "umask", "dirs",
+    "--version"})
+
+
+def closed_grammar(name):
+    """True when the program `name` (a bare name, or an absolute system path of one) is on the shelf "form"."""
+    if not isinstance(name, str) or not name:
+        return False
+    return name in FORM_SHELF or (name[:1] == "g" and name[1:] in G_PREFIXED and name[1:] in FORM_SHELF)
+
 
 # RT7: GNU tools installed with a g prefix (Homebrew coreutils / findutils / gnu-tar / gnu-sed / gnu-time): `gtimeout 5 make` is `timeout`
 G_PREFIXED = frozenset({
@@ -229,6 +254,8 @@ def head_runs_code(head, words=(), git_hooks=None):
     h = head.split(" [", 1)[0].strip("'\"\\")
     if not h:
         return False
+    if head in STATE_FORM_HEADS:
+        return False                                 # kand8: a closed read-only form of a state reader (see STATE_FORM_HEADS)
     first = canon(h.split(" ", 1)[0])
     if first.startswith("-") or "=" in first.split("/", 1)[0]:
         return False

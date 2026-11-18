@@ -70,7 +70,7 @@ def dev(client, owner, tmp_path):
 
 
 @pytest.mark.parametrize("cmd", ["pytest -q", "python -m pytest -q", "python3 -m mypy src", "npm test", "npm run lint", "make", "make test",
-                                 "go test ./...", "cargo test", "ruff check src", "yarn test"])
+                                 "go test ./...", "cargo test", "ruff check --fix src", "yarn test"])
 def test_strict_sandbox_runner_is_allowed(dev, sb, cmd):
     sb(fact())
     [(tool, r)] = dev.send(cmd)

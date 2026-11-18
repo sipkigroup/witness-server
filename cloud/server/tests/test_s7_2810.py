@@ -224,7 +224,7 @@ def test_z3_short_last_poll_marks_the_call_at_once(client, owner, tmp_path, monk
     proj = tmp_path / "proj"
     proj.mkdir()
     d = Dev(client, owner, proj.resolve())
-    [(_, a)] = d.send("hostname")
+    [(_, a)] = d.send("pmset -g")                 # r0343: hostname is a closed form since r0341 (silent)
     clock = [waiting.time.time() + 100.0]
     monkeypatch.setattr(waiting, "_now", lambda: clock[0])
     monkeypatch.setattr(waiting, "_started", 0.0)

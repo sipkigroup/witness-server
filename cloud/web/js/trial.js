@@ -73,7 +73,10 @@ export function describeForm(f) {
   const d = f.delete || {}, c = f.command || {}, m = f.message || {};
   // r0283 (third blind evaluation Н-3 Н-4, decision 7): only what Witness checks -- "asked first or refused", never "no purchases" / "only inside"
   L.push(['Writes and deletes', 'without asking only inside: ' + ((d.targets || []).join(', ') || 'nowhere') + '; anywhere else asked first or refused']);
-  L.push(['Shell commands', 'run without asking: ' + ((c.allow || []).join(', ') || 'none') + '; any other command asks you first or is refused']);
+  // r0339 (Р-1711-baza п.2): a form with `unlisted: allow` is named honestly, never "asks you first"
+  L.push(['Shell commands', 'run without asking: ' + ((c.allow || []).join(', ') || 'none') + (c.unlisted === 'allow'
+    ? '; any other command runs without asking you too. Like an antivirus: Witness stops only the dangerous ones it recognises; what it does not know passes'
+    : '; any other command asks you first or is refused')]);
   L.push(['Web', 'reads without asking only from: ' + ((m.domains || []).join(', ') || 'nowhere') + '; other sites asked first or refused']);
   L.push(['Money', 'purchases and payments are asked first']);
   if (isAutoProfile(c)) L.push(['Auto mode profile', 'ask only what cannot be undone: a change of a file outside the project in your home folder runs without asking after Witness keeps a copy (undo); deleting outside the project, network and git push, money, secrets, the agent\'s settings and anything that starts by itself are still asked']);

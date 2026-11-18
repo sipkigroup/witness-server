@@ -27,15 +27,25 @@ def _vs():
     return json.loads(VERSIONS.read_text())
 
 
+def _last_line_and_mark():
+    """the Version line and the change marker of the current page (the latest version), as bytes"""
+    e = _vs()[-1]
+    return (("Version %d (%s)" % (e["version"], e["date"])).encode(),
+            ('data-weakens="%s" data-effective="%s" data-corrects="%s"' % (
+                "true" if e["weakens"] else "false", e["effective"], " ".join(c["law"] for c in e["corrects"]))).encode())
+
+
 def _next(tmp_path, *, drop_law=None, drop_check=None, retext=None, weakens=False, date="2026-12-01", effective=None, corrects=(),
           json_laws=None, mark=None):
-    """Version 4 made from the current page (version 3) with one change; -> (web dir, page bytes, versions list)."""
+    """The next version made from the current page (the latest version) with one change; -> (web dir, page bytes, versions list)."""
     effective = effective or date
     w = tmp_path / "web"
     (w / "constitution").mkdir(parents=True)
     for f in (WEB / "constitution").iterdir():
         shutil.copy(f, w / "constitution" / f.name)
-    page = PAGE.read_bytes().replace(b"Version 3 (2026-11-15)", ("Version 4 (%s)" % date).encode())
+    line, cur_mark = _last_line_and_mark()
+    nv = _vs()[-1]["version"] + 1
+    page = PAGE.read_bytes().replace(line, ("Version %d (%s)" % (nv, date)).encode())
     laws = copy.deepcopy(_vs()[-1]["laws"])
     if drop_law:
         page, n = re.subn(rb'\n  <li class="law[^"]*" data-law="%s">.*?</li>' % drop_law.encode(), b"", page, flags=re.S)
@@ -50,13 +60,14 @@ def _next(tmp_path, *, drop_law=None, drop_check=None, retext=None, weakens=Fals
         old, new = retext
         assert page.count(old) == 1
         page = page.replace(old, new)
-    page = page.replace(V3_MARK, mark if mark is not None else ('data-weakens="%s" data-effective="%s" data-corrects="%s"' % (
+    assert page.count(cur_mark) == 1
+    page = page.replace(cur_mark, mark if mark is not None else ('data-weakens="%s" data-effective="%s" data-corrects="%s"' % (
         "true" if weakens else "false", effective, " ".join(c["law"] for c in corrects))).encode())
-    (w / "constitution" / "v4.html").write_bytes(page)
-    vs = _vs() + [{"version": 4, "date": date, "sha256": CC.page_hash(page), "path": "constitution/v4.html",
+    (w / "constitution" / ("v%d.html" % nv)).write_bytes(page)
+    vs = _vs() + [{"version": nv, "date": date, "sha256": CC.page_hash(page), "path": "constitution/v%d.html" % nv,
                    "laws": json_laws if json_laws is not None else laws, "weakens": weakens, "effective": effective, "corrects": list(corrects)}]
     (w / "constitution" / "versions.json").write_text(json.dumps(vs))
-    shutil.copy(w / "constitution" / "v4.html", w / "constitution.html")
+    shutil.copy(w / "constitution" / ("v%d.html" % nv), w / "constitution.html")
     return w, page, vs
 
 
@@ -66,10 +77,14 @@ def _check(w, page, vs, with_copies=True):
 
 def test_version_3_is_valid_and_names_every_law_by_id():
     ok, why = CC.check_constitution(PAGE.read_bytes(), VERSIONS.read_bytes(), web_dir=str(WEB))
-    assert ok and "version 3" in why, why
-    v3 = _vs()[-1]
-    assert v3["version"] == 3 and v3["weakens"] is False and v3["effective"] == v3["date"] == "2026-11-15"
+    assert ok and "version %d" % _vs()[-1]["version"] in why, why
     ids = [e[0] for e in CC.law_elements(PAGE.read_bytes())]
+    assert ids == list(_vs()[-1]["laws"]) and None not in ids
+    v3 = _vs()[2]                                        # r0336: version 4 is the current page; version 3 is checked on its copy
+    assert v3["version"] == 3 and v3["weakens"] is False and v3["effective"] == v3["date"] == "2026-11-15"
+    v3page = (WEB / v3["path"]).read_bytes()
+    assert V3_MARK in v3page
+    ids = [e[0] for e in CC.law_elements(v3page)]
     assert ids == list(v3["laws"]) and len(ids) == 16 and None not in ids
     # version 3 keeps every law and every check of version 2, and adds two laws
     v2 = _vs()[1]["laws"]

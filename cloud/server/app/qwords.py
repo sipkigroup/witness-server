@@ -375,6 +375,11 @@ DANGER_WORDS = {
     "git-force-push": ("Your agent wants to overwrite history on the server", "Other people's work could be lost.",
                        "A force-push replaces the branch on the server.", "high"),
 }
+# r0346: no "git-no-verify" entry above. DANGER_WORDS is part of the signed vocabulary document (vocab.doc "danger_words"); a new entry
+# changes the digest of mr-vocab-6 that mandates pinned (signed = shown). The mark git-no-verify never reaches a question: it is refused
+# Н3 without one (constitution.check, both mandates, test_1811_r0345_ekzamen1 g1.*). Were it ever asked, danger_category gives the
+# generic ESCALATE_COMMAND_DANGER sentence every vocabulary holds (true, rebuildable). Its plain words live in MARK_WORDS (Details, not
+# in the vocabulary). A sentence of its own on the first screen = a new vocabulary version with a pin, never an edit of this table.
 _INSTALL_MARK = re.compile(r"(?:^|/)(?:pip3?|npm|npx|yarn|pnpm|uv|uvx|poetry|conda|gem|cargo|brew|go|bun|pipx)\b|\[packages\]|-m pip\b")
 _GIT_FETCH = re.compile(r"^git (?:pull|fetch|clone|ls-remote|submodule update|remote update)\b")
 
@@ -420,6 +425,7 @@ MARK_WORDS = {
     "disk": "it uses a disk tool",
     "witness": "it touches Witness's own key or settings",
     "git-force-push": "it overwrites history on the server",
+    "git-no-verify": "it switches the git hooks off",
     "autostart": "it writes a file that starts commands by itself",
     "defense": "it switches off a protection of your computer",
     "money": "it can spend or send money",

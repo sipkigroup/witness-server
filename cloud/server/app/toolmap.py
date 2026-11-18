@@ -61,6 +61,7 @@ _CC_COMMON = {
 # why each entry is there and why find/xargs/sed/awk/env/printenv/make/interpreters/package managers/curl/wget are not: docs/internal/coverage.md 6.2.
 # 0.2.53: the last 15 are local writes, allowed only in the form whose every path is inside the project (hookjudge/bashparse._local_write).
 # 0.2.89: + 19 read-only diagnostics after jq, each only in its read-only form (hookjudge/bashparse._ro_tags / _ro_ident).
+# r0325 (live stand 16.11): + "git init" (a repository inside the project, bashparse._lw_init) and "xattr" (the reading form, bashparse._xattr_tags).
 CC_READONLY_COMMANDS = ("ls", "pwd", "cd", "cat", "head", "tail", "wc", "echo", "grep", "rg", "which", "file", "stat", "du", "df",
                         "date", "uname", "git status", "git log", "git diff", "git show", "git branch", "diff", "tree", "sort",
                         "uniq", "cut", "tr", "nl", "column", "basename", "dirname", "realpath", "sha1sum", "sha256sum", "sha512sum",
@@ -71,7 +72,8 @@ CC_READONLY_COMMANDS = ("ls", "pwd", "cd", "cat", "head", "tail", "wc", "echo", 
                         "find", "sed", "awk", "jq",
                         "ps", "lsof", "whoami", "id", "git remote", "git tag list", "git stash list", "git stash show", "git config get", "npm ls", "npm list",
                         "pip list", "pip3 list", "pip freeze", "pip3 freeze", "pip show", "pip3 show", "uv pip", "git check-ignore", "git ls-tree", "git rev-list", "git merge-base", "git show-ref",
-                        "od", "hexdump", "strings", "xxd", "--version")
+                        "od", "hexdump", "strings", "xxd", "git init", "xattr", "--version",
+                         "docker ps", "top -l", "vm_stat", "sysctl read", "scutil --get", "sw_vers", "netstat", "ruff check", "sqlite3 read", "printf", "hostname", "spctl --status", "unzip -l", "zip", "sips")
 # 0.2.9: a Write/Edit/MultiEdit/NotebookEdit to git's configuration, hooks or a `.git` file is sent twice: as the file tool (delete targets) and as
 # Write.danger (git runs what is written there on the next `git status`/`git diff`: judged like a dangerous command, the owner is asked each time)
 _CC_WRITE_DANGER = {"recipient": "$._witness.danger", "text": ["$.content", "$.new_string", "$.edits", "$.new_source"], "strict": True, "l2_skip": ["$._witness"],

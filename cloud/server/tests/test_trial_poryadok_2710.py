@@ -81,7 +81,7 @@ def test_dropped_long_poll_marks_the_call_at_once(client, owner, app, tmp_path):
     pr = tmp_path / "proj"
     pr.mkdir()
     d = Dev(client, owner, pr.resolve())
-    [(_, a)] = d.send("sw_vers")
+    [(_, a)] = d.send("uptime")
     key = d.hdr["Authorization"][7:]
     took = _poll_and_drop(app, a["rid"], key)
     assert took < 5, took                                                  # the server stops the poll too, not after 20 s
@@ -115,7 +115,7 @@ def test_dropped_long_poll_real_socket(client, owner, app, tmp_path):
     pr = tmp_path / "proj"
     pr.mkdir()
     d = Dev(client, owner, pr.resolve())
-    [(_, a)] = d.send("sw_vers")
+    [(_, a)] = d.send("uptime")
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]

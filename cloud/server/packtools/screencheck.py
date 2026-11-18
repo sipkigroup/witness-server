@@ -40,6 +40,14 @@ VOCAB_FIRST = VOCAB_REBUILT[0]
 OMIT_RULE = "mr-omit-1"
 FIRST_SCREEN = ("rid", "status", "what", "harm", "risk")
 _PH = re.compile(r"\{(t|n|when)\}")
+# r0327 (law "Signed = shown"): a "from now on" rule signs, in its `view`, the object {"v": ALLOW_VIEW_V, "page": <the approval page's view>,
+# "text_v", "text"}: the text of trust shown next to the button, whole. It must be one of the witness's versions (SHA-256 of the UTF-8
+# text; server app/allowances.texts, a test keeps them equal); another text is ALLOW_TEXT_UNKNOWN (INVALID). A rule whose view is the page
+# alone was signed before the text became part of the signature: warning ALLOW_TEXT_NOT_SIGNED (VALID, as before).
+ALLOW_VIEW_V = "dw-allow-view-1"
+ALLOW_TEXT_SHA256 = {"tt-1": "12ff7648b7a7008af4147faee08a50574f9dbd4272bc2451930577e6ac49dfcd",
+                     "tt-2": "771a4d146af123e038e65d3c9082f36b98d4dd989ba5285776aca97ec9f5bdc6",
+                     "am-1": "a5737564732b94b21945840e1d5e26b99d128944a0b2a859dfd49f4445627278"}
 
 
 # ------------------------------------------------------------------ P2
@@ -258,9 +266,19 @@ def screen_checks(root, entries, views, cbor_loads, require=False, cap=50):
         if not isinstance(view, dict):
             continue
         rid = key[len("release-"):] if key.startswith("release-") else key
-        if key.startswith("allowance-"):         # a project permission signs the view of the approval page that offered it
-            rid = str(view.get("rid"))
         label = ("release %s" % rid) if key.startswith("release-") else ("allowance %s" % key[len("allowance-"):] if key.startswith("allowance-") else "approval %s" % rid)
+        if key.startswith("allowance-"):         # a project permission signs the view of the approval page that offered it
+            tl, tcode = allow_text_check(view)
+            if tcode == "ALLOW_TEXT_UNKNOWN":
+                lines.append("%s: ALLOW_TEXT_UNKNOWN (%s)" % (label, tl))
+                return lines, "ALLOW_TEXT_UNKNOWN", warns
+            if tcode:
+                warns.append(tcode)
+            if len(lines) < cap:
+                lines.append("%s: %s" % (label, tl))
+            if view.get("v") == ALLOW_VIEW_V:
+                view = view["page"]              # the first screen of the question: checked below as any approval page
+            rid = str(view.get("rid"))
         # P2
         oc, items = check_omitted(view)
         if oc == "OMITTED_MISMATCH":
@@ -313,6 +331,20 @@ def screen_checks(root, entries, views, cbor_loads, require=False, cap=50):
                      "none); %d signed list(s) of what was not shown, %d without one (older page)"
                      % (n_words, warns.count("WORDING_LEGACY") + warns.count("WORDING_UNVERIFIABLE"), n_omit, warns.count("OMITTED_UNDECLARED")))
     return lines, None, warns
+
+
+def allow_text_check(view):
+    """r0327: -> (line, None | "ALLOW_TEXT_NOT_SIGNED" | "ALLOW_TEXT_UNKNOWN") for the view object of a "from now on" rule."""
+    if not isinstance(view, dict) or view.get("v") != ALLOW_VIEW_V:
+        return ("warning ALLOW_TEXT_NOT_SIGNED (signed before the text of trust became part of the signature: the page is signed, the "
+                "text shown next to the button is not)", "ALLOW_TEXT_NOT_SIGNED")
+    t, tv, page = view.get("text"), view.get("text_v"), view.get("page")
+    if set(view) != {"v", "page", "text_v", "text"} or not isinstance(page, dict) or not isinstance(t, str) or not isinstance(tv, str):
+        return "the signed object is not {v, page, text_v, text}", "ALLOW_TEXT_UNKNOWN"
+    h = hashlib.sha256(t.encode("utf-8", "surrogatepass")).hexdigest()
+    if ALLOW_TEXT_SHA256.get(tv) != h:
+        return ("the signed text of trust (%s, sha256 %s) is not the witness's version %s" % (tv[:16], h[:16], tv[:16]), "ALLOW_TEXT_UNKNOWN")
+    return "text of trust %s signed with the page (sha256 %s)" % (tv, h[:16]), None
 
 
 def _action_same(view, receipt_action):

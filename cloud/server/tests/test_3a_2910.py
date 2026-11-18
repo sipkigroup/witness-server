@@ -21,14 +21,16 @@ def _reject_first(a):
 
 
 def test_3a_harmless_write_replaces_text_and_clears_mark(client, owner, tmp_path):
+    """r0332 (ARHIV-RESHENIY-OPUS-1611 §3 p.4, the law of the written mark): no write of the agent takes the mark off -- the harmless
+    whole-file Write KEEPS it (the run is asked again); the page shows the new whole text, never the old (risky) one."""
     a = Agent(client, owner, tmp_path, extra_cmds=["python3"])
     _reject_first(a)
     a.tool("Write", {"file_path": a.proj + "/f.py", "content": T2})
     v, parts = a.line("python3 f.py ")
-    if v != "ALLOW":                       # whatever the reason, the page must not carry the old text
-        w = _writes(_page(a, _rid(parts))).get("f.py") or {}
-        assert "urlopen" not in (w.get("text") or "")
-    assert v == "ALLOW", parts
+    assert v == "ASK", parts
+    w = _writes(_page(a, _rid(parts))).get("f.py") or {}
+    assert "urlopen" not in (w.get("text") or "")
+    assert "second harmless version" in (w.get("text") or ""), w
 
 
 def test_3a_edit_keeps_mark_but_not_old_text(client, owner, tmp_path):

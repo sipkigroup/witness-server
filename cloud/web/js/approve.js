@@ -10,12 +10,12 @@ import { main as queueMain, advisoryText, decideHeld } from './batch.js';
 import { clip4k, nextPending, newerPending } from './queue.js';
 import { inspectFields } from './honest.js';
 import { $, notice, mountNav, until, safeId, failText } from './ui.js';
-import { TYP_ALLOWANCE, TRUST_TEXT, allowancePayload, newAllowanceId, offerView, untilText } from './allowance.js';
+import { TYP_ALLOWANCE, allowancePayload, allowViewHash, newAllowanceId, offerView, trustTextOf, untilText } from './allowance.js';
 import { levelView, execView, levelError, keySummary, dangerShown, secretLead } from './levels.js';
 import { signBatch } from './sign.js';
 import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
-import { signedView, viewHash } from './signview.js';
+import { signedView, viewHash, viewOf } from './signview.js';
 import { askOf, dangerText, protectedTarget, reasonWords, dangerCovered } from './ask.js';
 import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE, detLines } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
@@ -887,7 +887,7 @@ async function single(me) {
     $('#allow_label').textContent = ov.label;
     $('#allow_note').textContent = ov.note;
     $('#allow_cb').disabled = !ov.enabled;
-    $('#allow_trust').textContent = TRUST_TEXT;
+    $('#allow_trust').textContent = trustTextOf(r.allowance_offer);   // r0327: the text the passkey signs with the page (offer.text)
     $('#allow_trust').hidden = !ov.enabled;            // 0.2.51: the honest text is on screen whenever a permission can be signed
     $('#allow_cb').addEventListener('change', () => { $('#allow_more').hidden = !$('#allow_cb').checked; });
   }
@@ -909,7 +909,8 @@ async function single(me) {
   const allowForProject = async (days) => {
     const o = r.allowance_offer;
     const id = newAllowanceId();
-    const payload = await allowancePayload(o, r.mandate, days || $('#allow_days').value, o.t + (Date.now() - got) / 1000, id, sv.view);   // pv2
+    const aview = sv.view ? await allowViewHash(viewOf(r), o) : null;    // r0327: the page AND the text of trust (sv.hex is still the page's claim)
+    const payload = await allowancePayload(o, r.mandate, days || $('#allow_days').value, o.t + (Date.now() - got) / 1000, id, aview);   // pv2
     $('#hexp').textContent = bytesToHex(payload);
     $('#hexc').textContent = bytesToHex(await challenge(TYP_ALLOWANCE, payload));
     const envelope_b64 = await signPayload(TYP_ALLOWANCE, payload, me);
@@ -931,7 +932,8 @@ async function single(me) {
       const view = lead ? sv.view : await viewHash(it.part.view);
       const hex = lead ? sv.hex : bytesToHex(view);
       if (!lead && hex !== it.hex) throw Object.assign(new Error('This page and the witness disagree on what a part of this call shows.'), { code: 'VIEW_CHANGED' });
-      const payload = await allowancePayload(it.offer, it.mandate, LATER_DAYS, it.offer.t + (Date.now() - got) / 1000, newAllowanceId(), view);
+      const aview = await allowViewHash(lead ? viewOf(r) : viewOf(it.part.view), it.offer);    // r0327: + the text of trust of that part
+      const payload = await allowancePayload(it.offer, it.mandate, LATER_DAYS, it.offer.t + (Date.now() - got) / 1000, newAllowanceId(), aview);
       const envelope_b64 = await signPayload(TYP_ALLOWANCE, payload, me);
       try { await post('/api/allowances', withUx({ rid: it.rid, envelope_b64, view_sha256: hex })); } catch (e) {
         throw Object.assign(new Error((n ? n + ' of ' + rows.length + ' parts were allowed from now on; the call does not run until every part is covered. ' : '') + 'A part could not be allowed from now on (' + failText(e) + '). You can still allow it once.'), { shown: true });
@@ -1078,6 +1080,7 @@ async function single(me) {
     const ul = $('#lc_rows'); ul.textContent = '';
     for (const x of c.rows) { const li = document.createElement('li'); li.textContent = x.commands.join(', ') + ' in ' + x.project; ul.append(li); }
     $('#lc_agent').textContent = c.agent; $('#lc_until').textContent = c.until; $('#lc_revoke').textContent = c.revoke;
+    $('#lc_trust').textContent = [...new Set(laterPlan(r).items.map((it) => trustTextOf(it.offer)))].join('\n\n');   // r0327: signed with the rule
     $('#later_confirm').hidden = false; $('#decide').hidden = true; $('#lc_ok').focus();
   });
   $('#lc_back').addEventListener('click', () => { $('#later_confirm').hidden = true; $('#decide').hidden = false; });

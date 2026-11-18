@@ -271,7 +271,7 @@ def test_trial_account_subscribes_and_is_woken(papp, pc, tmp_path):
     assert st["trial"] is True and st["notify"]["push"] == 1
     env = {"CLAUDE_PROJECT_DIR": proj, "HOME": "/nonexistent-home"}
     rids = []
-    for cmd in ("pytest -q", "ruff check .", "mypy ."):
+    for cmd in ("pytest -q", "ruff check --fix .", "mypy ."):     # r0335: plain `ruff check` is a listed read
         [m] = map_event({"tool_name": "Bash", "tool_input": {"command": cmd}, "cwd": proj}, env=env)
         j = act(pc, hdr, m.tool, m.args).json()
         assert j["verdict"] == "defer", j

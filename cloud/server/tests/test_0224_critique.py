@@ -12,6 +12,7 @@ import wq_profile as wq
 from app.hookjudge.mapping import map_event, DEFAULT_SAFE_COMMANDS, DEFAULT_WEB_DOMAINS, default_form
 from tests.helpers import act
 from tests_flow.helpers import set_settings
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 _PK = "PRIVATE" + " KEY-----"                 # FAKE test material, assembled so deploy/secrets-check.sh finds no key-like string in the source
 PEM = "-----BEGIN OPENSSH " + _PK + "\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZWQy\n-----END OPENSSH " + _PK + "\n"
@@ -125,8 +126,7 @@ def test_0224_t3_webfetch_query_after_secret_is_held(client, owner, tmp_path):
     assert (v, reason) == ("defer", "ESCALATE_SECRET_SEEN")
     # the owner can still let it go (release with a passkey): hold, not a dead end
     x = row(client, rid)
-    pay = wq.release_payload(rid, json.loads(x["action_json"])["args_sha256"], True)
-    r = owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay))
+    r = viewkit.release(owner, rid, json.loads(x["action_json"])["args_sha256"], True)
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
 
 

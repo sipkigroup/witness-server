@@ -2738,6 +2738,15 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             _mark_defense(ctx, row, act, m)                            # r0305: an OS protection switched off (asked only as a strict doubt)
             _mark_v6(ctx, row, m)                                      # r0307: mr-vocab-6 sentences only for a mandate that pinned them
         if gate is not None and gate[0] == "deny":
+            if gate[1] == "APPROVAL_RATE" and isinstance(dwhy, str):
+                # r0352 (KAND-ACH-4): the question this refusal stood for (its reason), so the owner's queue can say one line about it
+                try:
+                    ej_r = json.loads(row.get("exec_json") or "{}")
+                    if isinstance(ej_r, dict):
+                        ej_r["rate_of"] = dwhy[:64]
+                        row["exec_json"] = json.dumps(ej_r, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    pass
             res = refuse(gate[1])
             if gate[1] == "APPROVAL_RATE":
                 auto_freeze_check(ctx, agent, t0)            # 0.2.25: a flood of refused questions freezes the agent

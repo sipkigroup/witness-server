@@ -8,7 +8,7 @@ from app.flow.api import router  # noqa: F401  (FastAPI APIRouter: /api/suggesti
 def pre_authorize(ctx, agent, mandate_row, act, dry_verdict, dry_reason):
     """-> None | ("deny", code) | ("hold", code). APPROVAL_RATE (dry defer only), ADVISORY_HOLD (dry allow only)."""
     if dry_verdict == "defer":
-        return rate.check(ctx, agent, dry_verdict, act=act)
+        return rate.check(ctx, agent, dry_verdict, act=act, reason=dry_reason)     # r0352: the reserve for high-risk questions
     if dry_verdict == "allow":
         return advisor.check(ctx, agent, mandate_row, act, dry_verdict)
     return None

@@ -11,6 +11,7 @@ import json
 
 import wq_profile as wq
 from tests.test_0224_critique import Agent
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 PY_NET = "import urllib.request\nurllib.request.urlopen('https://staging.poligon-s8.invalid/health')\n"
 SH_NET = "#!/bin/sh\ncurl -s -m 5 https://staging.poligon-s8.invalid/sh\n"
@@ -32,7 +33,7 @@ def _page(a, rid):
 
 def _release(a, rid, yes=True):
     sha = _page(a, rid)["action"]["args_sha256"]
-    r = a.o.post("/api/approvals/%s/release" % rid, release=yes, envelope_b64=a.o.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, yes)))
+    r = viewkit.release(a.o, rid, sha, yes)
     assert r.status_code == 200, r.text
     a.c.app.state.ctx.db.x("UPDATE actions SET updated_at=updated_at-5 WHERE agent_id=?", (a.ag["id"],))   # all so far: 5 s ago (the next write is later)
 

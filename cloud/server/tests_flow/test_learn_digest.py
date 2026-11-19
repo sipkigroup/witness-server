@@ -83,7 +83,7 @@ def test_10_digest_counts_F(client, owner, ctx):
     for i in range(12):
         act(client, hdr, "publish", {"channel": "#team", "text": "b%d" % i})
     g = client.get("/api/approvals/groups").json()["groups"][0]
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]]))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]]))
     assert r.status_code == 200
     d = client.get("/api/digest?since=0").json()
     assert (d["W"], d["H"], d["F"]) == (12, 12, 1) and d["F100"] == round(100 / 12, 2) and d["A100"] == 100.0

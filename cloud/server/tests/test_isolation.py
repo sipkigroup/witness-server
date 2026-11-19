@@ -1,6 +1,7 @@
 from tests.helpers import FORM, H, act
 import wa_profile as wa
 from svidetel_v4.state import approval_payload
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def test_tenant_isolation(client, owner, owner2, app):
@@ -14,7 +15,7 @@ def test_tenant_isolation(client, owner, owner2, app):
     assert cb.get("/api/approvals/" + rid).status_code == 404
     pay = approval_payload(m, d["action"], rid, True)
     env = owner2.sign(wa.TYP_APPROVAL, pay)
-    assert owner2.post("/api/approvals/" + rid, approved=True, envelope_b64=env).status_code == 404
+    assert owner2.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(owner2.c, rid)), approved=True, envelope_b64=env).status_code == 404
     assert cb.delete("/api/agents/" + ag["id"], headers=H).status_code == 404
     assert cb.put("/api/agents/%s/toolmap" % ag["id"], json={"toolmap": {"version": 1, "default": "pass", "tools": {}}}, headers=H).status_code == 404
     assert owner2.post("/api/mandates/draft", agent_id=ag["id"], form=FORM).status_code == 404

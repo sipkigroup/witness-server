@@ -34,6 +34,7 @@ from tests.helpers import Owner, ORIGIN, RP
 from tests_flow.helpers import set_settings
 from deus_witness import client as dwc
 from deus_witness.hook import main as thin, form
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 SEC, GUARD, AUTO = K.SECRET, K.GUARD, K.AUTOSTART
 
@@ -163,7 +164,7 @@ def stand(tmp_path_factory):
         if st == "held":
             g = owner.c.get("/api/approvals/" + rid).json()
             sha = (g.get("action") or {}).get("args_sha256")
-            owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+            viewkit.release(owner, rid, sha, True)
         else:
             owner.approve(rid, True)
 

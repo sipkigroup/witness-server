@@ -59,8 +59,10 @@ class Owner:
 
     def approve(self, rid, approved=True):
         g = self.c.get("/api/approvals/" + rid).json()
-        pay = approval_payload(g["mandate"], g["action"], rid, approved)
-        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, pay))
+        v = bytes.fromhex(g["view_sha256"]) if g.get("view_sha256") else None     # r0352: the page signs the view the witness offers
+        pay = approval_payload(g["mandate"], g["action"], rid, approved, v)
+        b = {"view_sha256": g["view_sha256"]} if v else {}
+        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, pay), **b)
 
 
 def act(client, hdr, tool, args):

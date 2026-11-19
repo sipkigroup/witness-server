@@ -22,6 +22,7 @@ from tests.recovery_helpers import add_key, login_with, remove_key, stepup_with
 from tests.test_0220_signcount import approval_env, counting, defer, status
 from tests.test_flow import setup_agent
 from tests.test_push import Clock, Device, FakeSender, subscribe, vapid_pem
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 ALERT_FIELDS = {"first_at", "last_at", "count", "route", "stored", "got", "notified_at"}
 
@@ -66,7 +67,7 @@ def keys(p):
 def regress(p, hdr, counter=3, text="x"):
     rid = defer(p.c, hdr, text)
     p.auth.counter = counter
-    r = p.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(p, rid))
+    r = p.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(p.c, rid)), approved=True, envelope_b64=approval_env(p, rid))
     assert r.status_code == 409 and r.json()["error"] == "SIGN_COUNT_REGRESSION", r.text
     return rid
 
@@ -92,7 +93,7 @@ def test_regression_pushes_owner_and_marks_device_no_freeze(papp):
     assert a["first_at"] == a["last_at"] == a["notified_at"] == papp.state.t[0]
     # NO automatic freeze: the passkey keeps working with a counter that grows; the mark stays until the owner acts
     p.auth.counter = 6
-    r = p.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(p, rid))
+    r = p.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(p.c, rid)), approved=True, envelope_b64=approval_env(p, rid))
     assert r.status_code == 200 and status(p.c, rid) != "pending_approval", r.text
     for c in (7, 8, 9):
         p.auth.counter = c
@@ -125,7 +126,7 @@ def test_1000_regressions_one_push_per_10_min_no_new_rows(papp, capsys):
     for i in range(20):                                          # over HTTP, as a clone would
         papp.state.t[0] += 1
         p.auth.counter = 3
-        assert p.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(p, rid)).json()["error"] == "SIGN_COUNT_REGRESSION"
+        assert p.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(p.c, rid)), approved=True, envelope_b64=approval_env(p, rid)).json()["error"] == "SIGN_COUNT_REGRESSION"
     p.auth.counter = 4
     env = wa.b64u_dec(approval_env(p, rid))
     for i in range(979):                                         # the same code path, 979 more times (1000 in all)

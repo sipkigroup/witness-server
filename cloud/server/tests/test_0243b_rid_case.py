@@ -5,6 +5,7 @@ from app import _paths  # noqa: F401
 from app.context import canon_rid
 from svidetel_v4.state import approval_payload
 from tests.test_0243_http import HFORM, call
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def test_canon_rid_unit():
@@ -24,8 +25,8 @@ def test_lowercase_rid_finds_the_request(client, owner):
     assert g.status_code == 200 and g.json()["rid"] == rid
     a = client.get("/v1/actions/" + low, headers=hdr)                         # the agent side (the tool took the id from the reason code)
     assert a.status_code == 200 and a.json()["rid"] == rid
-    pay = approval_payload(g.json()["mandate"], g.json()["action"], g.json()["rid"], True)      # the page signs the canonical id it was given back
-    assert owner.post("/api/approvals/" + low, approved=True, envelope_b64=owner.sign(wa.TYP_APPROVAL, pay)).status_code == 200                              # decided through the lower-case id; stored under the canonical one
+    pay = approval_payload(g.json()["mandate"], g.json()["action"], g.json()["rid"], True, viewkit.page_view(g.json()))      # the page signs the canonical id it was given back
+    assert owner.post("/api/approvals/" + low, **viewkit.claim(viewkit.answer(owner.c, low)), approved=True, envelope_b64=owner.sign(wa.TYP_APPROVAL, pay)).status_code == 200                              # decided through the lower-case id; stored under the canonical one
     y = call(client, hdr, "DELETE api.github.com:443/repos/acme/app/git/refs/heads/main")
     assert (y["rid"], y["verdict"], y["reason"]) == (rid, "allow", "OK_APPROVED")
 

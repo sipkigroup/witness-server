@@ -92,6 +92,33 @@ export function waitingFirst(items) {
   return [...(items || [])].sort((a, b) => liveRank(a) - liveRank(b) || (b.t || 0) - (a.t || 0));
 }
 
+// r0352 (KAND-ACH-2, polygon A2: the dangerous call was 8th of 8, "newest first", and its row looked like the trifles'): the queue puts the
+// highest risk on top (the server's level, `risk`: low / medium / high / critical; unknown counts as high), then the calls an agent waits on
+// now, then the newest. Each row carries its level as a label (riskLabel).
+export const RISK_ORDER = ['low', 'medium', 'high', 'critical'];
+export function riskRank(x) { const i = RISK_ORDER.indexOf(x && x.risk); return i < 0 ? (x && x.risk == null ? 1 : 2) : i; }
+export function riskFirst(items) {
+  return [...(items || [])].sort((a, b) => riskRank(b) - riskRank(a) || liveRank(a) - liveRank(b) || (b.t || 0) - (a.t || 0));
+}
+export function riskLabel(x) {
+  const r = x && x.risk;
+  return r === 'critical' ? 'Critical risk' : r === 'high' ? 'High risk' : r === 'medium' ? 'Medium risk' : r === 'low' ? 'Low risk' : null;
+}
+// r0352 (KAND-ACH-4, polygon A1): questions refused because the agent had too many waiting are said in one line (nothing to decide)
+export function rateLine(rr) {
+  if (!rr || !(rr.n > 0) || !Array.isArray(rr.items) || !rr.items.length) return null;
+  const top = rr.items[0];
+  const lab = riskLabel(top);
+  const cmd = typeof top.cmd === 'string' && top.cmd ? ': ' + top.cmd.slice(0, 120) : '';
+  return 'Your agent hit the limit of questions, so the witness refused without asking you: ' + String(top.what || 'a call') + cmd + (lab ? ' (' + lab.toLowerCase() + ')' : '')
+    + (rr.n > 1 ? ' and ' + (rr.n - 1) + ' more in the last hour' : '') + '. It did not run. Answer the waiting questions, and the agent can ask again.';
+}
+
+// r0352 (KAND-ACH-3, polygon A3: one scroll opened "Approve 20" in 24 ms): the minimum reading time of a batch before "Approve N" opens,
+// per item, so twenty posts are not approved in a second
+export const BATCH_READ_MS_PER_ITEM = 1500;
+export function batchReadMs(n) { return Math.max(0, n | 0) * BATCH_READ_MS_PER_ITEM; }
+
 // 27.10 (polygon O1): after a decision on `decided`, the next call of the same agent to open by itself, or null. Never the decided call, never
 // a call already opened from this tab (sessionStorage), never a call the agent stopped waiting for, never another agent's call: no loop
 // of page changes (Back from the next call shows the decided one as "already approved" and does not move again).

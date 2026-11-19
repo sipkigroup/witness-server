@@ -126,7 +126,7 @@ def test_n3_release_after_rewrite_says_file_changed(client, owner, tmp_path):
     a.tool("Write", {"file_path": a.proj + "/f9.py", "content": PY_NET2})
     import wq_profile as wq
     sha = _page(a, rid)["action"]["args_sha256"]
-    r = a.o.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=a.o.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+    r = viewkit.release(a.o, rid, sha, True)
     assert r.status_code == 200 and r.json().get("file_changed", "").endswith("f9.py"), r.text
 
 
@@ -178,6 +178,7 @@ def test_n4_extract_question_without_secret_unseen_only(client, owner, tmp_path)
 
 # ---------------------------------------------------------------- noise lever (coordinator 29.10): git from the repo's own objects, plain copies
 import pytest as _pytest
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 # RT-0270 29.10: pull / merge write the remote's text again (moved to the guards below; tests/test_rt0270.py)

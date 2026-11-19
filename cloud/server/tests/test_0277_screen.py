@@ -112,9 +112,10 @@ def test_omitted_list_with_a_member_too_few_or_too_many(app, tmp_path, monkeypat
 
 
 # ------------------------------------------------------------------ backward compatibility
-def test_an_older_page_without_omitted_is_accepted_and_reported(app, tmp_path):
-    """A page loaded before r0277 hashes the view without "omitted": the server accepts that hash (same rows), the pack is VALID with
-    a warning that what was hidden is not signed."""
+def test_an_older_page_without_omitted_is_refused_and_an_old_entry_is_reported(app, tmp_path):
+    """r0352 (KAND-ACH-1): a page that hashes the view without "omitted" (a page before r0277, or an answer whose "omitted" was cut on its
+    way) is refused (VIEW_CHANGED). An entry a server before r0352 accepted that way is still read: the pack is VALID with a warning that
+    what was hidden is not signed."""
     from tests.recovery_helpers import Person, export_to
     from tests.test_0224_critique import Agent
     from tests.test_pv2810_view import _approve, _get
@@ -127,7 +128,16 @@ def test_an_older_page_without_omitted_is_accepted_and_reported(app, tmp_path):
     old = signview.view_hash({k: v for k, v in g.items() if k not in ("view_sha256",)}, legacy=True)
     assert old.hex() != g["view_sha256"]
     r, _ = _approve(pers, rid, sign_view=old, send_view=old)
-    assert r.status_code == 200, r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_CHANGED", r.text
+    import time
+    import wa_profile as wa
+    from app import actions as A
+    from svidetel_v4.state import approval_payload
+    ctx = app.state.ctx
+    acc = ctx.db.one("SELECT * FROM accounts WHERE id=?", (pers.account["id"],))
+    signview.remember(ctx.db, acc["id"], {k: v for k, v in g.items() if k not in ("view_sha256",)}, int(time.time()), True)   # as before r0352
+    env = wa.b64u_dec(pers.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, True, old)))
+    assert A.approve_with_envelope(ctx, acc, rid, True, env, view=old)["verdict"] == "allow"
     folder = export_to(pers.c, tmp_path / "pack")
     vo = json.load(open(os.path.join(folder, "views", rid + ".json"), encoding="utf-8"))
     assert "omitted" not in vo

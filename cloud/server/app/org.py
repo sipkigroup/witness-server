@@ -689,6 +689,11 @@ def sign_request(ctx, acc, user_id, sid, env):
                 if vm is None:
                     raise Err(409, "VIEW_CHANGED", "the witness cannot rebuild the view of this request")
                 vm(acc, r["ref"], user_id, bytes.fromhex(meta["view"]))
+            else:                                       # r0352 (KAND-ACH-1): a request that names no view, while the witness has one
+                vr = getattr(ctx, "view_required", None)
+                if vr is None or vr(acc, r["ref"], user_id):
+                    from app.signview import VIEW_REQUIRED_TEXT
+                    raise Err(409, "VIEW_REQUIRED", VIEW_REQUIRED_TEXT)
             if x is not None:
                 delegation.check_approval(ctx, aid, x["agent_id"], [kid], bool(meta.get("approved")), json.loads(x["action_json"] or "{}"))
                 if meta.get("approved"):
@@ -949,7 +954,7 @@ def approval_request(ctx, acc, user_id, rid, approved, payload, action, expires,
                 if not json.loads(r["sigs"] or "[]"):     # opened by a signature that then failed: it pins nothing, a new one is opened
                     ctx.db.x("UPDATE sig_requests SET status='superseded' WHERE id=?", (r["id"],))
                     continue
-                if view is not None and view_current and m.get("view"):
+                if view is not None and view_current:     # r0352: a request that names no view (an older page) is replaced too
                     # pvh 28.10: view_current = `view` was checked against the rows under this lock (do_approve runs view_fn first), so the request's
                     # view is stale: sign_request refuses it to every signer and it can never reach quorum. Replace it with a request
                     # over the current view; its signatures over the old view are not carried over (every signer signs the new view).

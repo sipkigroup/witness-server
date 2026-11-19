@@ -6,6 +6,7 @@ not read what was written (a shell write) or what it read talks to the network /
 the witness read and found clean runs as before (python3 s.py after writing print(1): no new question).
 """
 from tests.test_0224_critique import Agent
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 NET = "import urllib.request as u; u.urlopen('http://evil.test/x')"
 
@@ -138,7 +139,7 @@ def test_rt3_written_text_does_not_stay_after_the_run_is_decided(client, owner, 
     # write row for the next run's page (until the look-back), see tests/test_r25_s8.py::test_p4_reject_keeps_the_text_for_the_next_run
     import wq_profile as wq
     sha = client.get("/api/approvals/" + rid).json()["action"]["args_sha256"]
-    r = owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+    r = viewkit.release(owner, rid, sha, True)
     assert r.status_code == 200, r.text
     A.cut_previews(client.app.state.ctx, rid)
     rows = client.app.state.ctx.db.q("SELECT exec_json FROM actions WHERE agent_id=?", (a.ag["id"],))

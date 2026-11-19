@@ -4,7 +4,7 @@ import { bytesToHex } from './cde.js';
 import { signBatch, signPayload } from './sign.js';
 import { batchItems, wbChallenge, mixedReason } from './wb.js';
 import { policyFromJson, releasePayload, TYP_RELEASE, roleWords } from './policy.js';
-import { roleOf, isEscalated, forMe, quorumOf, groupItems, acceptGroup, clip4k, diffTokens, differingFields, waitingFirst } from './queue.js';
+import { roleOf, isEscalated, forMe, quorumOf, groupItems, acceptGroup, clip4k, diffTokens, differingFields, waitingFirst, riskFirst, riskLabel, riskRank, rateLine, batchReadMs } from './queue.js';
 import { describeAction } from './describe.js';
 import { reveal, inspectFields } from './honest.js';
 import { explainError } from './webauthn.js';
@@ -15,7 +15,7 @@ const msg = $('#msg');
 // hidden / bidi characters are shown as <U+XXXX>; look-alike text gets a marker (details on the single-item screen)
 const vis = (v) => { const r = reveal(v, true).text; return r; };
 const rcp = (v) => { const i = inspectFields([['recipient', v]]); return i.rows[0][1] + (i.warnings.length ? ' [CHECK: hidden or look-alike characters]' : ''); };
-const Q = { me: null, org: null, policy: null, roles: [], items: [], held: [], groups: [], all: false, names: new Map() };
+const Q = { me: null, org: null, policy: null, roles: [], items: [], held: [], groups: [], all: false, names: new Map(), rate: null };
 const agentName = (id) => Q.names.get(id) || id;
 const now = () => Math.floor(Date.now() / 1000);
 
@@ -39,7 +39,8 @@ function itemRow(x) {
   const esc = isEscalated(x, Q.org.settings, now());
   const k = quorumOf(Q.policy, x.action);
   return h('div', { class: 'row' },
-    h('span', {}, h('strong', { text: agentName(x.agent_id) }), ' wants ', h('strong', { text: x.action.class }), x.action.recipient != null ? ' to ' + rcp(x.action.recipient) : '', ' ',
+    h('span', {}, riskLabel(x) ? h('span', { class: 'pill risk risk-' + x.risk, text: riskLabel(x) }) : '', riskLabel(x) ? ' ' : '',     // r0352: the level first
+      h('strong', { text: agentName(x.agent_id) }), ' wants ', h('strong', { text: x.action.class }), x.action.recipient != null ? ' to ' + rcp(x.action.recipient) : '', ' ',
       h('span', { class: 'pill', text: roleOf(x.action) }), ' ', esc ? h('span', { class: 'pill esc', text: 'escalation' }) : '', ' ', k > 1 ? h('span', { class: 'pill defer', text: k + ' signatures' }) : '',
       advisoryText(x) ? h('span', { class: 'pill held', text: 'advisor flag' }) : '',
       x.agent_waiting === true ? h('span', { class: 'pill', text: 'agent is waiting' }) : x.agent_waiting === false ? h('span', { class: 'pill', text: 'agent stopped waiting' }) : '',   // 27.10 O3
@@ -59,10 +60,13 @@ function renderQueue() {
     h('span', {}, h('strong', { text: agentName(g.agent_id) }), ' - ' + g.class + (g.recipient != null ? ' to ' + rcp(g.recipient) : '') + ': ', h('strong', { text: g.rids.length + ' items' }),
       g.rids.some((r) => byRid.get(r).agent_waiting === false) ? h('span', { class: 'hint', text: ' (' + g.rids.filter((r) => byRid.get(r).agent_waiting === false).length + ' no longer awaited by the agent)' }) : ''),
     h('button', { class: 'btn', type: 'button', onclick: () => openBatch(g).catch((e) => notice(msg, 'err', failText(e))) }, 'Review batch of ' + g.rids.length))));
-  const singles = waitingFirst(vis.filter((x) => !inGroup.has(x.rid)));      // 27.10 O3: the call an agent waits on now is on top
+  // r0352 (KAND-ACH-2): the highest risk on top, then the call an agent waits on now (27.10 O3), then the newest
+  const singles = riskFirst(vis.filter((x) => !inGroup.has(x.rid)));
   const box = clear($('#singles'));
+  const rl = rateLine(Q.rate);                                                   // r0352 (KAND-ACH-4): refused for the limit: one line
+  if (rl) box.append(h('p', { class: 'notice err', id: 'ratenote', role: 'alert', text: rl }));
   if (!singles.length) box.append(h('p', { class: 'hint', text: groups.length ? 'Everything else is in a batch above.' : 'Nothing is waiting.' }));
-  for (const x of singles) box.append(itemRow(x));
+  for (const x of singles) { const row = itemRow(x); if (riskRank(x) >= 2) row.classList.add('risky'); box.append(row); }
   $('#held-card').hidden = !Q.held.length;
   // N5 29.10: the witness' own holds (a file the agent wrote, a secret it read, data going out) are not the data advisor's
   const byWitness = Q.held.filter((x) => WITNESS_HOLDS.includes(x.reason)).length;
@@ -89,7 +93,7 @@ function heldRow(x) {
     x.text_preview ? h('pre', { text: clip4k(x.text_preview) }) : '',
     h('div', { class: 'row' },
       // pvh 28.10: a release signs the hash of what the approval page shows (more than this row: tool, arguments, commands, files,
-      // look-alike checks), so it is given there; a reject (the safe way) stays here, marked "view not signed"
+      // look-alike checks), so it is given there; a reject (the safe way) stays here (r0352: it signs the item's view too)
       safeId(x.rid) ? h('a', { class: 'btn', href: 'approve.html?rid=' + encodeURIComponent(x.rid) }, 'Review and release') : '',
       h('button', { class: 'btn danger', type: 'button', onclick: (ev) => held(x, false, ev.target) }, 'Reject')));
   return out;
@@ -97,13 +101,17 @@ function heldRow(x) {
 async function held(x, release, btn) {
   btn.disabled = true;
   try {
-    const r = await decideHeld(x, release, Q.me);
+    // r0352 (KAND-ACH-1): the witness refuses a decision without the view (VIEW_REQUIRED): the reject signs the view the witness names
+    const sv = await signedView(await get('/api/approvals/' + encodeURIComponent(x.rid)));
+    if (sv.missing || sv.same === false || !sv.view) throw new Error('The page or the connection to the witness was altered (the answer came without what your passkey must sign). Open the item on its own page.');
+    const r = await decideHeld(x, release, Q.me, sv.view);
     notice(msg, release && r.file_changed ? 'warn' : 'ok', release && r.file_changed ? 'The file changed after you saw it; nothing ran (' + r.file_changed + ').' : (release ? 'Released: ' : 'Rejected: ') + r.verdict + ' (' + r.reason + ').');
     await load();
   } catch (e) { notice(msg, 'err', e.code ? failText(e) : explainError(e)); btn.disabled = false; }
 }
 
 // ---- batch view ----
+
 // pv2: what the single-item page shows besides the action and the preview is shown here too (it is inside the item's signed view)
 function extraOf(x) {
   const out = [];
@@ -149,10 +157,10 @@ async function openBatch(g) {
     // pv2: each item's own signing view (the hash of what this list shows of it), signed inside that item's approval payload
     const sv = await signedView(r);
     if (sv.same === false) throw new Error('Item ' + (rows.length + 1) + ': this page and the witness disagree on what it shows (view hash). Reload the page.');
+    if (sv.missing || !sv.view) throw new Error('Item ' + (rows.length + 1) + ': the page or the connection to the witness was altered (the answer came without what your passkey must sign). Do not approve this batch here.');   // r0352 (KAND-ACH-1, polygon B8)
     rows.push({ rid, agent_id: g.agent_id, mandate: r.mandate, action: r.action, text: r.text_preview || '', args: r.args_preview || '', tool: r.tool || '', expires: r.expires,
       view: sv.view, hex: sv.hex, line_commands: r.line_commands, line_full: r.line_full, text_cut: r.text_cut, net_code: r.net_code, exec_changed: r.exec_changed, written_run: r.written_run, masked_dep: r.masked_dep });
   }
-  if (!rows.every((x) => x.view)) for (const x of rows) { x.view = null; x.hex = null; }     // all items name their view, or none does (older server)
   const bw = inspectFields(rows.flatMap((x, i) => [['item ' + (i + 1) + ' recipient', x.action.recipient == null ? '' : x.action.recipient], ['item ' + (i + 1) + ' arguments', x.args]]), rows.map((x, i) => ['item ' + (i + 1) + ' text', clip4k(x.text)])).warnings;
   if (bw.length) notice(msg, 'warn', 'Check before you approve this batch: ' + bw.slice(0, 4).join(' | ') + (bw.length > 4 ? ' | (+' + (bw.length - 4) + ' more; open items one by one)' : ''));
   const mixed = mixedReason(rows);
@@ -179,11 +187,19 @@ async function openBatch(g) {
   $('#bitems').textContent = items.map(bytesToHex).join('\n');
   $('#bch').textContent = bytesToHex(await wbChallenge(items));
   const go = $('#bgo'); go.disabled = true; go.textContent = 'Approve ' + rows.length; $('#bgate').hidden = false;
-  const open = () => { go.disabled = false; $('#bgate').hidden = true; };
+  // r0352 (KAND-ACH-3, polygon A3: one scroll opened "Approve 20" in 24 ms): the button opens after the end of the list was seen AND a minimum
+  // reading time per item (BATCH_READ_MS_PER_ITEM) passed while this page was visible; a fling to the end alone opens nothing.
+  const needMs = batchReadMs(rows.length);
+  let seenEnd = false, readMs = 0, last = Date.now();
+  const gateText = () => { const left = Math.max(0, Math.ceil((needMs - readMs) / 1000)); $('#bgate').textContent = left > 0 ? 'Read each item: approval opens in ' + left + ' s' + (seenEnd ? '.' : ' and at the end of the list.') : 'Scroll to the end of the list to enable approval.'; };
+  const open = () => { if (!seenEnd || readMs < needMs || !go.disabled || !$('#done').hidden) return; go.disabled = false; $('#bgate').hidden = true; };
+  const tickRead = () => { const t = Date.now(); if (document.visibilityState !== 'hidden') readMs += Math.min(t - last, 1000); last = t; gateText(); open(); if (go.disabled && !$('#batch').hidden) setTimeout(tickRead, 250); };
+  gateText(); setTimeout(tickRead, 250);
+  const sawEnd = () => { seenEnd = true; gateText(); open(); };
   if ('IntersectionObserver' in window) {
-    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { open(); io.disconnect(); } }, { root: list, threshold: 1.0 });
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { sawEnd(); io.disconnect(); } }, { root: list, threshold: 1.0 });
     io.observe(end);
-  } else list.addEventListener('scroll', () => { if (list.scrollTop + list.clientHeight >= list.scrollHeight - 2) open(); });
+  } else list.addEventListener('scroll', () => { if (list.scrollTop + list.clientHeight >= list.scrollHeight - 2) sawEnd(); });
   go.onclick = async () => {
     go.disabled = true;
     try {
@@ -210,6 +226,7 @@ async function load() {
     get('/api/approvals?status=pending'),
     get('/api/approvals?status=held').catch(() => []),
     get('/api/approvals/groups').catch(() => null)]);
+  Q.rate = await get('/api/rate-refusals').catch(() => null);                   // r0352 (KAND-ACH-4)
   Q.items = pend.filter((x) => !x.status || x.status === 'pending_approval');
   Q.held = (held || []).filter((x) => x.status === 'held');
   const srv = Array.isArray(groups) ? groups : groups && Array.isArray(groups.groups) ? groups.groups : null;

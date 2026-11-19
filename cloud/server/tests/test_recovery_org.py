@@ -10,6 +10,7 @@ from app import _paths  # noqa: F401
 import wa_profile as wa
 from tests.org_helpers import MSG_FORM, TEAM_RULES, Person, adopt, ctx_of, team
 from tests.recovery_helpers import export_to, new_codes, recover, remove_key, run_verify, switch_auth
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 RECOVERY_RULES = dict(TEAM_RULES, recovery={"role": "any", "k": 2})
 
@@ -150,15 +151,15 @@ def test_o5_revoked_key_never_counts_in_a_hand_built_wq_and_team_pack_with_wb(ap
     x = act(owner.c, hdr, "publish", {"channel": "blog", "text": "t"}).json()
     assert x["verdict"] == "defer", x
     g = owner.c.get("/api/approvals/" + x["rid"]).json()
-    pay = approval_payload(g["mandate"], g["action"], x["rid"], True)
+    pay = approval_payload(g["mandate"], g["action"], x["rid"], True, viewkit.page_view(g))
     env = wq.make_wq(wa.TYP_APPROVAL, pay, policy_hash_now(app, owner.uid),
                      [wq.wsig_of_wa(lost.sign_object(wa.TYP_APPROVAL, pay, "localhost", "http://localhost:8810"))])
-    r = owner.post("/api/approvals/" + x["rid"], approved=True, envelope_b64=wa.b64u(env))
+    r = owner.post("/api/approvals/" + x["rid"], **viewkit.claim(viewkit.answer(owner.c, x["rid"])), approved=True, envelope_b64=wa.b64u(env))
     assert r.status_code == 409 and r.json()["error"] == "KEY_REVOKED", r.text
     # carol approves it in a batch (wb, k = 1 for publish)
     items = [hashlib.sha256(pay).digest()]
     ad, cd, der = carol.auth.get_assertion(wq.wb_challenge(items), "localhost", "http://localhost:8810")
-    r = carol.post("/api/approvals/" + x["rid"], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, carol.auth.kid, ad, cd, der)))
+    r = carol.post("/api/approvals/" + x["rid"], **viewkit.claim(viewkit.answer(carol.c, x["rid"])), approved=True, envelope_b64=wa.b64u(wq.make_wb(items, carol.auth.kid, ad, cd, der)))
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     lost_o, new_o = lose_and_recover(app, owner)                 # the owner's account (= the organisation) gets key changes too
     dd = export_to(owner.c, tmp_path / "pack")

@@ -19,6 +19,7 @@ import wq_profile as wq
 from svidetel_v4.state import approval_payload
 from tests.helpers import ORIGIN, RP, Owner, act
 from tests.test_flow import setup_agent
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def counting(auth, start=0, reg=0):
@@ -47,7 +48,7 @@ def defer(client, hdr, text):
 
 def approval_env(o, rid, approved=True):
     g = o.c.get("/api/approvals/" + rid).json()
-    return o.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved))
+    return o.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, viewkit.page_view(g)))   # r0352: over the view
 
 
 def status(client, rid):
@@ -79,18 +80,18 @@ def test_regression_refused_logged_and_nothing_moves(client, capsys):
     rid = defer(client, hdr, "a")
     capsys.readouterr()
     o.auth.counter = 3                                           # a copy of the key, behind the original
-    r = o.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(o, rid))
+    r = o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=approval_env(o, rid))
     assert r.status_code == 409 and r.json()["error"] == "SIGN_COUNT_REGRESSION", r.text
     out = [json.loads(x) for x in capsys.readouterr().out.splitlines() if x.startswith("{")]
     w = [x for x in out if x.get("msg") == "SIGN_COUNT_REGRESSION"]
     assert w and w[0]["level"] == "warn" and (w[0]["stored"], w[0]["got"], w[0]["route"]) == (5, 3, "approve"), out
     assert stored(client) == 5 and status(client, rid) == "pending_approval"
     o.auth.counter = 5                                           # equal = not greater
-    assert o.post("/api/approvals/" + rid, approved=False, envelope_b64=approval_env(o, rid, False)).json()["error"] == "SIGN_COUNT_REGRESSION"
+    assert o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=False, envelope_b64=approval_env(o, rid, False)).json()["error"] == "SIGN_COUNT_REGRESSION"
     o.auth.counter = 0                                           # a counter that falls back to 0 after a non-zero one
-    assert o.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(o, rid)).json()["error"] == "SIGN_COUNT_REGRESSION"
+    assert o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=approval_env(o, rid)).json()["error"] == "SIGN_COUNT_REGRESSION"
     o.auth.counter = 6
-    r = o.post("/api/approvals/" + rid, approved=True, envelope_b64=approval_env(o, rid))
+    r = o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=approval_env(o, rid))
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     assert stored(client) == 6
 
@@ -133,14 +134,14 @@ def test_old_signature_replayed_after_a_newer_one_is_refused(client):
     o.auth.counter = 7
     old = approval_env(o, a)                                     # not sent now
     o.auth.counter = 8
-    assert o.post("/api/approvals/" + b, approved=True, envelope_b64=approval_env(o, b)).status_code == 200
-    r = o.post("/api/approvals/" + a, approved=True, envelope_b64=old)
+    assert o.post("/api/approvals/" + b, **viewkit.claim(viewkit.answer(o.c, b)), approved=True, envelope_b64=approval_env(o, b)).status_code == 200
+    r = o.post("/api/approvals/" + a, **viewkit.claim(viewkit.answer(o.c, a)), approved=True, envelope_b64=old)
     assert r.status_code == 409 and r.json()["error"] == "SIGN_COUNT_REGRESSION" and status(client, a) == "pending_approval"
     # the same envelope sent twice: the second is refused (by state here; by the counter wherever the state would let it through)
     o.auth.counter = 9
     env = approval_env(o, a)
-    assert o.post("/api/approvals/" + a, approved=True, envelope_b64=env).status_code == 200
-    assert o.post("/api/approvals/" + a, approved=True, envelope_b64=env).status_code == 409
+    assert o.post("/api/approvals/" + a, **viewkit.claim(viewkit.answer(o.c, a)), approved=True, envelope_b64=env).status_code == 200
+    assert o.post("/api/approvals/" + a, **viewkit.claim(viewkit.answer(o.c, a)), approved=True, envelope_b64=env).status_code == 409
 
 
 def test_signin_at_5_then_signature_at_3(client):
@@ -180,11 +181,11 @@ def test_counter_from_registration(client):
     assert stored(client, new.kid) == 50 and stored(client, o.auth.kid) == 9
     rid = defer(client, hdr, "k")
     g = o.c.get("/api/approvals/" + rid).json()
-    pay = approval_payload(g["mandate"], g["action"], rid, True)
-    r = o.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(new.sign_object(wa.TYP_APPROVAL, pay, RP, ORIGIN)))
+    pay = approval_payload(g["mandate"], g["action"], rid, True, viewkit.page_view(g))
+    r = o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=wa.b64u(new.sign_object(wa.TYP_APPROVAL, pay, RP, ORIGIN)))
     assert r.json()["error"] == "SIGN_COUNT_REGRESSION"
     new.counter = 51
-    r = o.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(new.sign_object(wa.TYP_APPROVAL, pay, RP, ORIGIN)))
+    r = o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=wa.b64u(new.sign_object(wa.TYP_APPROVAL, pay, RP, ORIGIN)))
     assert r.status_code == 200 and stored(client, new.kid) == 51 and stored(client, o.auth.kid) == 9
 
 
@@ -198,7 +199,7 @@ def test_forged_counter_never_moves_the_stored_one(client):
     env = cbor2.loads(wa.b64u_dec(approval_env(o, rid)))
     env["authData"] = env["authData"][:33] + (0xFFFFFFF0).to_bytes(4, "big")
     bad = wa.cde(env)
-    r = o.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(bad))
+    r = o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=wa.b64u(bad))
     assert r.status_code == 409 and r.json()["error"] == "WA_SIG"
     ctx = client.app.state.ctx
     org.check_sign_counts(ctx, bad, "test")                       # the helper alone: no exception, nothing stored
@@ -247,7 +248,7 @@ def test_race_signin_and_approval_with_one_counter(client, app):
     other = TestClient(app, base_url=ORIGIN)                     # the clone signs in from another browser
     j = other.post("/api/auth/login/begin", json={}, headers={"Origin": ORIGIN}).json()
     cred = o.auth.login_credential(wa.b64u_dec(j["options"]["challenge"]), RP, ORIGIN)
-    out = _race([lambda: o.post("/api/approvals/" + rid, approved=True, envelope_b64=env),
+    out = _race([lambda: o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(o.c, rid)), approved=True, envelope_b64=env),
                  lambda: other.post("/api/auth/login/finish", json={"flow_id": j["flow_id"], "credential": cred}, headers={"Origin": ORIGIN})])
     codes = sorted(r.status_code for r in out)
     assert codes in ([200, 401], [200, 409]), [(r.status_code, r.text) for r in out]
@@ -261,7 +262,7 @@ def test_parallel_approvals_with_one_counter(client):
     rids = [defer(client, hdr, "p%d" % i) for i in range(4)]
     o.auth.counter = 5
     envs = [approval_env(o, r) for r in rids]
-    out = _race([lambda r=r, e=e: o.post("/api/approvals/" + r, approved=True, envelope_b64=e) for r, e in zip(rids, envs)])
+    out = _race([lambda r=r, e=e: o.post("/api/approvals/" + r, **viewkit.claim(viewkit.answer(o.c, r)), approved=True, envelope_b64=e) for r, e in zip(rids, envs)])
     assert sorted(r.status_code for r in out) == [200, 409, 409, 409]
     assert {r.json()["error"] for r in out if r.status_code == 409} == {"SIGN_COUNT_REGRESSION"}
     assert [status(client, r) for r in rids].count("approved") == 1
@@ -281,10 +282,10 @@ def test_batch_wb_counts_once(client):
         ad, cd, der = o.auth.get_assertion(wq.wb_challenge(items), RP, ORIGIN)
         return wa.b64u(wq.make_wb(items, o.auth.kid, ad, cd, der))
     old = wb(1)                                                  # equal to the stored counter
-    r = o.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=old)
+    r = o.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=old)
     assert r.status_code == 409 and r.json()["error"] == "SIGN_COUNT_REGRESSION"
     assert all(status(client, x) == "pending_approval" for x in rids)
-    r = o.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=wb(4))
+    r = o.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=wb(4))
     assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["allow"] * 3, r.text      # one counter, three items
     assert stored(client) == 4
 
@@ -301,17 +302,17 @@ def test_quorum_signatures_counted_once_each(app):
 
     def env_of(p):
         g = p.c.get("/api/approvals/" + d["rid"]).json()
-        return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], d["rid"], True))
-    r = owner.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=env_of(owner))
+        return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], d["rid"], True, viewkit.page_view(g)))
+    r = owner.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(owner.c, d["rid"])), approved=True, envelope_b64=env_of(owner))
     assert r.json()["verdict"] == "collecting", r.text
     bob.auth.counter = 0                                          # bob's key was at 0 (team set-up): 0 after 0 would pass ...
     db = ctx_of(app).db
     db.x("UPDATE credentials SET sign_count=7 WHERE kid=?", (bob.auth.kid,))    # ... so put it at 7 (as a sign-in would)
     bob.auth.counter = 6
-    r = bob.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=env_of(bob))
+    r = bob.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(bob.c, d["rid"])), approved=True, envelope_b64=env_of(bob))
     assert r.status_code == 409 and r.json()["error"] == "SIGN_COUNT_REGRESSION", r.text
     bob.auth.counter = 8
-    r = bob.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=env_of(bob))
+    r = bob.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(bob.c, d["rid"])), approved=True, envelope_b64=env_of(bob))
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     sc = {bytes(x["kid"]): x["sign_count"] for x in db.q("SELECT kid, sign_count FROM credentials")}
     assert sc[owner.auth.kid] == 3 and sc[bob.auth.kid] == 8

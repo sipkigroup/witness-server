@@ -23,6 +23,7 @@ from tests.helpers import ORIGIN, act  # noqa: E402
 from tests.test_allowance_0210 import Dev, _id, DAY  # noqa: E402
 from tests.test_push import pcfg, papp, pc, Device, FakeSender  # noqa: E402,F401  (fixtures)
 from tests.test_0238_trial import Person, new_trial  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 # ======================================================================= 2. "from now on" is narrow
@@ -119,7 +120,7 @@ def test_at_most_20_live_rules_per_project(client, owner, tmp_path):
     g = client.get("/api/approvals/" + rid).json()
     a = {"v": "deus-aar-0.1", "t": "allowance", "id": _id(), "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command",
          "commands": ["go test"], "project": str((tmp_path / "p").resolve()), "nbf": o["t"], "exp": o["t"] + DAY}
-    r = owner.post("/api/allowances", rid=rid, envelope_b64=owner.sign(al.TYP, wa.cde(a)))
+    r = viewkit.allow(owner, rid, a, al.TYP)[0]
     assert r.status_code == 409 and r.json()["error"] == "ALLOWANCE_NOT_ELIGIBLE"            # signed or not: the 21st is refused
     # one tap revokes, and a place frees up
     rv = client.post("/api/allowances/%s/revoke" % made[0], headers={"Origin": ORIGIN})
@@ -179,8 +180,8 @@ def _decide(d, owner, client, approved=True, ux=None, prog="pytest -q tests/test
         client.app.state.ctx.db.x("UPDATE actions SET shown_at=shown_at-? WHERE rid=?", (age, rid))
     g = client.get("/api/approvals/" + rid).json()
     from svidetel_v4.state import approval_payload
-    pay = approval_payload(g["mandate"], g["action"], rid, approved)
-    body = {"approved": approved, "envelope_b64": owner.sign(wa.TYP_APPROVAL, pay)}
+    pay = approval_payload(g["mandate"], g["action"], rid, approved, viewkit.page_view(g))
+    body = {"approved": approved, "envelope_b64": owner.sign(wa.TYP_APPROVAL, pay), **viewkit.claim(g)}
     if ux is not None:
         body["ux"] = ux
     r = owner.post("/api/approvals/" + rid, **body)
@@ -232,7 +233,7 @@ def test_forward_share_and_metrics_without_personal_data(client, owner, tmp_path
     o = g["allowance_offer"]
     a = {"v": "deus-aar-0.1", "t": "allowance", "id": _id(), "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command",
          "commands": o["commands"], "project": o["project"], "nbf": o["t"], "exp": o["t"] + DAY}
-    r = owner.post("/api/allowances", rid=rid, envelope_b64=owner.sign(al.TYP, wa.cde(a)), ux={"read_ms": 4000, "details": True})
+    r = viewkit.allow(owner, rid, a, al.TYP, ux={"read_ms": 4000, "details": True})[0]
     assert r.status_code == 200, r.text
     _decide(d, owner, client, ux={"read_ms": 1500, "details": False}, prog="mypy src/m%d")
     v = client.get("/api/ux-guard").json()

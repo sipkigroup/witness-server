@@ -15,6 +15,7 @@ from app.hookjudge import fs as hfs
 from app.hookjudge.mapping import DEFAULT_SAFE_COMMANDS, default_form
 from tests.test_0290_standing import GATE_TEXTS, STRICT, Dev
 import wq_profile as wq
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 pytestmark = pytest.mark.standing
 
@@ -152,8 +153,7 @@ def test_p3_released_gate_file_does_not_hold_again_in_sandbox(client, owner, tmp
     r0 = got[-1][1]
     assert (r0["verdict"], r0["reason"], r0["status"]) == ("defer", "ESCALATE_WRITTEN_RUN", "held"), got
     x = client.app.state.ctx.db.one("SELECT action_json FROM actions WHERE rid=?", (r0["rid"],))
-    pay = wq.release_payload(r0["rid"], json.loads(x["action_json"])["args_sha256"], True)
-    r = owner.post("/api/approvals/%s/release" % r0["rid"], release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay))
+    r = viewkit.release(owner, r0["rid"], json.loads(x["action_json"])["args_sha256"], True)
     assert r.status_code == 200, r.text
     _write(d, "src/other.py", "print(2)\n")                # an unseen-free, gate-free new write of the agent
     for line in ("python3 src/other.py", "python3 src/g.py ", "cat src/g.py | head -1; python3 src/other.py "):

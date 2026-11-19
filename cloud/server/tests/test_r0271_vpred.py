@@ -18,6 +18,7 @@ from svidetel_v4.state import mandate_hash
 from tests.test_0224_critique import Agent
 from tests.test_n15_2910 import _bump
 from tests.test_r25_s8 import reasons
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 
@@ -50,7 +51,7 @@ def _vpred(a, line):
         al = {"v": "deus-aar-0.1", "t": "allowance", "id": "al_" + base64.b32encode(os.urandom(16)).decode().rstrip("=")[:26],
               "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command", "commands": o["commands"], "project": o["project"],
               "nbf": o["t"], "exp": o["t"] + 30 * 86400}
-        r = a.o.post("/api/allowances", rid=rid, envelope_b64=a.o.sign(allowances.TYP, wa.cde(al)))
+        r = viewkit.allow(a.o, rid, al, allowances.TYP)[0]
         assert r.status_code == 200, r.text
         a.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (al["id"],))   # r1611: a rule signed with the text
     _bump(a)

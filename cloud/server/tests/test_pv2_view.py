@@ -1,7 +1,7 @@
 """pv2 (28.10): the presentation hash on EVERY approval path, not only the single approval page (pv2810): a team's quorum, a batch of the
 queue, "approve this call for later runs" (repeat) and "allow in this project" (allowance). Same format (RFC 8785 -> SHA-256 of the
-dw-view-1 object), same compatibility: an older page (no view) is accepted and marked "view not signed"; a view claimed but not signed,
-or signed but not claimed, is refused. And the check of the view is atomic with the decision (under the same hub.lock).
+dw-view-1 object). r0352: an older page (no view) is refused (VIEW_REQUIRED) when the witness can build the view; a view claimed but
+not signed is refused. And the check of the view is atomic with the decision (under the same hub.lock).
 Per path: matches -> recorded / changed -> refused, nothing decided / older page -> marked. Real server (TestClient), real ledger."""
 import hashlib
 import json
@@ -168,7 +168,7 @@ def test_pv2_team_claim_without_signature_and_signature_without_claim(app):
     r, _ = _team_approve(owner, rid, sign_view=None)                            # claims the view, signs the 0.1 bytes
     assert r.status_code == 409 and r.json()["error"] == "APPROVAL_SIG", r.text
     r, _ = _team_approve(owner, rid, send_view=None)                            # signs the view, does not say so
-    assert r.status_code == 409 and r.json()["error"] == "APPROVAL_SIG", r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text    # r0352: no claim = no decision
     r, _ = _team_approve(owner, rid, sign_view=None)                            # again: the empty request of a failed try pins nothing
     assert r.status_code == 409 and r.json()["error"] == "APPROVAL_SIG", r.text
     assert _sid(app, rid) is None or json.loads(ctx_of(app).db.one("SELECT sigs FROM sig_requests WHERE id=?", (_sid(app, rid),))["sigs"]) == []
@@ -177,24 +177,25 @@ def test_pv2_team_claim_without_signature_and_signature_without_claim(app):
     assert owner.c.get("/api/sig-requests/" + _sid(app, rid)).json()["body"]["view"] == page.hex()
 
 
-def test_pv2_team_older_pages_are_marked(app):
+def test_pv2_team_older_pages_are_refused(app):
+    """r0352 (KAND-ACH-1): a page that names no view (an older page, or one whose answer lost view_sha256 on its way) opens no request."""
     owner, bob, carol, hdr, rid = _team_purchase(app)
-    assert owner.approve(rid).json()["verdict"] == "collecting"                 # 0.1 page: the request names no view
-    sid = _sid(app, rid)
-    assert "view" not in owner.c.get("/api/sig-requests/" + sid).json()["body"]
-    r, _ = _team_approve(bob, rid)                                               # a new page cannot sign other bytes than the request's
-    assert r.status_code == 409 and r.json()["error"] == "VIEW_CHANGED" and sid in r.json().get("detail", sid), r.text
-    r = bob.sign_req(sid)                                                        # ... it signs on the request page: done, view not signed
+    r, _ = _team_approve(owner, rid, sign_view=None, send_view=None)            # 0.1 page: no view
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert _sid(app, rid) is None
+    r, page = _team_approve(owner, rid)                                          # the current page opens it over the view
+    assert r.status_code == 200 and r.json()["verdict"] == "collecting", r.text
+    r = bob.sign_req(_sid(app, rid))
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
-    assert "view" not in _approval(app, owner.uid, rid) and _get(owner, rid)["view_signed"] is False
+    assert _get(owner, rid)["view_signed"] is True
 
 
 def test_pv2_team_old_page_after_a_view_request_is_refused(app):
     owner, bob, carol, hdr, rid = _team_purchase(app)
     r, page = _team_approve(owner, rid)
     assert r.json()["verdict"] == "collecting"
-    r = bob.approve(rid)                                                         # 0.1 bytes against a request that names the view
-    assert r.status_code == 409 and r.json()["error"] == "APPROVAL_SIG", r.text
+    r, _ = _team_approve(bob, rid, sign_view=None, send_view=None)              # 0.1 bytes against a request that names the view
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text     # r0352: refused before the signature
 
 
 def test_pv2_team_k1_action_decided_at_once_with_the_view(app):
@@ -258,7 +259,7 @@ def test_pv2_batch_claim_and_signature_must_agree(client, owner):
     r, _ = _batch(owner, rids, sign_views=None)                                  # claims views, signed the 0.1 items
     assert r.status_code == 409 and r.json()["error"] == "WB_ITEM", r.text
     r, _ = _batch(owner, rids, send_views=None)                                  # signed views, claims none
-    assert r.status_code == 409 and r.json()["error"] == "WB_ITEM", r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text     # r0352: no claim = no decision
     r, _ = _batch(owner, rids, sign_views=[b"\x01" * 32] * 3, send_views=[b"\x01" * 32] * 3)
     assert r.status_code == 409 and r.json()["error"] == "VIEW_CHANGED", r.text
     for bad in (["ab" * 32], ["AB" * 32] * 3, [None] * 3, "ab" * 32):
@@ -267,12 +268,12 @@ def test_pv2_batch_claim_and_signature_must_agree(client, owner):
     assert [row(client, x)["status"] for x in rids] == ["pending_approval"] * 3
 
 
-def test_pv2_batch_from_an_older_page_is_marked(client, owner):
+def test_pv2_batch_from_an_older_page_is_refused(client, owner):
+    """r0352 (KAND-ACH-1, polygon B8): a batch without views is no longer "an older page": refused whole, nothing decided."""
     ag, hdr, rids = _night(owner, 2)
     r, _ = _batch(owner, rids, sign_views=None, send_views=None)
-    assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["allow"] * 2, r.text
-    for rid in rids:
-        assert "view" not in _approval(client.app, owner.account["id"], rid) and _get(owner, rid)["view_signed"] is False
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert [row(client, x)["status"] for x in rids] == ["pending_approval"] * 2
 
 
 # ============================================================ approve for later runs (repeat)
@@ -322,21 +323,20 @@ def test_pv2_repeat_changed_view_and_mismatches_are_refused(client, owner):
     r, _, _ = _later(owner, rid, sign_view=None)                                 # claims, not signed
     assert r.status_code == 409 and r.json()["error"] == "WB_ITEM", r.text
     r, _, _ = _later(owner, rid, send_view=None)                                 # signed, not claimed
-    assert r.status_code == 409 and r.json()["error"] == "WB_ITEM", r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text     # r0352: no claim = no decision
     assert row(client, rid)["status"] == "pending_approval"
     assert client.app.state.ctx.db.one("SELECT COUNT(*) AS n FROM repeat_approvals")["n"] == 0
 
 
-def test_pv2_repeat_from_an_older_page_is_marked(client, owner):
+def test_pv2_repeat_from_an_older_page_is_refused(client, owner):
+    """r0352 (KAND-ACH-1): "approve for later runs" without a view is refused; no later run is reserved."""
     ag, hdr = owner.new_agent("demo", "night")
     owner.mandate(ag["id"])
     rid = act(client, hdr, "publish", ARGS).json()["rid"]
     r, rids, _ = _later(owner, rid, sign_view=None, send_view=None)
-    assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
-    _expire(client, rid)
-    x = act(client, hdr, "publish", ARGS).json()
-    assert x["rid"] == rids[0] and x["verdict"] == "allow", x
-    assert "view" not in _approval(client.app, owner.account["id"], rids[0]) and _get(owner, rids[0])["view_signed"] is False
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert row(client, rid)["status"] == "pending_approval"
+    assert client.app.state.ctx.db.one("SELECT COUNT(*) AS n FROM repeat_approvals")["n"] == 0
 
 
 def test_pv2_repeat_after_the_request_expired(client, owner):
@@ -412,20 +412,23 @@ def test_pv2_allowance_changed_view_and_mismatches_are_refused(client, owner, tm
     _bump(client.app, rid)
     r, _, _ = _allow(d, rid, g=g)
     assert r.status_code == 409 and r.json()["error"] == "VIEW_CHANGED", r.text
-    for sv, nv in ((None, "page"), ("page", None), (b"\x02" * 32, "page")):
+    for sv, nv in ((None, "page"), (b"\x02" * 32, "page")):
         r, _, _ = _allow(d, rid, sign_view=sv, send_view=nv)
         assert r.status_code == 409 and r.json()["error"] == "ALLOWANCE_MISMATCH", (sv, nv, r.text)
-    r, _, _ = _allow(d, rid, sign_view=b"\x03" * 31, send_view=None)              # not 32 bytes: the core schema refuses the map
+    r, _, _ = _allow(d, rid, sign_view="page", send_view=None)                  # signed, not claimed: r0352, no claim = no decision
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    r, _, _ = _allow(d, rid, sign_view=b"\x03" * 31, send_view="page")            # not 32 bytes: the core schema refuses the map
     assert r.status_code == 409 and r.json()["error"] == "ALLOWANCE_MALFORMED", r.text
     assert row(client, rid)["status"] == "pending_approval"
     assert client.app.state.ctx.db.one("SELECT COUNT(*) AS n FROM allowances")["n"] == 0
 
 
-def test_pv2_allowance_from_an_older_page_is_marked(client, owner, tmp_path):
+def test_pv2_allowance_from_an_older_page_is_refused(client, owner, tmp_path):
+    """r0352 (KAND-ACH-1, polygon B7d/B7e): "allow from now on" without a view is refused; no rule is written."""
     d, rid = _dev(client, owner, tmp_path)
     r, a, _ = _allow(d, rid, sign_view=None, send_view=None)
-    assert r.status_code == 200, r.text
-    assert _get(owner, rid)["view_signed"] is False
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert client.app.state.ctx.db.one("SELECT COUNT(*) AS n FROM allowances")["n"] == 0
 
 
 def test_pv2_core_schema_allowance_view():
@@ -602,22 +605,22 @@ def test_pv2_vectors_of_the_page_are_current():
 
 def test_pv2_pack_of_a_one_key_account_with_batch_and_later_runs_is_valid(app, tmp_path):
     """Found on the way (pre-existing): a solo account with ONE passkey that approved a batch (wb) or "for later runs" (wb) got
-    `ledger: invalid MANDATE_KEY` from both checkers (the wb registry was used only after key changes). Old pages, no views."""
+    `ledger: invalid MANDATE_KEY` from both checkers (the wb registry was used only after key changes). r0352: with views (no old pages)."""
     import os
     import subprocess
     from tests.recovery_helpers import Person, export_to, run_verify
     p = Person(app).register("Pat")
     ag, hdr, rids = _night(p, 2)
-    r, _ = _batch(p, rids, sign_views=None, send_views=None)
+    r, _ = _batch(p, rids)
     assert r.status_code == 200, r.text
     rid = act(p.c, hdr, "publish", ARGS).json()["rid"]
-    r, later, _ = _later(p, rid, sign_view=None, send_view=None)
+    r, later, _ = _later(p, rid)
     assert r.status_code == 200, r.text
     _expire(p.c, rid)
     assert act(p.c, hdr, "publish", ARGS).json()["rid"] == later[0]
     folder = export_to(p.c, tmp_path / "pack")
     rc, out = run_verify(folder, "--offline")
-    assert rc == 0 and "RESULT: VALID" in out and "approval views: 0 signed, 4 not signed" in out, out
+    assert rc == 0 and "RESULT: VALID" in out and "approval views: 4 signed, 0 not signed" in out, out
     mcp = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "mcp")
     py = os.path.join(mcp, ".venv", "bin", "python")
     if not os.path.exists(py):

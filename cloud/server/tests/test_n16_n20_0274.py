@@ -98,7 +98,7 @@ def test_n19_batch_answer_says_who_waits(client, owner, tmp_path):
     g = [x for x in client.get("/api/approvals/groups").json()["groups"] if set(x["rids"]) == {r1, r2}][0]
     items = [wa.b64u_dec(x) for x in g["items_approve_b64"]]
     ad, cd, der = owner.auth.get_assertion(wq.wb_challenge(items), RP, ORIGIN)
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, owner.auth.kid, ad, cd, der)))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=wa.b64u(wq.make_wb(items, owner.auth.kid, ad, cd, der)))
     assert r.status_code == 200, r.text
     assert [(x["verdict"], x.get("agent_waiting")) for x in r.json()["results"]] == [("allow", False)] * 2
 

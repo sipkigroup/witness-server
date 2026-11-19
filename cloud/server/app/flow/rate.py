@@ -70,23 +70,57 @@ def hour_groups(ctx, agent_id, t):
         (agent_id, t - HOUR))}
 
 
-def check(ctx, agent, dry_verdict, t=None, act=None):
-    """-> None | ("deny", "APPROVAL_RATE"). Looks only at a dry defer. act = the action (its class and recipient pick the group; None = a new group)."""
+# r0352 (KAND-ACH-4, polygon "attack on the person" A1: 10 trifles in 10 groups, the 11th `sudo rm -rf /var/log` was refused APPROVAL_RATE
+# and the person never saw it): a dangerous question is not pushed out by trifles. HIGH_RESERVE places above every limit are kept for
+# questions the witness rates high or critical (qwords.RISK_BY_CODE of the reason, set by the server, never by the agent): trifles stop at
+# the limit, a dangerous question may take one of the reserved places while fewer than HIGH_RESERVE high-risk questions of the agent wait.
+# A flood of "dangerous" questions (all high) meets the limit exactly as before: the reserve is for the one that trifles would push out.
+HIGH_RESERVE = 2
+
+
+def pending_high(ctx, agent_id, t) -> int:
+    """How many of the agent's waiting questions are rated high or critical."""
+    return sum(1 for r in ctx.db.q("SELECT reason FROM actions WHERE agent_id=? AND status='pending_approval' AND expires>=?", (agent_id, t))
+               if high_risk(r["reason"]))
+
+
+def high_risk(reason) -> bool:
+    """The question the reason asks is rated high or critical by the witness (the risk bar of the page)."""
+    try:
+        from app.qwords import RISK_BY_CODE
+    except Exception:      # noqa: BLE001
+        return False
+    return RISK_BY_CODE.get(str(reason or "")) in ("high", "critical")
+
+
+def hour_high(ctx, agent_id, t) -> int:
+    """How many of the agent's questions of the last hour (counted by defers_last_hour) were rated high or critical. An approved one
+    (reason OK_APPROVED: its first reason is gone) counts as high: the reserve is not handed out on a guess."""
+    return sum(1 for r in ctx.db.q("SELECT reason FROM actions WHERE " + _HOUR_WHERE, (agent_id, t - HOUR))
+               if high_risk(r["reason"]) or r["reason"] == "OK_APPROVED")
+
+
+def check(ctx, agent, dry_verdict, t=None, act=None, reason=None):
+    """-> None | ("deny", "APPROVAL_RATE"). Looks only at a dry defer. act = the action (its class and recipient pick the group; None = a new group).
+    r0352: reason = the core's reason of the defer; a high-risk question may use HIGH_RESERVE places above the limits."""
     if dry_verdict != "defer":
         return None
     t = store.now() if t is None else t
     max_pending, max_hour = limits(ctx, agent["account_id"])
+    hi = high_risk(reason)
+    extra_p = HIGH_RESERVE if hi and pending_high(ctx, agent["id"], t) < HIGH_RESERVE else 0
+    extra_h = HIGH_RESERVE if hi and hour_high(ctx, agent["id"], t) < HIGH_RESERVE else 0
     k = (act.get("class", ""), (act.get("recipient") or "")[:300]) if act is not None else None      # as actions stores it
     heard = can_hear(ctx, agent)
     g, h = pending_groups(ctx, agent["id"], t, since=None if heard else t - STALE_UNHEARD_S), hour_groups(ctx, agent["id"], t)
     if not heard:
         h = {}                                            # 0.2.90: the hourly cap is for a flood the owner is drowning in; nobody hears these
-    if sum(g.values()) >= max(PENDING_ITEMS_CAP, max_pending) or sum(h.values()) >= max(HOUR_ITEMS_CAP, max_hour):
+    if sum(g.values()) >= max(PENDING_ITEMS_CAP, max_pending) + extra_p or sum(h.values()) >= max(HOUR_ITEMS_CAP, max_hour) + extra_h:
         return ("deny", CODE)
-    for cur, cap in ((g, max_pending), (h, max_hour)):
+    for cur, cap, extra in ((g, max_pending, extra_p), (h, max_hour, extra_h)):
         after = dict(cur)
         after[k] = after.get(k, 0) + 1
-        if units(after) > cap:
+        if units(after) > cap + extra:
             return ("deny", CODE)
     return None
 

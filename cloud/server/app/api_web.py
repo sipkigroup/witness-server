@@ -670,7 +670,11 @@ def make_router(ctx):
                 it = {"rid": y["rid"], "t": y["created_at"], "agent_id": y["agent_id"], "tool": y["tool"],
                       "action": json.loads(y["action_json"]), "expires": y["expires"],
                       "text_preview": (y["text_preview"] or "")[:200]}     # 0.2.76: the Dashboard says the call in words ("run python3 hello.py")
-                it["what"] = qwords.words(y)["what"]                # r0281 (#20): the panel says the same line as the question's page
+                w_ = qwords.words(y)
+                it["what"] = w_["what"]                             # r0281 (#20): the panel says the same line as the question's page
+                lv_ = [w_.get("risk") or "high"] + [qwords.words(act.refresh(ctx, z["rid"])).get("risk") or "high" for z in db.q(
+                    "SELECT rid FROM actions WHERE line_lead=? AND account_id=? AND status='pending_approval'", (y["rid"], acc["id"]))]
+                it["risk"] = qwords.risk_max(lv_)                   # r0352 (KAND-ACH-2): the queue sorts by it and marks it (the highest part)
                 ws = waiting.state(y["rid"], y["created_at"])       # 27.10 (polygon O3): absent = cannot tell yet
                 if y["gave_up_at"]:
                     ws = False                                      # 0.2.43b (C): the hook said so (survives a restart)
@@ -679,6 +683,47 @@ def make_router(ctx):
                     it["agent_waiting"] = ws
                 out.append(it)
         return out
+
+    def _rate_cmd(x):
+        """r0352: the command / text of a refused call in one short line (the args preview is "args sha256:<hex> {json}", cut)."""
+        t = x["text_preview"] or ""
+        if not t:
+            a = x["args_preview"] or ""
+            i = a.find("{")
+            t = a[i:] if i >= 0 else a
+            m = __import__("re").search(r'"(?:command|text|url|file_path)":\s*"((?:[^"\\]|\\.)*)', t)
+            if m:
+                try:
+                    t = json.loads('"%s"' % m.group(1))
+                except ValueError:
+                    t = m.group(1)
+        return qwords.visible(str(t))[:160]
+
+    @r.get("/api/rate-refusals")
+    def rate_refusals(req: Request):
+        """r0352 (KAND-ACH-4, polygon A1): questions the witness refused APPROVAL_RATE in the last hour (the agent had too many questions
+        waiting) are not silent: the queue says one line -- how many, and the most dangerous of them in plain words. Nothing to decide here
+        (the call was refused and did not run; the agent asks again when a place frees). -> {"n", "items": [{rid, agent_id, t, what, risk}]}
+        (at most 5: the highest risk first, then the newest)."""
+        acc = auth.session_account(ctx, req)
+        rows = db.q("SELECT * FROM actions WHERE account_id=? AND reason='APPROVAL_RATE' AND created_at>? ORDER BY created_at DESC LIMIT 200",
+                    (acc["id"], now() - 3600))
+        items = []
+        for x in rows:
+            try:
+                ej = json.loads(x["exec_json"]) if x["exec_json"] else {}
+            except (TypeError, ValueError):
+                ej = {}
+            why = ej.get("rate_of") if isinstance(ej, dict) and isinstance(ej.get("rate_of"), str) else None
+            y = dict(x)
+            y["reason"] = why or "ESCALATE_COMMAND"
+            w = qwords.words(y)
+            risk = qwords.RISK_BY_CODE.get(why or "", w.get("risk") or "low")
+            cmd = _rate_cmd(x)                                                         # what it asked to run, as the page would show it
+            items.append({"rid": x["rid"], "agent_id": x["agent_id"], "t": x["created_at"], "what": w["what"], "risk": risk, "cmd": cmd})
+        rank = {k: i for i, k in enumerate(qwords.RISK_ORDER)}
+        items.sort(key=lambda i: (-rank.get(i["risk"], len(rank)), -(i["t"] or 0)))
+        return {"n": len(items), "items": items[:5]}
 
     @r.get("/api/approvals/{rid}")
     def approval_get(rid: str, req: Request):
@@ -731,23 +776,39 @@ def make_router(ctx):
         want = _view_offer(acc, ans)
         if want is None and ans.get("status") not in ("pending_approval", "held"):
             return None                        # no longer waiting: the decision path answers NOT_DEFERRED / NOT_HELD as before
-        legacy = False
-        if want is not None and want != got:
-            try:                               # r0277: a page older than P2 signs the view without "omitted": the same rows, accepted
-                legacy = signview.view_hash(ans, legacy=True) == got
-            except ValueError:
-                legacy = False
-        if want is None or (want != got and not legacy):
+        # r0352 (KAND-ACH-1): the r0277 "older page" hash (the view without "omitted") is no longer accepted: a go-between that cuts
+        # "omitted" out of the answer made the page sign a view that hides what the first screen does not show whole.
+        if want is None or want != got:
             raise Err(409, "VIEW_CHANGED", "what this page shows is no longer what the witness holds: reload the page and decide again")
-        signview.remember(db, acc["id"], ans, now(), legacy)     # 0.2.83 (MR-24): the shown object goes into the evidence pack (views/)
+        signview.remember(db, acc["id"], ans, now())     # 0.2.83 (MR-24): the shown object goes into the evidence pack (views/)
         return got
 
+    def _view_required(acc, rid, user):
+        """r0352 (KAND-ACH-1, polygon "attack on the person" B3/B3s/B7d/B7e/B8): -> True when the witness CAN build the view of this
+        request now (a waiting call, or an expired one still offered for later runs): then a decision that names no view is refused
+        (409 VIEW_REQUIRED) on every path -- one approval or refusal, a release, a batch, a project permission, later runs, a team's
+        request. Before r0352 a decision without a view was taken as "an older page" and accepted: a go-between that cut view_sha256
+        out of GET /api/approvals/{rid} made the page sign the bare format while it showed a text of the go-between's choosing."""
+        try:
+            ans = _approval_answer(acc, rid, user)
+        except Err:
+            return False                       # 404 and the like: the decision path answers it itself
+        return _view_offer(acc, ans) is not None
+
     def _view_fn(acc, rid, user, b):
-        """pv2: -> a callable the decision path runs under its lock (None: no view claimed, an older page)."""
+        """pv2: -> a callable the decision path runs under its lock. r0352: no view claimed -> 409 VIEW_REQUIRED when the witness can
+        build one for this request (no "older page" any more); None only when no view exists for it (a decided call: the decision path
+        answers NOT_DEFERRED / NOT_HELD itself)."""
         got = _view_parse(b.get("view_sha256"))
-        return None if got is None else (lambda: ctx.view_match(acc, rid, user, got))
+        if got is None:
+            if _view_required(acc, rid, user):
+                raise Err(409, "VIEW_REQUIRED", signview.VIEW_REQUIRED_TEXT)
+            return None
+        return lambda: ctx.view_match(acc, rid, user, got)
 
     ctx.view_match = _view_match               # pv2: the batch (flow/batch.py), the quorum (org.py) and allowances use the same check
+    ctx.view_required = _view_required         # r0352: the batch and the quorum refuse a decision without a view the same way
+    ctx.view_of = lambda acc, rid: _view_offer(acc, _approval_answer(acc, rid, None))    # r0352: the views of a queue's ready batch
     ctx.view_parse = _view_parse
 
     def _approval_answer(acc, rid, user):

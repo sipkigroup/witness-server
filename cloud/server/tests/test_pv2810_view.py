@@ -102,7 +102,7 @@ def test_pv2810_a_view_claimed_but_not_signed_is_refused(client, owner, tmp_path
     r, _ = _approve(owner, rid, sign_view=b"\x01" * 32, send_view=b"\x01" * 32)    # signs and claims a view the server never showed
     assert r.status_code == 409 and r.json()["error"] == "VIEW_CHANGED", r.text
     r, _ = _approve(owner, rid, send_view=None)                               # signed a view but does not say so: no silent downgrade
-    assert r.status_code == 409 and r.json()["error"] == "APPROVAL_SIG", r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text    # r0352: no claim = no decision
     assert row(client, rid)["status"] == "pending_approval"
 
 
@@ -113,9 +113,20 @@ def test_pv2810_malformed_view_is_a_bad_request(client, owner, tmp_path, bad):
     assert r.status_code == 400, r.text
 
 
-def test_pv2810_older_page_is_accepted_and_marked(client, owner, tmp_path):
+def test_pv2810_older_page_is_refused(client, owner, tmp_path):
+    """r0352 (KAND-ACH-1, polygon B3): the 0.1 page (no view in the payload or the request) is no longer accepted."""
     a, rid = _pending(client, owner, tmp_path)
-    assert owner.approve(rid).json()["verdict"] == "allow"                     # the 0.1 page: no view in the payload or the request
+    r, _ = _approve(owner, rid, sign_view=None, send_view=None)
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert row(client, rid)["status"] == "pending_approval"
+    assert [b for b in _approval_entries(client.app, owner.account["id"]) if b["receipt"] == rid] == []
+
+
+def test_pv2810_an_entry_of_an_older_server_is_still_marked(client, owner, tmp_path):
+    """What a server before r0352 wrote (an approval naming no view) is still read and marked "view not signed"."""
+    from tests import viewkit
+    a, rid = _pending(client, owner, tmp_path)
+    assert viewkit.legacy_approve(owner, rid)["verdict"] == "allow"
     g = _get(owner, rid)
     assert g["view_signed"] is False and "view_signed_sha256" not in g
     body = [b for b in _approval_entries(client.app, owner.account["id"]) if b["receipt"] == rid][0]
@@ -163,18 +174,24 @@ def test_pv2810_release_with_a_changed_view_is_refused(client, owner, tmp_path):
     assert row(client, rid)["status"] == "held"
 
 
-def test_pv2810_release_from_an_older_page_still_works(client, owner, tmp_path):
+def test_pv2810_release_from_an_older_page_is_refused(client, owner, tmp_path):
+    """r0352 (KAND-ACH-1): a release that names no view is refused (VIEW_REQUIRED); the hold stays."""
     a, rid = _held(client, owner, tmp_path)
     r, _ = _release(owner, rid, view=None)
-    assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
+    assert r.status_code == 409 and r.json()["error"] == "VIEW_REQUIRED", r.text
+    assert row(client, rid)["status"] == "held"
 
 
 def test_pv2810_pack_shows_view_hashes_offline(app, tmp_path):
     from tests.recovery_helpers import Person, export_to, run_verify
     p = Person(app).register("Pat")
     a = Agent(p.c, p, tmp_path)
-    rid_old = a.see_secret()                                                   # 0.1 page: not signed
-    [(t, v, reason, rid_new)] = a.tool("Read", {"file_path": a.proj + "/.env.local"})   # 06.11: another credential file than see_secret()
+    envf = a.proj + "/.env"
+    open(envf, "w").write("GH_TOKEN=x\n")
+    [(t, v, reason, rid_old)] = a.tool("Read", {"file_path": envf})
+    from tests import viewkit
+    assert viewkit.legacy_approve(p, rid_old)["verdict"] == "allow"            # an entry of a server before r0352: not signed
+    [(t, v, reason, rid_new)] = a.tool("Read", {"file_path": a.proj + "/.env.local"})   # 06.11: another credential file
     r, page = _approve(p, rid_new)
     assert r.status_code == 200, r.text
     a.tool("Write", {"file_path": a.proj + "/tests/test_new.py", "content": "def test_n():\n    pass\n"})

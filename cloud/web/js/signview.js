@@ -35,10 +35,24 @@ export async function viewHash(r) {
   return sha256(new TextEncoder().encode(jcs(viewOf(r))));
 }
 
-// -> {view: Uint8Array(32) | null, hex, same}: the hash this page signs (only when the server binds the view: r.view_sha256 present)
+// r0352 (KAND-ACH-1): the witness ALWAYS names the view of a request that waits for a decision (pending, held, an expired one still offered
+// for later runs). An answer without view_sha256 there was altered on its way (a go-between cut it so the page signs the bare format while
+// showing a text of its choosing): missing = true, and the page does not sign.
+export function viewExpected(r) {
+  if (!r || typeof r !== 'object') return false;
+  const st = r.status;
+  return st === 'pending_approval' || st === 'held' || (st === 'expired' && !!(r.repeat_offer && r.repeat_offer.eligible));
+}
+
+// -> {view: Uint8Array(32) | null, hex, same, missing}: the hash this page signs (the server binds the view: r.view_sha256 present).
+// missing: the answer names no view where the witness always names one -> do not sign (the page or the connection was altered).
 export async function signedView(r) {
-  if (!r || typeof r.view_sha256 !== 'string') return { view: null, hex: null, same: null };
+  if (!r || typeof r.view_sha256 !== 'string') {
+    let missing = viewExpected(r);
+    if (missing) { try { await viewHash(r); } catch (e) { missing = false; } }     // a view the page cannot build either: nothing to bind
+    return { view: null, hex: null, same: null, missing };
+  }
   const view = await viewHash(r);
   const hex = bytesToHex(view);
-  return { view, hex, same: hex === r.view_sha256 };
+  return { view, hex, same: hex === r.view_sha256, missing: false };
 }

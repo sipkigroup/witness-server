@@ -31,6 +31,7 @@ from svidetel_v4.state import approval_payload, mandate_hash
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "packtools"))
 import screencheck as SC  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 PROBE = "false && cd /private/tmp\necho x > proj/.claude/settings.json"
 # dev corpus #190 (session a1dba6a7, 23.10, real work of the owner); {P} is the project, the heredoc body cut as in the corpus
@@ -133,7 +134,7 @@ def _forged_allowance(rig, rid, commands, project):  # noqa: F811
     a = {"v": "deus-aar-0.1", "t": "allowance", "id": "al_" + base64.b32encode(os.urandom(16)).decode().rstrip("=")[:26],
          "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command", "commands": commands, "project": project,
          "nbf": t, "exp": t + 86400}
-    return rig.o.post("/api/allowances", rid=rid, envelope_b64=rig.o.sign(al.TYP, wa.cde(a)))
+    return viewkit.allow(rig.o, rid, a, al.TYP)[0]
 
 
 def test_from_now_on_cannot_be_forged(rig):  # noqa: F811
@@ -147,10 +148,10 @@ def test_from_now_on_cannot_be_forged(rig):  # noqa: F811
     exp = int(time.time()) + 24 * 3600
     rids = [R.make_rid(exp) for _ in range(3)]
     g = _page(rig, rid)
-    items = [hashlib.sha256(approval_payload(g["mandate"], g["action"], r_, True)).digest() for r_ in [rid] + rids]
+    items = [hashlib.sha256(approval_payload(g["mandate"], g["action"], r_, True, viewkit.page_view(g))).digest() for r_ in [rid] + rids]
     au = rig.o.auth
     ad, cd, der = au.get_assertion(wq.wb_challenge(items), RP, ORIGIN)
-    res = rig.o.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(wq.make_wb(items, au.kid, ad, cd, der)), repeat={"rids": rids})
+    res = rig.o.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(rig.o.c, rid)), approved=True, envelope_b64=wa.b64u(wq.make_wb(items, au.kid, ad, cd, der)), repeat={"rids": rids})
     PRED2 = (409, "REPEAT_NOT_ELIGIBLE")
     assert (res.status_code, res.json().get("error")) == PRED2, res.text
     db = rig.c.app.state.ctx.db

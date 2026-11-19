@@ -60,8 +60,12 @@ def _pack(app, tmp_path, release_view="page", rel=True):
     a.tool("Write", {"file_path": a.proj + "/tests/test_new.py", "content": "def test_n():\n    pass\n"})
     v, parts = a.line("pytest -q ")
     rid_h = [x[3] for x in parts if x[2] == "ESCALATE_SECRET_SEEN"][0]
-    r, rpage = _release(p, rid_h, rel=rel, view=release_view)
-    assert r.status_code == 200, r.text
+    if release_view is None:                                                   # r0352: only a server before it wrote a release without a view
+        from tests import viewkit
+        viewkit.legacy_release(p, rid_h, rel)
+    else:
+        r, rpage = _release(p, rid_h, rel=rel, view=release_view)
+        assert r.status_code == 200, r.text
     return rid, rid_h, export_to(p.c, tmp_path / "pack")
 
 

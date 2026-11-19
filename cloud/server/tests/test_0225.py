@@ -15,6 +15,7 @@ from tests.helpers import H
 from tests.test_0224_critique import Agent, B64, row
 from tests_flow.helpers import set_settings
 import wq_profile as wq
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 CLOUD = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TG_TOKEN = "123456789:" + "AAH" + "x" * 32                       # FAKE, shape only
@@ -157,8 +158,7 @@ def test_0225_lookback_and_release_confirms(client, owner, tmp_path):
     rid = [p[3] for p in parts if p[2] == "ESCALATE_SECRET_SEEN"][0]
     db.x("UPDATE actions SET updated_at=updated_at-5 WHERE agent_id=? AND class='delete' AND updated_at>?", (a.ag["id"], A.now() - 60))   # written 5 s before the release
     x = row(client, rid)
-    pay = wq.release_payload(rid, json.loads(x["action_json"])["args_sha256"], True)
-    r = owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay))
+    r = viewkit.release(owner, rid, json.loads(x["action_json"])["args_sha256"], True)
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     assert a.line("pytest -q  ")[0] == "ALLOW"                           # the owner saw these writes: the next run is not asked again
     db.x("UPDATE actions SET updated_at=updated_at-5 WHERE rid=?", (rid,))  # the release was 5 s ago
@@ -213,8 +213,7 @@ def test_0225_egress_hold_is_released_with_passkey(client, owner, tmp_path):
     a = Agent(client, owner, tmp_path, extra_domains=["github.com"])
     [(t, v, reason, rid)] = a.tool("WebFetch", {"url": "https://github.com/search?q=x", "prompt": "x"})
     x = row(client, rid)
-    pay = wq.release_payload(rid, json.loads(x["action_json"])["args_sha256"], True)
-    r = owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay))
+    r = viewkit.release(owner, rid, json.loads(x["action_json"])["args_sha256"], True)
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
 
 

@@ -17,6 +17,7 @@ import wq_profile as wq
 from svidetel_v4.state import approval_payload
 from tests.helpers import H, ORIGIN, RP, act
 from tests.org_helpers import MSG_FORM, TEAM_RULES, Person, adopt, ctx_of, policy_hash_now, team
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 from tests.recovery_helpers import (add_key, elapse_phone_wait, export_to, login_with, new_codes, recover, remove_key, run_verify,
                                     stepup_with, switch_auth)
 
@@ -409,7 +410,7 @@ def test_delegation_moves_into_the_signed_policy_and_then_changes_only_by_a_vers
     ctx_of(app).db.x("UPDATE agents SET created_by=NULL WHERE id=?", (ag["id"],))       # r0284: nor the creator rule: only the contract is under test
     r2 = _defer(owner, hdr, "hand")
     gg = owner.c.get("/api/approvals/" + r2["rid"]).json()
-    pay = approval_payload(gg["mandate"], gg["action"], r2["rid"], True)
+    pay = approval_payload(gg["mandate"], gg["action"], r2["rid"], True)      # the core path itself (no page, no view)
     env = wq.make_wq(wa.TYP_APPROVAL, pay, policy_hash_now(app, owner.uid), [carol.wsig(wa.TYP_APPROVAL, pay)])
     from app import actions
     acc = ctx_of(app).db.one("SELECT * FROM accounts WHERE id=?", (owner.uid,))

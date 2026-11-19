@@ -180,7 +180,7 @@ def test_batch_outlier_against_history_is_alone(client, owner, ctx):
     r = owner.post("/api/approvals/batch", rids=rids, approved=True, envelope_b64=owner.wb([hashlib.sha256(b"x").digest()]))
     assert (r.status_code, r.json()["error"]) == (409, "BATCH_OUTLIER")
     ok = [x for x in g if not x["outlier"]][0]                                       # the ordinary two still go in one ceremony
-    r = owner.post("/api/approvals/batch", rids=ok["rids"], approved=True, envelope_b64=owner.wb([b64d(x) for x in ok["items_approve_b64"]]))
+    r = owner.post("/api/approvals/batch", rids=ok["rids"], views=ok.get("views"), approved=True, envelope_b64=owner.wb([b64d(x) for x in ok["items_approve_b64"]]))
     assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["allow", "allow"]
 
 

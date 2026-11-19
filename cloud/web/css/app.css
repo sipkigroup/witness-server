@@ -70,6 +70,8 @@ footer{max-width:960px;margin:0 auto;padding:0 16px 40px;color:var(--mute);font-
 .pill.esc{background:var(--badbg);color:var(--bad);border-color:var(--bad)}
 .pill.held{background:var(--warnbg);color:var(--warn);border-color:var(--warn)}
 .pill.cov{background:var(--code);color:var(--ink)}
+.pill.risk-high,.pill.risk-critical{background:var(--badbg);color:var(--bad);border-color:var(--bad)}.pill.risk-medium{background:var(--warnbg);color:var(--warn);border-color:var(--warn)}
+#singles>.row.risky{border-left:4px solid var(--bad);padding-left:8px;background:var(--badbg);border-radius:var(--r-sm)}   /* r0352 (KAND-ACH-2) */
 .batchlist{max-height:60vh;overflow-y:auto;border:1px solid var(--line);border-radius:8px;padding:8px;margin:.6em 0}
 .batchitem{border-bottom:1px solid var(--line);padding:8px 0}.batchitem:last-child{border-bottom:0}
 mark,.diff{background:var(--warnbg);color:var(--warn);border-radius:3px;padding:0 2px}

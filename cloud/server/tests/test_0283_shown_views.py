@@ -101,7 +101,11 @@ def test_0283_an_older_page_has_no_object_and_require_views_says_so(app, tmp_pat
     from tests.recovery_helpers import Person, export_to, run_verify
     p = Person(app).register("Pat")
     a = Agent(p.c, p, tmp_path)
-    a.see_secret()                                                             # approved by a page that signed no view
+    envf = a.proj + "/.env"
+    open(envf, "w").write("GH_TOKEN=x\n")
+    [(t, v, reason, rid)] = a.tool("Read", {"file_path": envf})
+    from tests import viewkit
+    assert viewkit.legacy_approve(p, rid)["verdict"] == "allow"                # approved before r0352 by a page that signed no view
     folder = export_to(p.c, tmp_path / "pack")
     assert not os.path.isdir(os.path.join(folder, "views"))
     rc, out = run_verify(folder, "--offline")

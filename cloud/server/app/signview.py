@@ -11,7 +11,8 @@ unseen_write (N4 29.10: what an extraction / patch writes, its text unseen; abse
 line_full + text_cut (04.11, Hypothesis I2: every command of a shell line, whole and masked; the text preview was cut at 4 KB; absent = as before).
 omitted (r0277, P2 of the profile): {"rule": "mr-omit-1", "items": [{"m": member, "how": folded | cut | masked | unseen}, ...]} -- what the
 first screen does NOT show whole (omitted_of below); signed with the rest, so a checker knows what the person may not have seen.
-A page that predates it signs the view without "omitted" (view_of(..., legacy=True)): the server accepts that hash too (api_web._view_match).
+A page that predates it signed the view without "omitted" (view_of(..., legacy=True)); r0352: the server no longer accepts that hash
+(a go-between could cut "omitted" out of the answer), nor a decision that names no view while one can be built (VIEW_REQUIRED).
 web/js/signview.js VIEW_KEYS is the same list (tests/test_view_keys_0411.py).
 Not in the view: the mandate (its hash is already signed), times, offers, levels, who is waiting."""
 import hashlib
@@ -22,6 +23,9 @@ V = "dw-view-1"
 KEYS = ("rid", "status", "tool", "action", "args_preview", "text_preview", "reason", "adv", "line_commands", "net_code",
         "exec_changed", "written_run", "masked_dep", "unseen_write", "line_full", "text_cut", "what", "harm", "risk", "details", "omitted")
 OMIT_RULE = "mr-omit-1"
+# r0352 (KAND-ACH-1): the refusal of a decision that names no view while the witness can build one (api_web._view_fn, flow/batch.py, org.py)
+VIEW_REQUIRED_TEXT = ("this decision names no view of what the page showed, but the witness has one for this request: the page or the "
+                      "connection to it was altered (view_sha256 removed). Nothing was decided. Open the page again over a connection you trust")
 FIRST_SCREEN = ("rid", "status", "what", "harm", "risk")     # the first screen shows these whole (owner rule 05.11: one sentence, one harm line, the level)
 
 

@@ -17,6 +17,7 @@ from app.hookjudge import fs as hfs
 from svidetel_v4.state import mandate_hash
 from tests.helpers import H
 from tests.test_0290_standing import STRICT, Dev
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 pytestmark = pytest.mark.standing
 DAY = 86400
@@ -56,7 +57,7 @@ def _amend(d, got, days=30):
         a = {"v": "deus-aar-0.1", "t": "allowance", "id": "al_" + base64.b32encode(os.urandom(16)).decode().rstrip("=")[:26],
              "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command", "commands": o["commands"], "project": o["project"],
              "nbf": o["t"], "exp": o["t"] + days * DAY}
-        res = d.owner.post("/api/allowances", rid=rid, envelope_b64=d.owner.sign(al.TYP, wa.cde(a)))
+        res = viewkit.allow(d.owner, rid, a, al.TYP)[0]
         assert res.status_code == 200, res.text
         d.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (a["id"],))     # r1611: signed with the text
         ids.append((a["id"], o["commands"]))

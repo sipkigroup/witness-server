@@ -71,7 +71,9 @@ class Person:
 
     def approve(self, rid, approved=True):
         g = self.c.get("/api/approvals/" + rid).json()
-        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved)))
+        v = bytes.fromhex(g["view_sha256"]) if g.get("view_sha256") else None     # r0352: the page signs the view the witness offers
+        b = {"view_sha256": g["view_sha256"]} if v else {}
+        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, v)), **b)
 
 
 def hook(client, key, p, tmp_path, wait=0, timeout=20, env=None):

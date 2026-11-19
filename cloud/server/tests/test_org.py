@@ -6,6 +6,7 @@ import wa_profile as wa
 from app import org
 from tests.helpers import H, ORIGIN, act
 from tests.org_helpers import MSG_FORM, Person, ctx_of, team
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 CHANGING = {"POST", "PUT", "DELETE", "PATCH"}
 # user-level paths: they act on the person's own session or membership, not on the current organisation
@@ -96,7 +97,7 @@ def test_pending_member_reads_but_cannot_act(app):
     assert r.status_code == 200                 # solo org (no policy yet): the owner's wa-sig as in 0.1
     d = act(owner.c, hdr, "purchase", {"vendor": "v.example", "amount_cents": 100}).json()
     assert d["verdict"] == "defer"
-    r = bob.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=bob.sign(wa.TYP_APPROVAL, b"x"))
+    r = bob.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(bob.c, d["rid"])), approved=True, envelope_b64=bob.sign(wa.TYP_APPROVAL, b"x"))
     assert r.status_code == 409 and r.json()["error"] in ("APPROVAL_SIG", "WA_CHALLENGE", "KEY_MISMATCH")   # not the pinned key
 
 

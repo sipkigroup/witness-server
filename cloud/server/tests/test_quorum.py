@@ -11,6 +11,7 @@ import wq_profile as wq
 from svidetel_v4.state import approval_payload
 from tests.helpers import RP, ORIGIN, act
 from tests.org_helpers import MONEY_FORM, MSG_FORM, TEAM_RULES, adopt, ctx_of, ledger_entries, loads, policy_hash_now, team
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def mandate_draft(p, agent_id, form):
@@ -112,7 +113,7 @@ def deferred_purchase(owner, hdr, amount):
 
 def approval_env(p, rid, approved=True):
     g = p.c.get("/api/approvals/" + rid).json()
-    return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved))
+    return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, viewkit.page_view(g)))
 
 
 # (3) a money defer of 80000: one signature -> collecting, the second -> allow with an AAR
@@ -120,11 +121,11 @@ def test_3_money_approval_by_quorum(app):
     owner, bob, carol = team(app)
     ag, hdr, m = msg_mandate(owner)
     d = deferred_purchase(owner, hdr, 80000)
-    r = owner.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=approval_env(owner, d["rid"]))
+    r = owner.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(owner.c, d["rid"])), approved=True, envelope_b64=approval_env(owner, d["rid"]))
     assert r.status_code == 200 and r.json()["verdict"] == "collecting" and (r.json()["have"], r.json()["need"]) == (1, 2), r.text
     assert owner.c.get("/v1/actions/" + d["rid"], headers=hdr).json()["status"] == "pending_approval"
-    assert carol.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=approval_env(carol, d["rid"])).json()["error"] == "ROLE_NOT_NEEDED"
-    r = bob.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=approval_env(bob, d["rid"]))
+    assert carol.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(carol.c, d["rid"])), approved=True, envelope_b64=approval_env(carol, d["rid"])).json()["error"] == "ROLE_NOT_NEEDED"
+    r = bob.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(bob.c, d["rid"])), approved=True, envelope_b64=approval_env(bob, d["rid"]))
     assert r.status_code == 200 and r.json()["verdict"] == "allow", r.text
     res = owner.c.get("/v1/actions/" + d["rid"], headers=hdr).json()
     assert res["verdict"] == "allow" and res["reason"] == "OK_APPROVED" and res["aar_b64"] and res["proof"]["approval"]["envelope_b64"]
@@ -136,10 +137,10 @@ def test_3b_small_money_and_refusal_take_one_signer(app):
     owner, bob, carol = team(app)
     ag, hdr, m = msg_mandate(owner)
     small = deferred_purchase(owner, hdr, 3000)
-    r = bob.post("/api/approvals/" + small["rid"], approved=True, envelope_b64=approval_env(bob, small["rid"]))
+    r = bob.post("/api/approvals/" + small["rid"], **viewkit.claim(viewkit.answer(bob.c, small["rid"])), approved=True, envelope_b64=approval_env(bob, small["rid"]))
     assert r.json()["verdict"] == "allow", r.text
     big = deferred_purchase(owner, hdr, 90000)
-    r = bob.post("/api/approvals/" + big["rid"], approved=False, envelope_b64=approval_env(bob, big["rid"], False))
+    r = bob.post("/api/approvals/" + big["rid"], **viewkit.claim(viewkit.answer(bob.c, big["rid"])), approved=False, envelope_b64=approval_env(bob, big["rid"], False))
     assert r.json()["verdict"] == "refused", r.text            # stopping is easy: one budget signer refuses
     assert owner.c.get("/v1/actions/" + big["rid"], headers=hdr).json()["status"] == "refused"
 
@@ -151,7 +152,7 @@ def test_3c_approve_with_envelope_rejects_a_short_wq(app):
     ag, hdr, m = msg_mandate(owner)
     d = deferred_purchase(owner, hdr, 70000)
     g = owner.c.get("/api/approvals/" + d["rid"]).json()
-    pay = approval_payload(g["mandate"], g["action"], d["rid"], True)
+    pay = approval_payload(g["mandate"], g["action"], d["rid"], True)      # the core path itself (no page, no view)
     acc = ctx_of(app).db.one("SELECT * FROM accounts WHERE id=?", (owner.uid,))
     env = wq.make_wq(wa.TYP_APPROVAL, pay, policy_hash_now(app, owner.uid), [owner.wsig(wa.TYP_APPROVAL, pay)])
     with pytest.raises(Exception) as e:
@@ -325,11 +326,11 @@ def test_11b_hold_and_release(client, owner, hooked):
     assert act(client, hdr, "send_email", {"to": "bob@partner.example", "subject": "s", "body": "street 5"}).json()["rid"] == h["rid"]
     state["answer"] = None
     a = json.loads(ctx_of(client.app).db.one("SELECT action_json FROM actions WHERE rid=?", (h["rid"],))["action_json"])
-    bad = owner.post("/api/approvals/%s/release" % h["rid"], release=True,
-                     envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], False)))
+    bad = owner.post("/api/approvals/%s/release" % h["rid"], release=True, **viewkit.claim(viewkit.answer(owner.c, h["rid"])),
+                     envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], False, viewkit.page_view(viewkit.answer(owner.c, h["rid"])))))
     assert bad.status_code == 409 and bad.json()["error"] == "RELEASE_SIG"
-    r = owner.post("/api/approvals/%s/release" % h["rid"], release=True,
-                   envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True)))
+    r = owner.post("/api/approvals/%s/release" % h["rid"], release=True, **viewkit.claim(viewkit.answer(owner.c, h["rid"])),
+                   envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True, viewkit.page_view(viewkit.answer(owner.c, h["rid"])))))
     assert r.status_code == 200 and (r.json()["verdict"], r.json()["status"]) == ("allow", "allowed"), r.text
     res = client.get("/v1/actions/" + h["rid"], headers=hdr).json()
     assert res["aar_b64"] and res["rid"] in L.S.receipts
@@ -338,8 +339,8 @@ def test_11b_hold_and_release(client, owner, hooked):
     state["answer"] = ("hold", "ADVISORY_HOLD")
     h2 = act(client, hdr, "send_email", {"to": "bob@partner.example", "subject": "s2", "body": "street 6"}).json()
     a2 = json.loads(ctx_of(client.app).db.one("SELECT action_json FROM actions WHERE rid=?", (h2["rid"],))["action_json"])
-    r = owner.post("/api/approvals/%s/release" % h2["rid"], release=False,
-                   envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h2["rid"], a2["args_sha256"], False)))
+    r = owner.post("/api/approvals/%s/release" % h2["rid"], release=False, **viewkit.claim(viewkit.answer(owner.c, h2["rid"])),
+                   envelope_b64=owner.sign(wq.TYP_RELEASE, wq.release_payload(h2["rid"], a2["args_sha256"], False, viewkit.page_view(viewkit.answer(owner.c, h2["rid"])))))
     assert (r.json()["verdict"], r.json()["reason"]) == ("deny", "ADVISORY_REJECTED")
     assert h2["rid"] not in (L.sync_now(), L.S.receipts)[1]
     assert (h2["rid"], "denied") in calls["decided"]
@@ -354,6 +355,6 @@ def test_release_by_access_member(app, hooked):
     h = act(owner.c, hdr, "send_email", {"to": "x@acme.example", "subject": "s", "body": "b"}).json()
     assert h["status"] == "held"
     a = json.loads(ctx_of(app).db.one("SELECT action_json FROM actions WHERE rid=?", (h["rid"],))["action_json"])
-    r = carol.post("/api/approvals/%s/release" % h["rid"], release=True,
-                   envelope_b64=carol.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True)))
+    r = carol.post("/api/approvals/%s/release" % h["rid"], release=True, **viewkit.claim(viewkit.answer(carol.c, h["rid"])),
+                   envelope_b64=carol.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True, viewkit.page_view(viewkit.answer(carol.c, h["rid"])))))
     assert r.json()["verdict"] == "allow"

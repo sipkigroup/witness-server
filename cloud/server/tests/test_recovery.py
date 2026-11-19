@@ -19,6 +19,7 @@ from tests.org_helpers import Person, ctx_of
 from tests.recovery_helpers import (add_key, export_to, login_with, new_codes, recover, remove_key, revoke_batch, run_verify,
                                     stepup_with, switch_auth)
 from tests.test_push import Clock, Device, FakeSender, subscribe  # noqa: F401  (fixtures below)
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def keys_of(p):
@@ -379,18 +380,18 @@ def test_d4_second_passkey_signs_everything_removed_one_nothing(app, tmp_path):
     g = p.c.get("/api/approvals/groups").json()["groups"]
     items = [base64.urlsafe_b64decode(x + "=" * (-len(x) % 4)) for x in g[0]["items_approve_b64"]]
     ad, cd, der = lap.get_assertion(wq.wb_challenge(items), "localhost", ORIGIN)
-    r = p.post("/api/approvals/batch", rids=g[0]["rids"], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, lap.kid, ad, cd, der)))
+    r = p.post("/api/approvals/batch", rids=g[0]["rids"], views=g[0].get("views"), approved=True, envelope_b64=wa.b64u(wq.make_wb(items, lap.kid, ad, cd, der)))
     assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["allow"] * 3, r.text
     # the phone is removed: neither its wa-sig nor its batch nor a hand-built wq with it counts any more
     assert remove_key(p, phone.kid.hex()).status_code == 200
     d = act(p.c, hdr, "publish", {"channel": "blog", "text": "two"}).json()
     g = p.c.get("/api/approvals/" + d["rid"]).json()
-    pay = approval_payload(g["mandate"], g["action"], d["rid"], True)
-    r = p.post("/api/approvals/" + d["rid"], approved=True, envelope_b64=wa.b64u(phone.sign_object(wa.TYP_APPROVAL, pay, "localhost", ORIGIN)))
+    pay = approval_payload(g["mandate"], g["action"], d["rid"], True, viewkit.page_view(g))
+    r = p.post("/api/approvals/" + d["rid"], **viewkit.claim(viewkit.answer(p.c, d["rid"])), approved=True, envelope_b64=wa.b64u(phone.sign_object(wa.TYP_APPROVAL, pay, "localhost", ORIGIN)))
     assert r.status_code == 409 and r.json()["error"] == "KEY_REVOKED", r.text
     items = [hashlib.sha256(pay).digest()]
     ad, cd, der = phone.get_assertion(wq.wb_challenge(items), "localhost", ORIGIN)
-    r = p.post("/api/approvals/batch", rids=[d["rid"]], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, phone.kid, ad, cd, der)))
+    r = p.post("/api/approvals/batch", rids=[d["rid"]], views=[g["view_sha256"]], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, phone.kid, ad, cd, der)))
     assert r.status_code == 409 and "KEY_REVOKED" in r.text, r.text
     assert p.approve(d["rid"]).json()["verdict"] == "allow"
     rc, out = run_verify(export_to(p.c, tmp_path / "pk"), "--offline")

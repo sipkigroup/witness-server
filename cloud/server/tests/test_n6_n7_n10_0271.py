@@ -18,6 +18,7 @@ from app.hookjudge import judge, reasons as R
 from tests.test_0224_critique import Agent
 from tests.test_r25_s8 import _release, _rid, _page, _writes, reasons, PY_NET
 from tests.test_late_release_2910 import _present, _db
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 PY_NET2 = "import urllib.request\nurllib.request.urlopen('https://staging.poligon-s8.invalid/r9-CHANGED-unseen')\n"
 
@@ -67,7 +68,7 @@ def _run_line(a, cmd, shell=None):
 def _release_raw(a, rid):
     from tests.test_r25_s8 import wq
     sha = _page(a, rid)["action"]["args_sha256"]
-    r = a.o.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=a.o.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+    r = viewkit.release(a.o, rid, sha, True)
     assert r.status_code == 200, r.text
     return r.json()
 

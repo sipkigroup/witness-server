@@ -16,6 +16,9 @@ import { signBatch } from './sign.js';
 import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash, viewOf } from './signview.js';
+
+// r0352 (KAND-ACH-1): the answer of the witness came without the view this page must sign
+export const VIEW_MISSING_TEXT = 'This page or the connection to the witness was altered: the answer came without what your passkey must sign. Do not decide here; nothing was sent. Open the link again on a network you trust.';
 import { askOf, dangerText, protectedTarget, reasonWords, dangerCovered } from './ask.js';
 import { qwView, qwParts, laterPlan, laterDays, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE, detLines } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
@@ -849,6 +852,14 @@ async function single(me) {
     } catch (e) { notice(msg, 'err', failText(e)); $('#sus').disabled = false; }
   });
 
+  if (sv.missing) {
+    // r0352 (KAND-ACH-1): the witness always names the view of a waiting request; an answer without it was altered on its way (a go-between
+    // cut view_sha256 so the passkey signs the bare format while the page shows its text). The page does not sign; the server refuses too.
+    notice(msg, 'err', VIEW_MISSING_TEXT);
+    $('#decide').hidden = true; $('#release').hidden = true;
+    for (const id of ['yes', 'no', 'allow24', 'rel', 'rej']) { const b = document.getElementById(id); if (b) b.disabled = true; }
+    return;
+  }
   if (held) {
     // N5 29.10: a hold means the mandate ALLOWS the call (the witness or the advisor holds it), not "does not clearly allow"
     $('#boxlead').textContent = ['ESCALATE_SECRET_SEEN', 'ESCALATE_USER_CONTENT_HOST', 'ESCALATE_NET_UNSEEN', 'ESCALATE_WRITTEN_RUN', 'ESCALATE_SECRET_COPY'].includes(r.reason)
@@ -1058,7 +1069,7 @@ async function single(me) {
       if (blockedByBrowser(e)) { showOtherBrowser(); unlock(); return; }                                // the browser cannot do passkeys: one line + Copy link
       if (e.shown) { notice(msg, 'err', e.message); unlock(); return; }                                // 04.11: the line's result, part by part
       if (e.code === 'LINE_VIEW') { notice(msg, 'err', 'This page cannot show (and so cannot sign) what every part of this call does. Nothing was approved. Reload the page; you can still refuse.'); unlock(); return; }
-      notice(msg, 'err', levelError(e) ? levelError(e) : e.code === 'ALLOWANCE_NOT_ELIGIBLE' || e.code === 'ALLOWANCE_MISMATCH' ? 'This command cannot be allowed for the project (' + failText(e) + '). You can still approve it once.' : e.code === 'NOT_DEFERRED' ? 'This request is no longer waiting (already decided or expired).' : e.code === 'VIEW_CHANGED' ? 'What this page shows changed at the witness since you opened it. Reload the page, read it again and decide.' : (e.code || '').startsWith('REPEAT_') ? 'This call cannot be approved for later runs (' + failText(e) + '). You can still approve it once.' : e.code === 'APPROVAL_SIG' ? STALE_SIG_TEXT : (e.code || '').startsWith('WA_') || (e.code || '').startsWith('WQ_') ? 'The server rejected the signature (' + failText(e) + ').' : explainError(e));
+      notice(msg, 'err', levelError(e) ? levelError(e) : e.code === 'ALLOWANCE_NOT_ELIGIBLE' || e.code === 'ALLOWANCE_MISMATCH' ? 'This command cannot be allowed for the project (' + failText(e) + '). You can still approve it once.' : e.code === 'NOT_DEFERRED' ? 'This request is no longer waiting (already decided or expired).' : e.code === 'VIEW_CHANGED' ? 'What this page shows changed at the witness since you opened it. Reload the page, read it again and decide.' : e.code === 'VIEW_REQUIRED' ? VIEW_MISSING_TEXT : (e.code || '').startsWith('REPEAT_') ? 'This call cannot be approved for later runs (' + failText(e) + '). You can still approve it once.' : e.code === 'APPROVAL_SIG' ? STALE_SIG_TEXT : (e.code || '').startsWith('WA_') || (e.code || '').startsWith('WQ_') ? 'The server rejected the signature (' + failText(e) + ').' : explainError(e));
       if (e.code === 'APPROVAL_SIG') reloadButton(msg);
       const sreq = e.code === 'VIEW_CHANGED' && /an older page/.test(e.detail || '') && (/sign\.html\?req=([A-Za-z0-9_-]+)/.exec(e.detail || '') || [])[1];   // pvh: the team's open request names no view (an older page)
       if (safeId(sreq)) {

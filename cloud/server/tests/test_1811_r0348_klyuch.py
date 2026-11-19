@@ -26,6 +26,7 @@ from tests.helpers import Owner, ORIGIN, RP
 from tests_flow.helpers import set_settings
 from deus_witness import client as dwc
 from deus_witness.hook import main as thin, form
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def B(cmd):
@@ -127,7 +128,7 @@ class Stand:
         a = {"v": "deus-aar-0.1", "t": "allowance", "id": "al_" + b64.b32encode(os.urandom(16)).decode().rstrip("=")[:26],
              "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command", "commands": o["commands"], "project": o["project"],
              "nbf": o["t"], "exp": o["t"] + int(days or o.get("default_days") or 1) * 86400}
-        return self.owner.post("/api/allowances", rid=rid, envelope_b64=self.owner.sign(al.TYP, wa.cde(a)))
+        return viewkit.allow(self.owner, rid, a, al.TYP)[0]
 
 
 @pytest.fixture(scope="module")

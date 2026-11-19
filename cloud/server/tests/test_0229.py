@@ -20,6 +20,7 @@ from app.config import Config, ConfigError  # noqa: E402
 import wa_profile as wa  # noqa: E402
 import wq_profile as wq  # noqa: E402
 from svidetel_v4.state import approval_payload  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 from tests.helpers import FORM, ORIGIN, RP, H, act  # noqa: E402
 from tests.test_allowance_0210 import Dev  # noqa: E402
 
@@ -34,14 +35,16 @@ def wb_for(owner, items):
 
 def items_for(client, rid, rids):
     g = client.get("/api/approvals/" + rid).json()
-    return [hashlib.sha256(approval_payload(g["mandate"], g["action"], r, True)).digest() for r in [rid] + rids]
+    v = viewkit.page_view(g)                     # r0352: every item names the view the page showed
+    return [hashlib.sha256(approval_payload(g["mandate"], g["action"], r, True, v)).digest() for r in [rid] + rids]
 
 
 def approve_later(client, owner, rid, uses=2, hours=24, rids=None, items=None, env=None):
     exp = int(time.time()) + hours * 3600
     rids = rids if rids is not None else [R.make_rid(exp) for _ in range(uses)]
     env = env if env is not None else wb_for(owner, items if items is not None else items_for(client, rid, rids))
-    return owner.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(env), repeat={"rids": rids}), rids, env
+    return owner.post("/api/approvals/" + rid, approved=True, envelope_b64=wa.b64u(env), repeat={"rids": rids},
+                      **viewkit.claim(viewkit.answer(client, rid))), rids, env
 
 
 def expire(client, rid):
@@ -214,11 +217,12 @@ def test_0229_refusal_and_plain_wa_cannot_carry_repeat(client, owner):
     ag, hdr = night(owner)
     r = act(client, hdr, "publish", ARGS).json()
     g = client.get("/api/approvals/" + r["rid"]).json()
-    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False))
-    res = owner.post("/api/approvals/" + r["rid"], approved=False, envelope_b64=env, repeat={"rids": [R.make_rid(int(time.time()) + 3600)]})
+    v, cl = viewkit.page_view(g), viewkit.claim(g)      # r0352: over the view, so what is refused is the refusal / the plain wa
+    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False, v))
+    res = owner.post("/api/approvals/" + r["rid"], approved=False, envelope_b64=env, repeat={"rids": [R.make_rid(int(time.time()) + 3600)]}, **cl)
     assert res.status_code == 400
-    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], True))
-    res = owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=env, repeat={"rids": [R.make_rid(int(time.time()) + 3600)]})
+    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], True, v))
+    res = owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=env, repeat={"rids": [R.make_rid(int(time.time()) + 3600)]}, **cl)
     assert res.status_code == 409 and res.json()["error"] == "WB_MALFORMED"
 
 
@@ -258,6 +262,7 @@ def test_0229_queue_full_does_not_block_an_already_approved_call(client, owner):
     approve_later(client, owner, r["rid"], uses=1)
     expire(client, r["rid"])
     act(client, hdr, "publish", {"channel": "news", "text": "q"})           # one question waits: the queue is full
+    act(client, hdr, "publish", {"channel": "news2", "text": "q"})          # r0352: a high-risk question may take a reserved place (2): full now
     assert act(client, hdr, "publish", {"channel": "x", "text": "q"}).json()["reason"] == "APPROVAL_RATE"
     x = act(client, hdr, "publish", ARGS).json()                           # asks nothing: passes
     assert (x["verdict"], x["reason"]) == ("allow", "OK_APPROVED")

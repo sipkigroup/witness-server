@@ -27,7 +27,13 @@ def _draft(p, agent_id, form):
 def _appr_env(p, rid, approved=True):
     from svidetel_v4.state import approval_payload
     g = p.c.get("/api/approvals/" + rid).json()
-    return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved))
+    v = bytes.fromhex(g["view_sha256"]) if g.get("view_sha256") else None       # r0352: the page signs the view it is offered
+    return p.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, v))
+
+
+def _claim(p, rid):
+    g = p.c.get("/api/approvals/" + rid).json()
+    return {"view_sha256": g["view_sha256"]} if g.get("view_sha256") else {}
 
 
 def build(app, dest):
@@ -46,10 +52,10 @@ def build(app, dest):
     assert owner.sign_req(d2["req_id"]).json()["mandate_status"] == "active"
     big = act(owner.c, hdr2, "purchase", {"vendor": "v.example", "amount_cents": 80000}).json()
     assert big["reason"] == "ESCALATE_MONEY"
-    assert owner.post("/api/approvals/" + big["rid"], approved=True, envelope_b64=_appr_env(owner, big["rid"])).json()["verdict"] == "collecting"
-    assert bob.post("/api/approvals/" + big["rid"], approved=True, envelope_b64=_appr_env(bob, big["rid"])).json()["verdict"] == "allow"
+    assert owner.post("/api/approvals/" + big["rid"], **_claim(owner, big["rid"]), approved=True, envelope_b64=_appr_env(owner, big["rid"])).json()["verdict"] == "collecting"
+    assert bob.post("/api/approvals/" + big["rid"], **_claim(bob, big["rid"]), approved=True, envelope_b64=_appr_env(bob, big["rid"])).json()["verdict"] == "allow"
     no = act(owner.c, hdr2, "purchase", {"vendor": "v.example", "amount_cents": 90000}).json()
-    assert bob.post("/api/approvals/" + no["rid"], approved=False, envelope_b64=_appr_env(bob, no["rid"], False)).json()["verdict"] == "refused"
+    assert bob.post("/api/approvals/" + no["rid"], **_claim(bob, no["rid"]), approved=False, envelope_b64=_appr_env(bob, no["rid"], False)).json()["verdict"] == "refused"
     # batch of 3 publishes (the mandate has no publish section) -> one wb by the access signer
     pubs = [act(owner.c, hdr2, "publish", {"channel": "news", "text": "n %d" % i}).json() for i in range(3)]
     assert [p["reason"] for p in pubs] == ["ESCALATE_PUBLISH"] * 3, pubs
@@ -58,15 +64,16 @@ def build(app, dest):
     assert len(g) == 1 and sorted(g[0]["rids"]) == sorted(rids), g
     items = [wa.b64u_dec(x) for x in g[0]["items_approve_b64"]]
     ad, cd, der = carol.auth.get_assertion(wq.wb_challenge(items), RP, ORIGIN)
-    r = carol.post("/api/approvals/batch", rids=g[0]["rids"], approved=True, envelope_b64=wa.b64u(wq.make_wb(items, carol.auth.kid, ad, cd, der)))
+    r = carol.post("/api/approvals/batch", rids=g[0]["rids"], views=g[0].get("views"), approved=True, envelope_b64=wa.b64u(wq.make_wb(items, carol.auth.kid, ad, cd, der)))
     assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["allow"] * 3, r.text
     # held by the advisor, released by the access signer
     ctx.db.x("INSERT OR REPLACE INTO org_settings(account_id, advisor) VALUES(?, 'heuristic')", (owner.uid,))
     h = act(owner.c, hdr2, "send_email", {"to": "ann@acme.example", "subject": "visit", "body": ADDR}).json()
     assert (h["status"], h["reason"]) == ("held", "ADVISORY_HOLD"), h
     a = h["action"]
-    r = carol.post("/api/approvals/%s/release" % h["rid"], release=True,
-                   envelope_b64=carol.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True)))
+    gh = carol.c.get("/api/approvals/" + h["rid"]).json()                    # r0352: the release names the view it is offered
+    r = carol.post("/api/approvals/%s/release" % h["rid"], release=True, **_claim(carol, h["rid"]),
+                   envelope_b64=carol.sign(wq.TYP_RELEASE, wq.release_payload(h["rid"], a["args_sha256"], True, bytes.fromhex(gh["view_sha256"]))))
     assert r.json()["verdict"] == "allow", r.text
     # coverage declared by the proxy
     assert owner.c.post("/v1/coverage", json={"level": "C1", "unwitnessed": ["Bash"], "tool": "doctor-0.2", "pass_net_tools": []},

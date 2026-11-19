@@ -18,6 +18,7 @@ from tests.org_helpers import MSG_FORM, Person, ctx_of, team  # noqa: E402
 from tests.recovery_helpers import add_key, stepup_with  # noqa: E402
 from tests.test_allowance_0210 import Dev  # noqa: E402
 from tests_flow.helpers import set_settings  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def project(tmp_path):
@@ -186,8 +187,8 @@ def _laptop(person):
 
 def _approve_with(person, auth, rid, approved=True):
     g = person.c.get("/api/approvals/" + rid).json()
-    env = auth.sign_object(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved), RP, ORIGIN)
-    return person.post("/api/approvals/" + rid, approved=approved, envelope_b64=wa.b64u(env))
+    env = auth.sign_object(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, viewkit.page_view(g)), RP, ORIGIN)
+    return person.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(person.c, rid)), approved=approved, envelope_b64=wa.b64u(env))
 
 
 def test_laptop_key_confirms_project_commands_not_risky_actions(client, owner, tmp_path):

@@ -12,6 +12,7 @@ from tests.helpers import H, ORIGIN, RP
 from tests.test_0238_trial import Person, new_trial
 from tests.test_flow import act, setup_agent
 import wa_profile as wa
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 REAL_WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "web")
 BROWSER = {"sec-fetch-site": "same-origin", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty"}
@@ -91,13 +92,13 @@ def test_approval_sig_says_what_to_do(client, owner):
     r = act(client, hdr, "publish", {"channel": "b", "text": "t"}).json()
     g = client.get("/api/approvals/" + r["rid"]).json()
     from svidetel_v4.state import approval_payload
-    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False))     # signed "refuse", sent as approve
-    x = owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=wrong)
+    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False, viewkit.page_view(g)))     # signed "refuse", sent as approve
+    x = owner.post("/api/approvals/" + r["rid"], **viewkit.claim(viewkit.answer(owner.c, r["rid"])), approved=True, envelope_b64=wrong)
     j = x.json()
     assert x.status_code == 409 and j["error"] == "APPROVAL_SIG"                                 # still refused: the format is not relaxed
     assert "Nothing was approved" in j["detail"] and "Reload the page" in j["detail"]
     assert "clear-site-data" not in x.headers                                                    # not a browser request
-    y = client.post("/api/approvals/" + r["rid"], json={"approved": True, "envelope_b64": wrong}, headers=dict(BROWSER, **H, **{"x-dw-build": "x"}))
+    y = client.post("/api/approvals/" + r["rid"], json={"approved": True, "envelope_b64": wrong, **viewkit.claim(g)}, headers=dict(BROWSER, **H, **{"x-dw-build": "x"}))
     assert y.json()["error"] == "APPROVAL_SIG" and y.headers.get("clear-site-data") == '"cache"'
     assert owner.approve(r["rid"]).status_code == 200
 

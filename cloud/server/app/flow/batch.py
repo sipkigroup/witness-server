@@ -50,6 +50,62 @@ def outliers(ctx, account_id, ys, t=None):
     return {y["rid"] for y in money if y["amount"] > OUTLIER_X * ref}
 
 
+def all_outliers(ctx, account_id, ys, t=None):
+    """r0352: the money outliers and the publications / messages with a new link of ONE group."""
+    return outliers(ctx, account_id, ys, t) | link_outliers(ctx, account_id, ys, t)
+
+
+# r0352 (KAND-ACH-3, polygon A3: 20 posts to #news, the 13th a phishing link, approved with one signature of the batch): a publication or
+# a message whose text names a link or a domain the owner has not approved for this (agent, class, recipient) in HISTORY_S is offered
+# ALONE (its own page, its own decision) and never accepted in a batch with other items (BATCH_OUTLIER), as a money outlier is.
+TEXT_CLASSES = ("publish", "message", "disclosure")
+FILE_EXT = frozenset("txt md js mjs ts tsx jsx py json html htm css sh log csv yml yaml toml png jpg jpeg gif svg pdf zip gz tgz lock cfg ini "
+                     "xml rb go rs java kt swift cpp hpp env bak tmp sql db".split())
+_DOMAIN_RX = None
+
+
+def domains_of(text) -> set:
+    """Hosts a text names: in a URL (scheme://host) or bare (word.word.tld). Lower case, without "www."; a false positive only puts an
+    item on its own page (the safe way)."""
+    global _DOMAIN_RX
+    import re
+    if _DOMAIN_RX is None:
+        _DOMAIN_RX = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://)?((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62})(?![a-z0-9-])")
+    out = set()
+    for m in _DOMAIN_RX.finditer(str(text or "")[:8192]):
+        h = m.group(1).lower().rstrip(".")
+        bare = "://" not in m.group(0) and not h.startswith("www.")
+        if bare and h.rsplit(".", 1)[-1] in FILE_EXT:
+            continue                         # notes.txt, index.js: a file name, not a host (a URL with a scheme always counts)
+        out.add(h[4:] if h.startswith("www.") else h)
+    return out
+
+
+def _text_of(y):
+    try:
+        return (y["text_preview"] or "") + "\n" + (y["args_preview"] or "")
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def link_outliers(ctx, account_id, ys, t=None):
+    """rids of the publications / messages of ONE group (same _key) whose text names a domain not approved for that key in HISTORY_S."""
+    texts = [y for y in ys if y["class"] in TEXT_CLASSES]
+    if not texts:
+        return set()
+    marked = {y["rid"]: domains_of(_text_of(y)) for y in texts}
+    if not any(marked.values()):
+        return set()
+    t = store.now() if t is None else t
+    k = _key(texts[0])
+    seen = set()
+    for r in ctx.db.q("SELECT a.text_preview, a.args_preview FROM approvals p JOIN actions a ON a.rid=p.rid WHERE p.account_id=? AND p.approved=1 "
+                      "AND p.t>? AND a.agent_id=? AND a.class=? AND COALESCE(a.recipient,'')=? ORDER BY p.t DESC LIMIT 500",
+                      (account_id, t - HISTORY_S, k[0], k[1], k[2])):
+        seen |= domains_of(_text_of(r))
+    return {rid for rid, ds in marked.items() if ds - seen}
+
+
 def payloads(L, rids, approved, views=None):
     """-> [(rid, payload_bytes, sha256)] from the ledger state (the exact bytes Ledger.approve will check).
     pv2: views = [32 bytes per rid] (each item's own presentation hash inside its own approval payload) or None."""
@@ -88,16 +144,21 @@ def groups(ctx, acc):
         L = ctx.hub.ledger(acc["id"]) if rows else None
         chunks, outs = [], set()
         for k in sorted(by):
-            out_r = outliers(ctx, acc["id"], by[k])
+            out_r = all_outliers(ctx, acc["id"], by[k])
             outs |= out_r
             ys = [y for y in by[k] if y["rid"] not in out_r]
             chunks += [(k, ys[i:i + MAX_ITEMS]) for i in range(0, len(ys), MAX_ITEMS)]
             chunks += [(k, [y]) for y in by[k] if y["rid"] in out_r]
+        vof = getattr(ctx, "view_of", None)
         for k, chunk in chunks:
             rids = [y["rid"] for y in chunk]
-            ok = payloads(L, rids, True)
-            no = payloads(L, rids, False)
+            # r0352: the items to sign name each item's view (a batch without views is refused: VIEW_REQUIRED); views = what to claim
+            vs = [vof(acc, r) for r in rids] if vof is not None else None
+            vs = vs if vs is not None and all(isinstance(v, bytes) for v in vs) else None
+            ok = payloads(L, rids, True, vs)
+            no = payloads(L, rids, False, vs)
             out.append({"agent_id": k[0], "class": k[1], "recipient": k[2], "count": len(chunk), "rids": rids,
+                        **({"views": [v.hex() for v in vs]} if vs is not None else {}),
                         "outlier": len(chunk) == 1 and chunk[0]["rid"] in outs,
                         "items_approve_b64": [wa.b64u(h) for _, _, h in ok], "items_refuse_b64": [wa.b64u(h) for _, _, h in no],
                         "challenge_approve_b64": wa.b64u(wq.wb_challenge([h for _, _, h in ok])),
@@ -163,8 +224,9 @@ def _views(ctx, rids, views):
 def do_batch(ctx, acc, rids, approved, env, views=None, user_id=None):
     """pv2: views = the presentation hash of EACH item (the page builds each item's view from its own GET /api/approvals/{rid} and signs it
     inside that item's approval payload; the wb lists the hashes of those payloads). Checked under hub.lock against the rows, item by item,
-    before the first entry: one changed item refuses the whole batch (VIEW_CHANGED). No views (an older page): accepted as before, every
-    APPROVAL is marked "view not signed"; views claimed but not signed (or signed but not claimed) -> WB_ITEM."""
+    before the first entry: one changed item refuses the whole batch (VIEW_CHANGED). r0352 (KAND-ACH-1, polygon B8): no views while the
+    witness can build the view of an item -> 409 VIEW_REQUIRED (no "older page" any more: a go-between that cut view_sha256 out of ONE
+    item's answer made the page drop the views of the whole batch); views claimed but not signed (or signed but not claimed) -> WB_ITEM."""
     if isinstance(rids, list):
         rids = [canon_rid(r) for r in rids]
     if not isinstance(rids, list) or not rids or not all(isinstance(r, str) for r in rids) or len(set(rids)) != len(rids):
@@ -195,13 +257,18 @@ def do_batch(ctx, acc, rids, approved, env, views=None, user_id=None):
         if len(rows) >= 2 and not line:
             group = [A.refresh(ctx, y["rid"]) for y in ctx.db.q("SELECT rid FROM actions WHERE account_id=? AND status='pending_approval' AND agent_id=? "
                                                                   "AND class=? AND COALESCE(recipient,'')=?", (acc["id"],) + _key(rows[0]))]
-            bad = outliers(ctx, acc["id"], [y for y in group if y["status"] == "pending_approval"]) & {x["rid"] for x in rows}
+            bad = all_outliers(ctx, acc["id"], [y for y in group if y["status"] == "pending_approval"]) & {x["rid"] for x in rows}
             if bad:
                 raise Err(409, "BATCH_OUTLIER", sorted(bad)[0])
         policy = store.current_policy(ctx, acc["id"])
         acts = [json.loads(x["action_json"]) for x in rows]
         if any(needs_quorum(policy, a) for a in acts):
             raise Err(409, "BATCH_QUORUM", "an item needs k >= 2: approve it alone, by quorum")
+        if vs is None:                                                    # r0352: a decision without views, where the witness has them
+            req = getattr(ctx, "view_required", None)
+            if req is None or any(req(acc, x["rid"], user_id) for x in rows):
+                from app.signview import VIEW_REQUIRED_TEXT
+                raise Err(409, "VIEW_REQUIRED", VIEW_REQUIRED_TEXT)
         if vs is not None:                                                # pv2: each item's view = the rows' view now (same lock as the entries)
             vs = [ctx.view_match(acc, r, user_id, v) for r, v in zip(rids, vs)]
         L = ctx.hub.ledger(acc["id"])

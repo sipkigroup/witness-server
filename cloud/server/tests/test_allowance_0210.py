@@ -20,6 +20,7 @@ import wa_profile as wa  # noqa: E402
 from svidetel_v4.state import mandate_hash  # noqa: E402
 from tests.helpers import H, act  # noqa: E402
 from tests_flow.helpers import set_settings  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 DAY = 86400
 
@@ -58,8 +59,7 @@ class Dev:
         a = {"v": "deus-aar-0.1", "t": "allowance", "id": _id(), "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command",
              "commands": o["commands"], "project": o["project"], "nbf": o["t"], "exp": o["t"] + days * DAY}
         a.update(over)
-        env = self.o.sign(al.TYP, wa.cde(a))
-        res = self.o.post("/api/allowances", rid=rid, envelope_b64=env)
+        res, a = viewkit.allow(self.o, rid, a)       # r0352: signed over the view (the page's allowance.js)
         if res.status_code == 200:      # r1611: this helper stands for a rule signed WITH the text of trust (trust_v set); old rules: test_1611_kand1_migr_vpred
             self.c.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=? AND trust_v IS NULL", (a["id"],))
         return res, a
@@ -182,13 +182,14 @@ def test_signed_allowance_must_be_the_offered_one(client, owner, tmp_path):
     o = g["allowance_offer"]
     a = {"v": "deus-aar-0.1", "t": "allowance", "id": _id(), "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command",
          "commands": o["commands"], "project": o["project"], "nbf": o["t"], "exp": o["t"] + DAY}
+    a, cl = viewkit.with_allow_view(a, g)                  # r0352: over the view, so the wrong signature type is what is refused
     env = owner.sign(wa.TYP_APPROVAL, wa.cde(a))
-    res = owner.post("/api/allowances", rid=r["rid"], envelope_b64=env)
+    res = owner.post("/api/allowances", rid=r["rid"], envelope_b64=env, **cl)
     assert res.status_code == 409 and res.json()["error"] == "ALLOWANCE_SIG"
     # another tenant's request
     res, a = d.allowance(r["rid"], days=7)
     assert res.status_code == 200
-    res2 = owner.post("/api/allowances", rid=r["rid"], envelope_b64=owner.sign(al.TYP, wa.cde(a)))
+    res2 = viewkit.allow(owner, r["rid"], a, al.TYP)[0]
     assert res2.status_code == 409          # the request is answered already (no longer an unlisted question) or the id is taken
     assert d.verdicts("pytest") == [("Bash", "allow", "OK_ALLOWANCE")]
 
@@ -278,15 +279,15 @@ def test_the_browser_payload_is_accepted(client, owner, tmp_path):
     assert o["eligible"] and o["commands"] == ["cargo test"]
     web = os.path.join(CLOUD, "web", "js")
     script = ("import {allowancePayload, newAllowanceId} from %s; import {bytesToHex} from %s;"
-              "const [o, m] = JSON.parse(process.argv[1]); const id = newAllowanceId();"
-              "console.log(bytesToHex(await allowancePayload(o, m, 7, o.t + 0.5, id)));") % (
+              "const [o, m, v] = JSON.parse(process.argv[1]); const id = newAllowanceId();"
+              "console.log(bytesToHex(await allowancePayload(o, m, 7, o.t + 0.5, id, Uint8Array.from(v.match(/../g).map((x) => parseInt(x, 16))))));") % (
         json.dumps("file://" + os.path.join(web, "allowance.js")), json.dumps("file://" + os.path.join(web, "cde.js")))
-    hx = subprocess.run([node, "--input-type=module", "-e", script, json.dumps([o, g["mandate"]])], capture_output=True, text=True, timeout=60)
+    hx = subprocess.run([node, "--input-type=module", "-e", script, json.dumps([o, g["mandate"], viewkit.allow_view(g).hex()])], capture_output=True, text=True, timeout=60)
     assert hx.returncode == 0, hx.stderr
     payload = bytes.fromhex(hx.stdout.strip())
     a = cbor2.loads(payload)
     assert a["mandate"] == mandate_hash(wire.cbor_form(g["mandate"])) and a["exp"] == a["nbf"] + 7 * DAY and a["nbf"] == o["t"]
-    res = owner.post("/api/allowances", rid=r["rid"], envelope_b64=owner.sign(al.TYP, payload))
+    res = owner.post("/api/allowances", rid=r["rid"], envelope_b64=owner.sign(al.TYP, payload), **viewkit.claim(g))   # r0352: the view
     assert res.status_code == 200, res.text
     client.app.state.ctx.db.x("UPDATE allowances SET trust_v='tt-2' WHERE id=?", (a["id"],))     # r1611: stands for a rule signed with the text
     assert d.verdicts("cargo test") == [("Bash", "allow", "OK_ALLOWANCE")]

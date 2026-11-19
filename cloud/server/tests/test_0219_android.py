@@ -8,6 +8,7 @@ import re
 from tests.helpers import H, act
 from tests.test_flow import setup_agent
 import wa_profile as wa
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 APP = None
 
@@ -41,9 +42,9 @@ def test_last_used_not_moved_by_rejected_signature(client, owner):
     _reset(client, owner)
     g = client.get("/api/approvals/" + r["rid"]).json()
     from svidetel_v4.state import approval_payload
-    bad = approval_payload(g["mandate"], g["action"], r["rid"], False)       # signed for "refuse", sent as "approve"
+    bad = approval_payload(g["mandate"], g["action"], r["rid"], False, viewkit.page_view(g))       # signed for "refuse", sent as "approve"
     env = owner.sign(wa.TYP_APPROVAL, bad)
-    x = owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=env)
+    x = owner.post("/api/approvals/" + r["rid"], **viewkit.claim(viewkit.answer(owner.c, r["rid"])), approved=True, envelope_b64=env)
     assert x.status_code == 409
     assert _last_used(client) == [None]
 

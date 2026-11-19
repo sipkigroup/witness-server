@@ -73,7 +73,7 @@ def pub_setup(owner):
 
 def approval_env(owner, rid, approved=True):
     g = owner.c.get("/api/approvals/" + rid).json()
-    return g, owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved))
+    return g, owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rid, approved, viewkit.page_view(g)))
 
 
 # ------------------------------------------------------------------ 1. approve a held / pending call
@@ -82,7 +82,7 @@ def test_0237_1_agent_cannot_approve_pending(client, owner):
     rid = make_pending(client, owner, hdr)["rid"]
     g, good_env = approval_env(owner, rid)                      # the envelope the OWNER would send; the agent has only a copy of its own making
     before = snap(client)
-    pay = approval_payload(g["mandate"], g["action"], rid, True)  # the agent can build the exact payload from the public data it was told
+    pay = approval_payload(g["mandate"], g["action"], rid, True, viewkit.page_view(g))  # the agent can build the exact payload from the public data it was told
     for name, c, h in agent_variants(client, hdr):
         for env in (foreign_env(wa.TYP_APPROVAL, pay), "", "AAAA"):
             r = c.post("/api/approvals/" + rid, json={"approved": True, "envelope_b64": env}, headers=h)
@@ -150,12 +150,12 @@ def test_0237_1d_attacker_account_cannot_touch_victims_call(client, app, owner):
     ag, hdr, m = pub_setup(owner)
     rid = make_pending(client, owner, hdr)["rid"]
     g = owner.c.get("/api/approvals/" + rid).json()
-    pay = approval_payload(g["mandate"], g["action"], rid, True)
+    pay = approval_payload(g["mandate"], g["action"], rid, True, viewkit.page_view(g))
     evil = Owner(TestClient(app, base_url=ORIGIN)).register("Mallory")          # the agent registers an account of its own
     before = snap(client)
-    r = evil.post("/api/approvals/" + rid, approved=True, envelope_b64=evil.sign(wa.TYP_APPROVAL, pay))
+    r = evil.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(evil.c, rid)), approved=True, envelope_b64=evil.sign(wa.TYP_APPROVAL, pay))
     assert r.status_code == 404, r.text
-    r = evil.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=evil.sign(wq.TYP_RELEASE, wq.release_payload(rid, g["action"]["args_sha256"], True)))
+    r = viewkit.release(evil, rid, g["action"]["args_sha256"], True)
     assert r.status_code == 404, r.text
     assert evil.c.get("/api/approvals/" + rid).status_code == 404
     assert snap(client) == before and row(client, rid)["status"] == "pending_approval"
@@ -238,7 +238,7 @@ def test_0237_4_agent_cannot_create_repeat_approval(client, owner):
             assert ok_refused(rr), (name, rr.status_code, rr.text)
         assert ok_refused(c.post("/api/repeat-approvals/gid/revoke", json={}, headers=h))
     # owner session + the agent's passkey: refused as well
-    rr = owner.post("/api/approvals/" + rid, approved=True, envelope_b64=wb, repeat={"rids": offer.get("rids", reserved)})
+    rr = owner.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(owner.c, rid)), approved=True, envelope_b64=wb, repeat={"rids": offer.get("rids", reserved)})
     assert rr.status_code in (400, 409), rr.text
     assert snap(client) == before
     assert row(client, rid)["status"] == "pending_approval"
@@ -253,7 +253,7 @@ def test_0237_5_replay_old_approval_other_args(client, owner):
     a = make_pending(client, owner, hdr, text="release notes", channel="blog")
     ra = a["rid"]
     g, env_a = approval_env(owner, ra)
-    assert owner.post("/api/approvals/" + ra, approved=True, envelope_b64=env_a).json()["verdict"] == "allow"
+    assert owner.post("/api/approvals/" + ra, **viewkit.claim(viewkit.answer(owner.c, ra)), approved=True, envelope_b64=env_a).json()["verdict"] == "allow"
     ok = act(client, hdr, "publish", {"channel": "blog", "text": "release notes"}).json()
     assert ok["verdict"] == "allow" and ok["rid"] == ra
     # same text, other arguments (other channel / extra arg): a NEW question, not covered by the old approval
@@ -269,7 +269,7 @@ def test_0237_5_replay_old_approval_other_args(client, owner):
         for name, cl, h in agent_variants(client, hdr):
             r = cl.post("/api/approvals/" + rb, json={"approved": True, "envelope_b64": env_a}, headers=h)
             assert ok_refused(r), (name, r.status_code)
-        r = owner.post("/api/approvals/" + rb, approved=True, envelope_b64=env_a)
+        r = owner.post("/api/approvals/" + rb, **viewkit.claim(viewkit.answer(owner.c, rb)), approved=True, envelope_b64=env_a)
         assert r.status_code == 409, r.text
         assert row(client, rb)["status"] == "pending_approval"
         assert client.post("/v1/actions/%s/present" % rb, headers=hdr).json()["result"] == "reject"
@@ -278,7 +278,7 @@ def test_0237_5_replay_old_approval_other_args(client, owner):
     assert client.post("/v1/actions/%s/present" % ra, headers=hdr).json()["result"] == "accept"
     assert client.post("/v1/actions/%s/present" % ra, headers=hdr).json()["result"] == "reject"
     # a replayed envelope onto the already approved rid is refused too (no second approval row)
-    r = owner.post("/api/approvals/" + ra, approved=True, envelope_b64=env_a)
+    r = owner.post("/api/approvals/" + ra, **viewkit.claim(viewkit.answer(owner.c, ra)), approved=True, envelope_b64=env_a)
     assert r.status_code == 409, r.text
     assert snap(client)["approvals"] == before["approvals"]
 
@@ -311,8 +311,8 @@ def test_0237_6_toctou_args_changed_after_approval(client, owner):
     assert client.post("/v1/actions/%s/present" % p2["rid"], headers=hdr).json()["result"] == "reject"
     # (d) the approval of A refused for A' even when the owner's own client sends A's payload for A''s rid
     g2 = owner.c.get("/api/approvals/" + p2["rid"]).json()
-    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], p2["rid"], True))      # action of A, rid of A'
-    r = owner.post("/api/approvals/" + p2["rid"], approved=True, envelope_b64=wrong)
+    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], p2["rid"], True, viewkit.page_view(g)))      # action of A, rid of A'
+    r = owner.post("/api/approvals/" + p2["rid"], **viewkit.claim(viewkit.answer(owner.c, p2["rid"])), approved=True, envelope_b64=wrong)
     assert r.status_code == 409, r.text
     assert row(client, p2["rid"])["status"] == "pending_approval"
 
@@ -321,6 +321,7 @@ def test_0237_6_toctou_args_changed_after_approval(client, owner):
 # Policy v2 (tests/org_helpers.TEAM_RULES): approvals of money over 50000 need budget k=2 (owner Olga + Bob), the rest k=1.
 from tests.org_helpers import ctx_of as _octx, policy_hash_now, team, adopt, Person, TEAM_RULES, MSG_FORM  # noqa: E402
 from tests.test_quorum import msg_mandate, deferred_purchase, approval_env as q_env  # noqa: E402
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def team_snap(app, rid=None):
@@ -372,7 +373,7 @@ def test_0237_8_team_quorum_one_person_cannot_fill_it(app):
     for _ in range(2):
         r = owner.sign_req(sid)
         assert r.status_code == 409 and r.json()["error"] == "WQ_DUP_SIGNER", r.text
-        r = owner.post("/api/approvals/" + rid, approved=True, envelope_b64=q_env(owner, rid))
+        r = owner.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(owner.c, rid)), approved=True, envelope_b64=q_env(owner, rid))
         assert r.status_code == 409 and r.json()["error"] == "WQ_DUP_SIGNER", r.text
     # (b) the same person with ANOTHER passkey of his own (not a member's key in the policy): not a second signer
     new, cr = add_key(owner, label="laptop2")
@@ -388,7 +389,7 @@ def test_0237_8_team_quorum_one_person_cannot_fill_it(app):
     bob_other = q_env(bob, d2["rid"])
     r = bob.post("/api/sig-requests/" + sid, envelope_b64=bob_other)
     assert r.status_code == 409, r.text
-    r = bob.post("/api/approvals/" + rid, approved=True, envelope_b64=bob_other)
+    r = bob.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(bob.c, rid)), approved=True, envelope_b64=bob_other)
     assert r.status_code == 409, r.text
     assert collecting(app, sid) == ("collecting", 1)
     # (e) the owner's own first signature, replayed into the request of the other call
@@ -430,7 +431,7 @@ def test_0237_9_team_stale_request_after_threshold_or_membership_change(app):
     assert v == 3
     r = bob.post("/api/sig-requests/" + sid, envelope_b64=bob_env)
     assert r.status_code in (403, 409), r.text                                   # Bob left; the old request names a policy not in force
-    r = bob.post("/api/approvals/" + rid, approved=True, envelope_b64=bob_env)
+    r = bob.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(bob.c, rid)), approved=True, envelope_b64=bob_env)
     assert r.status_code in (403, 409), r.text
     assert collecting(app, sid)[0] != "done" and team_snap(app, rid)["status"] == "pending_approval" and team_snap(app)["approvals"] == 0
     # (c) a wq assembled by hand from the OLD quorum (owner + Bob, old policy hash) is refused by the approval path
@@ -438,7 +439,7 @@ def test_0237_9_team_stale_request_after_threshold_or_membership_change(app):
     acc = _octx(app).db.one("SELECT * FROM accounts WHERE id=?", (owner.uid,))
     g = owner.c.get("/api/approvals/" + rid)
     g = g.json()
-    pay = approval_payload(g["mandate"], g["action"], rid, True)
+    pay = approval_payload(g["mandate"], g["action"], rid, True, viewkit.page_view(g))
     old_hash = _octx(app).db.one("SELECT policy_hash FROM sig_requests WHERE id=?", (sid,))["policy_hash"]
     env = wq.make_wq(wa.TYP_APPROVAL, pay, bytes(old_hash), [owner.wsig(wa.TYP_APPROVAL, pay), bob.wsig(wa.TYP_APPROVAL, pay)])
     with pytest.raises(Exception) as e:
@@ -465,7 +466,7 @@ def test_0237_10_team_replaced_key_cannot_sign(app):
     for who in (bob, owner):                                      # from Bob's own session and from the owner's session
         r = who.post("/api/sig-requests/" + sid, envelope_b64=old_sig)
         assert r.status_code == 409, (who, r.text)
-        r = who.post("/api/approvals/" + rid, approved=True, envelope_b64=old_sig)
+        r = who.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(who.c, rid)), approved=True, envelope_b64=old_sig)
         assert r.status_code == 409, (who, r.text)
     for name, c, h in agent_variants(owner.c, hdr):
         assert ok_refused(c.post("/api/sig-requests/" + sid, json={"envelope_b64": old_sig}, headers=h)), name
@@ -501,7 +502,7 @@ def test_0237_11_team_operator_cannot_approve_own_agent(app):
     with pytest.raises(Exception):
         actions.approve_with_envelope(_octx(app), acc, rid, True, env)
     # the passkey of the agent's operator used from the AGENT's side or another member's session: not his key for that session
-    r = carol.post("/api/approvals/" + rid, approved=True, envelope_b64=q_env(bob, rid))
+    r = carol.post("/api/approvals/" + rid, **viewkit.claim(viewkit.answer(carol.c, rid)), approved=True, envelope_b64=q_env(bob, rid))
     assert r.status_code == 409, r.text
     assert team_snap(app, rid) == base and base["approvals"] == 0
     assert client_act(owner, hdr, 5000)["verdict"] == "defer"
@@ -612,7 +613,7 @@ def test_0237_13_trial_agent_cannot_claim_or_approve(client, app, tmp_path):
     evil.claim, evil.auth = et["claim"], mine
     assert evil.claim_it().status_code == 200
     for r_ in rs:
-        assert evil.post("/api/approvals/" + r_["rid"], approved=True, envelope_b64=evil.sign(wa.TYP_APPROVAL, b"x")).status_code == 404
+        assert evil.post("/api/approvals/" + r_["rid"], **viewkit.claim(viewkit.answer(evil.c, r_["rid"])), approved=True, envelope_b64=evil.sign(wa.TYP_APPROVAL, b"x")).status_code == 404
         assert evil.c.get("/api/approvals/" + r_["rid"]).status_code == 404
     assert all(x["status"] == "pending_approval" for x in rows(client, t["agent_id"]))
     # (f) the person claims; afterwards the old claim (replayed by anyone) and the agent's passkey are nothing

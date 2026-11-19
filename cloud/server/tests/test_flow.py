@@ -3,6 +3,7 @@ import json
 from tests.helpers import FORM, H, Owner, act
 from fastapi.testclient import TestClient
 import wa_profile as wa
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def setup_agent(owner, form=None, preset="demo"):
@@ -288,13 +289,13 @@ def test_approval_wrong_signature_codes(client, owner):
     r = act(client, hdr, "publish", {"channel": "b", "text": "t"}).json()
     g = client.get("/api/approvals/" + r["rid"]).json()
     from svidetel_v4.state import approval_payload
-    pay = approval_payload(g["mandate"], g["action"], r["rid"], True)
+    pay = approval_payload(g["mandate"], g["action"], r["rid"], True, viewkit.page_view(g))
     other = wa.SoftAuthenticator()
     env = wa.b64u(other.sign_object(wa.TYP_APPROVAL, pay, "localhost", "http://localhost:8810"))
-    assert owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=env).json()["error"] == "KEY_MISMATCH"
-    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False))     # signed "refuse", sent as approve
-    assert owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64=wrong).json()["error"] == "APPROVAL_SIG"
-    assert owner.post("/api/approvals/" + r["rid"], approved=True, envelope_b64="AAAA").json()["error"] == "WA_MALFORMED"
+    assert owner.post("/api/approvals/" + r["rid"], **viewkit.claim(viewkit.answer(owner.c, r["rid"])), approved=True, envelope_b64=env).json()["error"] == "KEY_MISMATCH"
+    wrong = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], r["rid"], False, viewkit.page_view(g)))     # signed "refuse", sent as approve
+    assert owner.post("/api/approvals/" + r["rid"], **viewkit.claim(viewkit.answer(owner.c, r["rid"])), approved=True, envelope_b64=wrong).json()["error"] == "APPROVAL_SIG"
+    assert owner.post("/api/approvals/" + r["rid"], **viewkit.claim(viewkit.answer(owner.c, r["rid"])), approved=True, envelope_b64="AAAA").json()["error"] == "WA_MALFORMED"
     ok = owner.approve(r["rid"])
     assert ok.status_code == 200
 

@@ -6,6 +6,7 @@ import cbor2
 from app.flow.wq import wq
 import wa_profile as wa
 from tests_flow.helpers import FORM, Owner, act, b64d, ledger_entries, set_policy, set_settings
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 
 def _defer_publish(client, hdr, n, channel="#team", tag="t"):
@@ -103,7 +104,7 @@ def test_1_twelve_publish_one_group_one_wb(client, owner, ctx):
     assert len(g) == 1 and g[0]["count"] == 12 and sorted(g[0]["rids"]) == sorted(rids)
     items = [b64d(x) for x in g[0]["items_approve_b64"]]
     env = owner.wb(items)
-    r = owner.post("/api/approvals/batch", rids=g[0]["rids"], approved=True, envelope_b64=env)
+    r = owner.post("/api/approvals/batch", rids=g[0]["rids"], views=g[0].get("views"), approved=True, envelope_b64=env)
     assert r.status_code == 200, r.text
     assert [x["verdict"] for x in r.json()["results"]] == ["allow"] * 12
     for rid in rids:
@@ -142,7 +143,7 @@ def test_batch_items_must_match_rids(client, owner, ctx):
     ag, hdr, rids = _twelve(client, owner, ctx, n=3)
     g = client.get("/api/approvals/groups").json()["groups"][0]
     items = [b64d(x) for x in g["items_approve_b64"]][:2]
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=owner.wb(items))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=owner.wb(items))
     assert (r.status_code, r.json()["error"]) == (409, "WB_ITEM")
     assert ctx.db.one("SELECT COUNT(*) AS n FROM approvals")["n"] == 0
 
@@ -151,7 +152,7 @@ def test_batch_foreign_key_refused(client, owner, ctx):
     ag, hdr, rids = _twelve(client, owner, ctx, n=3)
     g = client.get("/api/approvals/groups").json()["groups"][0]
     other = wa.SoftAuthenticator()
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=True, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]], auth=other))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=True, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]], auth=other))
     assert (r.status_code, r.json()["error"]) == (409, "KEY_MISMATCH")
     assert ctx.db.one("SELECT COUNT(*) AS n FROM approvals")["n"] == 0
 
@@ -159,7 +160,7 @@ def test_batch_foreign_key_refused(client, owner, ctx):
 def test_batch_refuse_all(client, owner, ctx):
     ag, hdr, rids = _twelve(client, owner, ctx, n=4)
     g = client.get("/api/approvals/groups").json()["groups"][0]
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=False, envelope_b64=owner.wb([b64d(x) for x in g["items_refuse_b64"]]))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=False, envelope_b64=owner.wb([b64d(x) for x in g["items_refuse_b64"]]))
     assert r.status_code == 200 and [x["verdict"] for x in r.json()["results"]] == ["refused"] * 4
     assert {x["status"] for x in ctx.db.q("SELECT status FROM actions WHERE rid IN (%s)" % ",".join("?" * 4), rids)} == {"refused"}
 
@@ -168,7 +169,7 @@ def test_batch_approve_items_cannot_refuse(client, owner, ctx):
     """A wb signed over the approve-payloads cannot be used to refuse (and the other way round)."""
     ag, hdr, rids = _twelve(client, owner, ctx, n=2)
     g = client.get("/api/approvals/groups").json()["groups"][0]
-    r = owner.post("/api/approvals/batch", rids=g["rids"], approved=False, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]]))
+    r = owner.post("/api/approvals/batch", rids=g["rids"], views=g.get("views"), approved=False, envelope_b64=owner.wb([b64d(x) for x in g["items_approve_b64"]]))
     assert (r.status_code, r.json()["error"]) == (409, "WB_ITEM")
 
 
@@ -186,7 +187,7 @@ def test_batch_rejects_non_wb_envelope(client, owner, ctx):
     ag, hdr, rids = _twelve(client, owner, ctx, n=1)
     g = client.get("/api/approvals/" + rids[0]).json()
     from svidetel_v4.state import approval_payload
-    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rids[0], True))
+    env = owner.sign(wa.TYP_APPROVAL, approval_payload(g["mandate"], g["action"], rids[0], True, viewkit.page_view(g)))
     r = owner.post("/api/approvals/batch", rids=rids, approved=True, envelope_b64=env)
     assert (r.status_code, r.json()["error"]) == (409, "WB_MALFORMED")
 

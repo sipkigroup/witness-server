@@ -25,6 +25,7 @@ from tests.helpers import Owner, ORIGIN, RP
 from tests_flow.helpers import set_settings
 from deus_witness import client as dwc
 from deus_witness.hook import main as thin, form
+from tests import viewkit  # noqa: E402  (r0352: decisions name the view)
 
 pytestmark = pytest.mark.standing
 
@@ -226,7 +227,7 @@ def _release_(st, rid):
     import wq_profile as wq
     g = st.tc.get("/api/approvals/" + rid).json()
     sha = g["action"]["args_sha256"]
-    r = st.owner.post("/api/approvals/%s/release" % rid, release=True, envelope_b64=st.owner.sign(wq.TYP_RELEASE, wq.release_payload(rid, sha, True)))
+    r = viewkit.release(st.owner, rid, sha, True)
     assert r.status_code == 200, r.text
     st.app.state.ctx.db.x("UPDATE actions SET updated_at=updated_at-5 WHERE agent_id=?", (st.ag["id"],))
 

@@ -41,8 +41,9 @@ def test_8_release_signature_bound(client, owner, ctx, warm_advisor):
     ag, hdr = _setup(client, owner, ctx)
     r = act(client, hdr, "publish", {"channel": "#team", "text": ADDR}).json()
     from app.flow.wq import wq
-    pay = wq.release_payload(r["rid"], r["action"]["args_sha256"], False)            # signed "reject", sent as "release"
-    x = owner.post("/api/approvals/%s/release" % r["rid"], release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay))
+    g = owner.c.get("/api/approvals/" + r["rid"]).json()                              # r0352: over the view, so the signature is what is refused
+    pay = wq.release_payload(r["rid"], r["action"]["args_sha256"], False, bytes.fromhex(g["view_sha256"]))   # signed "reject", sent as "release"
+    x = owner.post("/api/approvals/%s/release" % r["rid"], release=True, envelope_b64=owner.sign(wq.TYP_RELEASE, pay), view_sha256=g["view_sha256"])
     assert x.status_code == 409
     assert ctx.db.one("SELECT status FROM actions WHERE rid=?", (r["rid"],))["status"] == "held"
 

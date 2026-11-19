@@ -73,8 +73,10 @@ class Owner:
 
     def approve(self, rid, approved=True):
         g = self.c.get("/api/approvals/" + rid).json()
-        pay = approval_payload(g["mandate"], g["action"], rid, approved)
-        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, pay))
+        v = bytes.fromhex(g["view_sha256"]) if g.get("view_sha256") else None     # r0352: the page signs the view the witness offers
+        pay = approval_payload(g["mandate"], g["action"], rid, approved, v)
+        b = {"view_sha256": g["view_sha256"]} if v else {}
+        return self.post("/api/approvals/" + rid, approved=approved, envelope_b64=self.sign(wa.TYP_APPROVAL, pay), **b)
 
     def wb(self, items, auth=None):
         a = auth or self.auth
@@ -82,8 +84,11 @@ class Owner:
         return wa.b64u(wq.make_wb(items, a.kid, ad, cd, der))
 
     def release(self, rid, args_sha256, release):
-        pay = wq.release_payload(rid, args_sha256, release)
-        return self.post("/api/approvals/%s/release" % rid, release=release, envelope_b64=self.sign(wq.TYP_RELEASE, pay))
+        g = self.c.get("/api/approvals/" + rid).json()                          # r0352: the page signs the view the witness offers
+        v = bytes.fromhex(g["view_sha256"]) if g.get("view_sha256") else None
+        pay = wq.release_payload(rid, args_sha256, release, v)
+        b = {"view_sha256": g["view_sha256"]} if v else {}
+        return self.post("/api/approvals/%s/release" % rid, release=release, envelope_b64=self.sign(wq.TYP_RELEASE, pay), **b)
 
 
 def act(client, hdr, tool, args):

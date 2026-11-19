@@ -78,5 +78,6 @@ def ask(cmd):
 d, why = ask("echo hi")
 step(d == "allow", "echo hi -> %s %s" % (d, why[:120]))
 d, why = ask("rm -rf ~")
-step(d == "deny" and "ESCALATE_COMMAND_DANGER" in why, "rm -rf ~ -> %s %s" % (d, why[:160]))
+step(d == "deny" and ("ESCALATE_COMMAND_DANGER" in why or "FORBIDDEN_" in why),   # 18.11: с 0.2.139 rm -rf ~ = FORBIDDEN_WIPE (строже)
+     "rm -rf ~ -> %s %s" % (d, why[:160]))
 print("FULL CIRCLE OK")

@@ -101,7 +101,7 @@ jobs:
         run: |
           W=$(python -c "import os;print(os.getcwd())")
           mkdir -p "$W/run/data" "$W/run/secrets"
-          python -c "import secrets as s;open('$W/run/secrets/witness_ed25519','w').write(s.token_hex(32)+'\n');open('$W/run/secrets/key_pepper','w').write(s.token_hex(32))"
+          python -c "import secrets as s,sys,os;d=sys.argv[1];open(os.path.join(d,'witness_ed25519'),'w').write(s.token_hex(32)+'\n');open(os.path.join(d,'key_pepper'),'w').write(s.token_hex(32))" "$W/run/secrets"   # 18.11: путь аргументом — на Windows D:\a\… внутри кода давал \a
           export DW_DATA_DIR="$W/run/data" DW_WITNESS_KEY_FILE="$W/run/secrets/witness_ed25519" DW_KEY_PEPPER_FILE="$W/run/secrets/key_pepper" \
                  DW_RP_ID=localhost DW_ORIGIN=http://localhost:8787 DW_ISS=http://localhost:8787 DW_SECURE_COOKIE=0 DW_TRIAL=on DW_ANCHOR=off
           cd cloud/server

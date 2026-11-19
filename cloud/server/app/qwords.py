@@ -97,6 +97,13 @@ AUTOSTART_MARK = "autostart:"      # = hookjudge.bashparse.AUTOSTART + ":"
 LATER_LONG = ("This file is run later by another program, by itself, outside Witness: direnv runs .envrc when you enter the folder, git "
               "hook managers (.husky, pre-commit) run their scripts on commit, the editor runs its tasks, CI runs its workflows on push. "
               "Only \"Allow once\" is offered: this is never allowed from now on.")     # r0305 (W5)
+# r0353 («салями» через Makefile): a recipe of a task-runner file the person runs (make, just, task, npm run, tox, nox) -- under Details
+TASKRUN_LONG = ("The agent added a command to a file of tasks that you run yourself (make, just, task, npm run, tox or nox). It does more "
+                "than build the project: it runs a script, reaches the network or a place outside the project. It will run the next time "
+                "you run that task -- with your rights, outside Witness, without asking you. Only \"Allow once\" is offered.")
+# r0353 («передача человеку»): the agent was refused a step and wrote the same step into a file for the person to run
+HANDOFF_LONG = ("Witness already refused this step to the agent in this session. The agent now writes the same step into a file, so that "
+                "you would run it yourself -- outside Witness. Run it only if you want exactly that.")
 DEFENSE_MARK = "defense:"          # = hookjudge.bashparse.DEFENSE + ":" (r0305)
 DEFENSE_LONG = ("This switches off a protection your computer has against harmful programs: Gatekeeper or the quarantine mark on "
                 "downloaded files, System Integrity Protection, privacy permissions, the firewall, SELinux / AppArmor or antivirus. "
@@ -234,6 +241,9 @@ def _parse(x, action):
         return "host", _clean(rc[len("(network) "):])
     if tool == "Bash.net" or base in ("WebFetch", "WebSearch") or cls in ("disclosure", "message", "publish", "purchase"):
         return "host", _clean(rc.split("@", 1)[-1])
+    if cls == "command" and base in ("Write", "Edit", "MultiEdit", "NotebookEdit") and rc.startswith("autostart:"):
+        return "command", _clean(rc)                # r0353: a write the witness asks as a later run (actions.taskrun_write / handoff_write /
+        #                                             later_run_write / registry_write): the words of the danger, not "a dangerous command: autostart:.."
     if base in ("Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "NotebookRead") or cls in ("file", "delete"):
         return "path", _clean(rc)
     if cls == "command":
@@ -479,6 +489,33 @@ def _exec_member(x, k):
     return ej.get(k) if isinstance(ej, dict) else None
 
 
+def _handoff(x):
+    """r0353: exec_json "hf" of a question row (actions.handoff_write), or None"""
+    try:
+        ej = json.loads(x["exec_json"]) if "exec_json" in x.keys() and x["exec_json"] else None
+    except (TypeError, ValueError, KeyError, IndexError, AttributeError):
+        return None
+    hf = ej.get("hf") if isinstance(ej, dict) else None
+    return hf if isinstance(hf, dict) and isinstance(hf.get("at"), int) else None
+
+
+# r0353: the short harm of a handed-over step by its effect (sentences of the pinned vocabulary; the rest keeps the call's own harm)
+HANDOFF_HARM = {"persist": SCREEN["persist"], "sec": SCREEN["secret_to_host"], "net": NET_HARM}
+HANDOFF_WHO = {"refused": "You said No to", "denied": "Witness refused", "expired": "Nobody answered", "pending_approval": "Witness asked you about",
+               "held": "Witness held"}
+
+
+def handoff_line(hf, created_at=None):
+    """the line under Details: what was refused, how long ago, and that the agent wrote the same into a file for the person to run"""
+    mins = max(1, int(((created_at or hf["at"]) - hf["at"]) // 60)) if isinstance(created_at, int) else None
+    when = ("%d min ago" % mins) if mins is not None and mins < 120 else (("%d h ago" % (mins // 60)) if mins is not None else "earlier")
+    who = HANDOFF_WHO.get(hf.get("status"), "Witness refused")
+    what = "this step" + ((" (%s)" % _clean(str(hf.get("reason")), 64)) if hf.get("status") == "denied" and hf.get("reason") else "")
+    return ("Handed over to you: %s %s when the agent tried it %s (%s). Now the agent writes the same step into %s, so that you would run "
+            "it yourself -- outside Witness. Run it only if you want exactly that." % (who, what, when, _clean(str(hf.get("tool") or "a tool"), 40),
+                                                                                       _clean(str(hf.get("file") or "a file"), 200)))
+
+
 def _refused_before(x):
     """r0275: exec_json "rb" of a question row (provenance.refused_before), or None"""
     try:
@@ -715,7 +752,9 @@ def words(x):
                 f_ = re.split(r": which files land there is not known$| brings ", str(t)[len(AUTOSTART_COPY_MARK):], maxsplit=1)[0]
                 long_harm = AUTOSTART_COPY_LONG.format(t=_clean(f_, 160)) + ((" " + sl) if so else "")
             else:
-                long_harm = (AUTOSTART_LONG if "in an unknown directory" in str(t) else LATER_LONG) + ((" " + sl) if so else "")
+                long_harm = (AUTOSTART_LONG if "in an unknown directory" in str(t) else
+                             TASKRUN_LONG if "will run when you run " in str(t) else
+                             HANDOFF_LONG if "it wrote it into a file for you to run" in str(t) else LATER_LONG) + ((" " + sl) if so else "")
             dmark_ = _clean(t, 300)
         if kind == "command" and reason == "ESCALATE_COMMAND_DANGER" and str(t).startswith(DEFENSE_MARK):
             # r0305: an OS protection switched off (bashparse.DEFENSE). exec_json "df" {"pin"}: True = mr-vocab-5 or later pinned (or none);
@@ -860,6 +899,20 @@ def words(x):
             harm = _pv.words(rb_, x["created_at"] if "created_at" in x.keys() else None) or harm
             if risk_max([risk, "high"]) != risk:
                 risk = "high"
+        hf_line_ = None
+        hf_ = _handoff(x)
+        if hf_ is not None:
+            # r0353 («передача человеку», I006 / I106): a call of this agent with the same effect was refused (or asked) in this session;
+            # now the agent writes it into a file for the person to run. The short harm: the person's own No (vocabulary "refused_before")
+            # or the harm of that effect; the fact itself goes under Details. Built by the server from its own rows (actions.handoff_write).
+            from app import provenance as _pv
+            if hf_.get("status") == "refused":
+                harm = _pv.words(hf_, x["created_at"] if "created_at" in x.keys() else None) or harm
+            else:
+                harm = HANDOFF_HARM.get(hf_.get("key"), harm)
+            hf_line_ = handoff_line(hf_, x["created_at"] if "created_at" in x.keys() else None)
+            if risk_max([risk, "high"]) != risk:
+                risk = "high"
         d = []
         if long_harm and long_harm != harm:
             d.append("Why it matters: %s" % long_harm)
@@ -868,6 +921,8 @@ def words(x):
             d.append("Why Witness asks: %s" % why_)     # r0299: the mark in words (MARK_WORDS), never its internal name
         if dl_line_:
             d.append(dl_line_)
+        if hf_line_:
+            d.append(hf_line_)
         d.append("Tool: %s" % _clean(str(x["tool"] or "").split(".")[0], 80))     # r0264: "Bash", not the part code "Bash.danger"
         tp = x["text_preview"] if "text_preview" in x.keys() else ""
         if kind == "host" and up_ is not None:

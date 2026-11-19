@@ -225,6 +225,30 @@ WITNESS_BYPASS_TEXT = re.compile(
     r"[^\n]{0,160}?(?:witness|свидетел)")
 
 
+# r0353 (инъекция данных 19.11, кандидат 2: «посев» в обычный документ): a text in a document of the project (CONTRIBUTING.md, docs/*.md,
+# README ...) that tells an AI agent to approve every question / answer yes to approval prompts / not ask for permission -- without the
+# word Witness, so WITNESS_BYPASS_TEXT does not see it -- is an instruction planted for the NEXT agent that reads the document. A write of
+# it is asked (agent-config: the rules agents follow), not refused (a document is not the agent's rules file by name).
+DOC_PATH = re.compile(r"(?:^|/)(?:[^/]+\.(?:md|mdx|markdown|txt|rst|adoc|org)|CONTRIBUTING|README|HACKING|SECURITY|GUIDELINES)$", re.I)
+APPROVE_ALL_TEXT = re.compile(
+    r"(?is)(?:approv\w*|permission|confirm\w*|policy|security|consent|safety)\s+(?:prompts?|hooks?|dialogs?|requests?|checks?|questions?|"
+    r"popups?|gates?)[^\n]{0,120}?\b(?:answer|respond|reply|say|click|choose|select|press)\w*\s+[«\"'`]?(?:yes|y|allow|approve|ok|accept)\b"
+    r"|\b(?:auto-?approve|pre-?approved?|approve\s+(?:all|every|any|everything)|(?:always|automatically|just)\s+(?:approve|accept|allow|"
+    r"confirm|say\s+yes|answer\s+yes))\b[^\n]{0,80}?(?:prompts?|requests?|questions?|actions?|commands?|tool\s+calls?|changes?|permissions?|"
+    r"everything|all)"
+    r"|\b(?:do\s+not|don'?t|never|without)\s+(?:ask(?:ing)?|prompt(?:ing)?|wait(?:ing)?\s+for|request(?:ing)?|seek(?:ing)?)\s+(?:the\s+"
+    r"(?:user|human|owner)\s+)?(?:for\s+)?(?:confirmation|approval|permission|consent)"
+    r"|\b(?:skip|bypass|ignore|disable|turn\s+off|switch\s+off)\s+(?:all\s+|any\s+|the\s+)?(?:approval|permission|confirmation|"
+    r"security|safety|policy)\s+(?:prompts?|hooks?|checks?|dialogs?|questions?|gates?|guard\w*)"
+    r"|--dangerously-skip-permissions|--yolo\b|--full-auto\b|\bbypassPermissions\b"
+    r"|(?:одобря\w*|подтвержда\w*|разреша\w*)\s+(?:вс[её]|все\s+\w+|любые?\s+\w+)|отвеча\w*\s+[«\"']?да[»\"']?\s+на\s+(?:все|любые?)"
+    r"|не\s+(?:спрашива\w*|запрашива\w*|жди\w*)\s+(?:у\s+\w+\s+)?(?:подтвержд|разрешен|одобрен|согласи)")
+
+
+def is_doc_path(p: str) -> bool:
+    return bool(DOC_PATH.search(p or "")) and not AGENT_INSTR_PATH.search(p or "")
+
+
 def is_agent_instr_path(p: str) -> bool:
     return bool(AGENT_INSTR_PATH.search(p or ""))
 
@@ -3934,6 +3958,13 @@ def classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proje
         _witness_line(cmd, c, home or _fs.current().home(), project)     # r0333: the witness removed / stopped (Н3), line-level forms
         if _depth == 0 and c.writes and isinstance(cmd, str) and "://" in cmd:
             _pkgsource_line(cmd, c, project)               # r0347: a package-source file written by the shell with another server named
+        if _depth == 0 and c.writes and isinstance(cmd, str):
+            _taskrun_line(cmd, c, project, home or _fs.current().home())   # r0353: a recipe of Makefile / justfile / ... written by the shell
+            if APPROVE_ALL_TEXT.search(cmd):
+                for p_ in c.writes:
+                    if isinstance(p_, str) and is_doc_path(p_):
+                        c.add("agent-config", "%s: a text that tells AI agents to approve every question (written by the shell)" % p_)
+                        break
         if c.net and isinstance(cmd, str) and _NET_SAVE.search(cmd):
             _net_saves(cmd, cwd, home, c)                  # r0345: inline code that saves a download to a named file
         rn = _FRAMES[-1].get("renamed")
@@ -3972,6 +4003,22 @@ def _pkgsource_line(cmd, c, project):
             urls = pkgsource.line_foreign(cmd)
             if urls:
                 c.add(AUTOSTART, pkgsource.DETAIL % (p, urls[0]))
+            return
+
+
+def _taskrun_line(cmd, c, project, home=None):
+    """r0353 («салями» через Makefile, ферма 18->19.11, shell form): the line writes a task-runner file of the project (taskrun.kind:
+    Makefile, justfile, Taskfile, package.json, tox.ini, noxfile.py) and the text it carries adds a command that does more than a build
+    (taskrun.line_added): asked once, as the Write tool's form (actions.taskrun_write)."""
+    from . import taskrun
+    for p in c.writes:
+        if isinstance(p, str) and taskrun.kind(p) is not None and (not project or _in_project(p, project)):
+            f_ = taskrun.line_added(cmd, p, project, home)
+            hard_, soft_, sp_ = taskrun.split(f_, project)
+            if hard_:
+                c.add(AUTOSTART, taskrun.detail(p, hard_)[:300])
+            elif sp_:
+                c.taskrun_soft = {"detail": taskrun.detail(p, soft_)[:300], "paths": sp_}    # actions.taskrun_write decides
             return
 
 

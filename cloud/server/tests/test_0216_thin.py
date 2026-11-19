@@ -115,9 +115,16 @@ def _thin_parts(loc, ev, env):
     return ("parts", [(m.tool, _strip_sizes(m.args), m.summary) for m in r[1]])
 
 
+NEW_0353_KEYS = ("carries", "taskrun")      # r0353: facts of a write's text (handoff.carried / taskrun.added) + the project they need
+
+
 def _strip_sizes(args):
-    """0.2.22: the thin hook adds the optional `exec.sizes`. It is not in the 0.2.15 reference, so it is removed before the comparison
+    """r0353: the facts of a write's text (`carries`, `taskrun`, and the `project` mapping puts next to them) are not in the 0.2.15
+    reference: taken off first (what they decide is compared end to end: only ever stricter).
+    0.2.22: the thin hook adds the optional `exec.sizes`. It is not in the 0.2.15 reference, so it is removed before the comparison
     - but first checked on its own: same keys as `files`, non-negative integers (bool is not an integer here)."""
+    if isinstance(args, dict) and isinstance(args.get("_witness"), dict) and any(k in args["_witness"] for k in NEW_0353_KEYS):
+        args = dict(args, _witness={k: v for k, v in args["_witness"].items() if k not in NEW_0353_KEYS + ("project",)})
     ex = args.get("_witness", {}).get("exec") if isinstance(args, dict) and isinstance(args.get("_witness"), dict) else None
     if isinstance(ex, dict) and "gitcfg" in ex:
         # 0.2.46: the thin hook (0.2.33) adds `exec.gitcfg` with its own reader; it must equal the server's reference reader on this project
@@ -536,10 +543,22 @@ def test_same_decisions_as_0215_end_to_end(ref, tmp_path, monkeypatch):
             for ev in chunk:
                 out[side].append(_norm(judge(ev, st, witness=w)))
     rank = {"allow": 0, "ask": 1, "deny": 2}
-    diff, lw, rt, n90, n91 = [], 0, 0, 0, 0
+    diff, lw, rt, n90, n91, n353 = [], 0, 0, 0, 0, 0
     for i, (a, b) in enumerate(zip(out["fat"], out["thin"])):
         if a == b:
             continue
+        inp0 = lines[i]["tool_input"]
+        if a[0] == "allow" and b[0] == "ask" and isinstance(inp0.get("file_path"), str):
+            # r0353: a write whose new text adds a recipe the person's make / npm run runs (taskrun), or carries a step this session
+            # refused (handoff): asked now, never allowed where 0.2.15 asked -- only when the server's own facts say so
+            from app.hookjudge import handoff as _ho, taskrun as _tr
+            nt_, ot_ = _tr.written_text(lines[i]["tool_name"], inp0)
+            if _tr.added(inp0["file_path"], nt_, ot_, proj) or _ho.carried(inp0["file_path"], nt_, proj, os.environ.get("HOME", "/")):
+                n353 += 1
+                continue
+        if n353 and a[0] == b[0] == "ask" and "ESCALATE_EXEC_CHANGED" in a[1] and re.search(r"ESCALATE_(EXEC_CHANGED|COMMAND)\b", b[1]):
+            n353 += 1                                 # r0353: after such a write was asked (not run) the files a later command runs
+            continue                                  # changed differently: the same question, another reason / file list
         if b[0] == "ask" and "agent-config" in b[1] and rank.get(b[0], 3) >= min(rank.get(a[0], 3), 1):
             n91 += 1                                  # 0.2.91: the K1 finding asked by the witness: a question, never an allow
             continue
@@ -584,6 +603,7 @@ def test_same_decisions_as_0215_end_to_end(ref, tmp_path, monkeypatch):
     assert rt <= 10, rt
     assert n90 <= len(lines) // 3, (n90, len(lines))
     assert n91 <= 20, n91
+    assert n353 <= 30, n353
     for d, _ in out["thin"]:
         stats[d] = stats.get(d, 0) + 1
     # the set is not trivial: every kind of answer occurs, and nothing hostile of the fatigue set runs unasked

@@ -2224,6 +2224,9 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if hit_ is not None and hit_[2] and row.get("taint") is None:
             row["taint"] = TAINT_SEEN_IF_ALLOWED      # the agent sees the credential's text: "secret seen" once it runs (0.2.24)
         fx_ = provenance.effect_keys(tool, act, args) + (["sec:" + hit_[1]] if hit_ is not None and hit_[2] else [])
+        trs_ = (args.get("_witness") or {}).get("taskrun_soft") if isinstance(args, dict) and isinstance(args.get("_witness"), dict) else None
+        if isinstance(trs_, dict) and isinstance(trs_.get("paths"), list):
+            fx_ = fx_ + ["recipe:" + p_ for p_ in trs_["paths"] if isinstance(p_, str)][:16]     # r0353: the scripts a recipe runs
         if fx_:
             row["fx_keys"] = json.dumps(fx_, ensure_ascii=False)       # r0275: what the call does, kept to recognise it under another tool
         if tm.unmapped_args(toolmap, tool, args):
@@ -2451,11 +2454,13 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         # 11.11 (r0261, поворот: ЗАКРЫТЫЙ СПИСОК): under a fresh strict fact (and the code option) a Bash line is decided by ONE table,
         # hookjudge/strict_policy.py: an immutable article -> refused (below, constitution), a reason of the list -> asked (the line's
         # command part), anything else -> every part the core would ask about runs as sandboxed (OK_SANDBOXED). Outside the fact: unchanged.
+        hf_ = None
         if m is not None and L is not None:
             # r0296: a quiet outside write after the owner's No / not a data file under the profile -> asked (before the strict step:
             # under a strict fact the line is then held by the sandbox, as without the profile)
             act = refused_outside_write(ctx, agent["id"], L, m["id"], act, tnow, t0, tool, args, ameta)
             used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
+            act, hf_ = handoff_write(ctx, agent["id"], L, m["id"], act, tnow, t0, tool, args)     # r0353: refused, then handed over
             act = unlisted_allow_gate(L, m["id"], act, tool, args, tnow)     # r0305
         sv_ = None
         if m is not None and L is not None and isinstance(tool, str) and tool.startswith("Bash") and not al.team(ctx, acc) \
@@ -2474,6 +2479,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if m is not None and L is not None and tool in strict_policy.FILE_TOOLS and not al.team(ctx, acc):
             act = later_run_write(L, m["id"], act, tool, args, tnow)     # r0305 (W5): .envrc, .husky, CI ... outside the strict session
             act = registry_write(L, m["id"], act, tool, args, tnow)      # r0347: a package source of the project moved to another server
+        if m is not None and L is not None and (tool in strict_policy.FILE_TOOLS or tool == "Bash.write") and not al.team(ctx, acc):
+            act = taskrun_write(ctx, agent["id"], L, m["id"], act, tool, args, tnow)   # r0353: a recipe the person's `make` runs
         if m is not None and L is not None and tool in strict_policy.FILE_TOOLS:
             # r0261f (0.2.59): a file in the shared temp the mandate does not name is asked once, not refused RESOURCE with no button
             act = strict_policy.temp_write_ask(L, m["id"], act, tool, args, tnow)
@@ -2733,6 +2740,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                                                              # exit is held for the owner, never OK_UNSPECIFIED under "allowed by default"
         if (gate is not None and gate[0] == "hold") or (gate is None and dv == "defer" and rp is None):
             _mark_refused_before(ctx, agent, row, act, args, t0, hit_)     # r0275: the owner refused the same effect through another call
+            _mark_handoff(row, hf_)                                    # r0353: what was refused, written into a file for the person
             _mark_net_code(ctx, agent, row, act, args, t0, m)          # r0294: the line runs code downloaded in this session
             _mark_autostart(ctx, row, act, m)                          # r0298: autostart in an unknown folder: which words the mandate pinned
             _mark_defense(ctx, row, act, m)                            # r0305: an OS protection switched off (asked only as a strict doubt)
@@ -2912,6 +2920,121 @@ def registry_write(L, mid, act, tool, args, now):
     except Exception:      # noqa: BLE001  fail closed: asked
         log("ERROR", "registry write check failed")
         return dict(act, dangerous=True)
+
+
+HANDOFF_STATUSES = ("refused", "denied", "pending_approval", "held", "expired")
+
+
+def handoff_write(ctx, agent_id, L, mid, act, now, t0, tool, args):
+    """r0353 («передача человеку», инъекция данных 19.11 I006 / I106): the agent's call was refused (by the owner or by Witness) or asked
+    within provenance.REFUSED_WINDOW_S, and now it writes a file whose text carries a step with the same effect (mapping `_witness.carries`,
+    hookjudge/handoff.carried: the written script / code / document read as the program that would run it) -- e.g. `echo .. >> ~/.zshrc`
+    refused FORBIDDEN_AUTOSTART, then `Write setup_dev_sync.sh` with that line and "please run this script yourself". The write is ASKED
+    (marked dangerous, so no list covers it) and the question says why (exec_json "hf": qwords). Only narrows: an allow becomes a
+    question; an owner's "from now on" stays. -> (act, hf or None)."""
+    w = args.get("_witness") if isinstance(args, dict) else None
+    cr = w.get("carries") if isinstance(w, dict) else None
+    if not isinstance(act, dict) or not isinstance(cr, dict) or "allowance" in act or act.get("dangerous") is True \
+            or act.get("sandboxed") is True:
+        return act, None
+    try:
+        prj = w.get("project") if isinstance(w.get("project"), str) else (al.project_meta(args) or {}).get("project")
+        keys = [k for k in provenance.effect_keys("Bash", None, {"_witness": {"danger": cr.get("danger") or [], "net": cr.get("net") or [],
+                                                                          "writes": cr.get("writes") or [], "project": prj}})
+                if not k.startswith("wrote:")]
+        if not keys:
+            return act, None
+        keys.sort(key=lambda k_: {"persist": 0, "sec": 1, "net": 2, "exit": 3}.get(k_.split(":", 1)[0], 4))    # the sharpest effect first
+        rows = ctx.db.q("SELECT rid, tool, status, reason, fx_keys, updated_at FROM actions WHERE agent_id=? AND created_at>? AND status IN (%s) "
+                        "AND fx_keys IS NOT NULL ORDER BY rowid DESC LIMIT 300" % ",".join("?" * len(HANDOFF_STATUSES)),
+                        (agent_id, t0 - provenance.REFUSED_WINDOW_S) + HANDOFF_STATUSES)
+        hit = None
+        for r in rows:
+            try:
+                rk = json.loads(r["fx_keys"])
+            except (TypeError, ValueError):
+                continue
+            for k in keys:
+                if any(isinstance(q, str) and not q.startswith("wrote:") and provenance._same(k, q) for q in (rk if isinstance(rk, list) else [])):
+                    hit = {"rid": r["rid"], "at": r["updated_at"], "tool": (r["tool"] or "").split(".", 1)[0], "key": k.split(":", 1)[0],
+                           "status": "refused" if r["reason"] == "REFUSED" else r["status"], "reason": (r["reason"] or "")[:64],
+                           "file": (w.get("path") if isinstance(w.get("path"), str) else ", ".join((w.get("writes") or [])[:2]))[:300]}
+                    break
+            if hit:
+                break
+        if hit is None or L.S.decide_for(mid, act, now)[1] != "allow":
+            return act, None
+        b = dict(act, dangerous=True)
+        if L.S.decide_for(mid, b, now)[1] == "defer":
+            return b, hit
+        from app.hookjudge.bashparse import AUTOSTART as _AS
+        c = dict(act, **{"class": "command"}, recipient=(_AS + ":" + HANDOFF_DETAIL % hit["file"])[:300], dangerous=True)
+        c.pop("reversible", None)
+        c.pop("sandboxed", None)
+        return (c, hit) if L.S.decide_for(mid, c, now)[1] == "defer" else (act, None)
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "handoff write check failed")
+        return dict(act, dangerous=True), None
+
+
+HANDOFF_DETAIL = "Witness already refused this to the agent; it wrote it into a file for you to run (write to %s)"
+
+
+def _mark_handoff(row, hf):
+    if not isinstance(hf, dict):
+        return
+    try:
+        ej_ = json.loads(row["exec_json"]) if row.get("exec_json") else {}
+        if isinstance(ej_, dict):
+            ej_["hf"] = hf
+            row["exec_json"] = json.dumps(ej_, ensure_ascii=False)
+    except (TypeError, ValueError):
+        log("ERROR", "handoff mark not made", rid=row.get("rid"))
+
+
+def taskrun_write(ctx, agent_id, L, mid, act, tool, args, now):
+    """r0353 («салями» через Makefile, ферма 18->19.11: 51 из 825 цепочек молча): a write of a task-runner file of the project (Makefile /
+    *.mk, justfile, Taskfile.yml, package.json scripts, tox.ini, noxfile.py; Write / Edit / MultiEdit or the shell's write part) whose NEW
+    text adds a recipe command the person's next `make` / `just` / `npm run` runs outside Witness:
+      - hard (hookjudge/taskrun: the network, outside the project, a start-up place, a hidden text, a program left running): asked once
+        (mapping `_witness.taskrun`; the shell form is the danger `autostart` of the line itself);
+      - soft (a script / program of the project: `./sync.sh`, `sh scripts/x.sh`, `node t.js`): asked when THIS agent wrote that file
+        (agent_written, no age: the composition of the chain), else silent as before (Constitution П2: build files change silently) with
+        the key "recipe:<path>" on the row -- a later write of that file by the agent is asked (the same composition, other order).
+    The danger `autostart` with its own detail ("the agent added a command that will run when you run make: ..."): the pinned vocabulary
+    is unchanged ("a file that starts commands by itself", only "Allow once"). Only an allowed write is turned into a question."""
+    from app.hookjudge.bashparse import AUTOSTART as _AS
+    w = args.get("_witness") if isinstance(args, dict) else None
+    if not isinstance(act, dict) or "allowance" in act or not isinstance(w, dict) or act.get("dangerous") is True:
+        return act
+    try:
+        prj = w.get("project") if isinstance(w.get("project"), str) else None
+        det = w.get("taskrun") if isinstance(w.get("taskrun"), str) and not w.get("danger") and prj else None
+        sf = w.get("taskrun_soft") if isinstance(w.get("taskrun_soft"), dict) and prj else None
+        if det is None and sf is not None:
+            aw = agent_written(ctx, agent_id, WA_MARK_SINCE)
+            mine = [p for p in sf.get("paths") or [] if isinstance(p, str) and p in aw and not aw[p].get("signed")]
+            if mine:
+                det = str(sf.get("detail") or "")[:300]
+        if det is None:
+            for p in agent_write_paths(tool, args)[:8]:
+                r = ctx.db.one("SELECT rid FROM actions WHERE agent_id=? AND instr(fx_keys, ?) > 0 AND status IN (%s) ORDER BY rowid DESC LIMIT 1"
+                               % ",".join("?" * len(SEEN_STATUSES)), (agent_id, json.dumps("recipe:" + p, ensure_ascii=False)) + SEEN_STATUSES)
+                if r is not None:
+                    det = (TASKRUN_SCRIPT_DETAIL % p)[:300]
+                    break
+        if det is None or L.S.decide_for(mid, act, now)[1] != "allow":
+            return act
+        b = dict(act, **{"class": "command"}, recipient=(_AS + ":" + det)[:300], dangerous=True)
+        b.pop("reversible", None)
+        b.pop("sandboxed", None)
+        return b if L.S.decide_for(mid, b, now)[1] == "defer" else act
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "task-runner write check failed")
+        return dict(act, dangerous=True)
+
+
+TASKRUN_SCRIPT_DETAIL = "the agent writes a script that a command it added will run when you run make or npm run (write to %s)"
 
 
 # r0323 (Р-1511 закон неизвестного кода, (1) и (2)): `unlisted: "allow"` lets through what the owner did not list -- never code the agent

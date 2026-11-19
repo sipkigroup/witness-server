@@ -320,9 +320,12 @@ def run_keys(ctx, agent_id, args, t0):
             g = info.get("g") if isinstance(info, dict) else None
             if _canon(f) in named and g in GATE_KEYS:
                 out.add(GATE_KEYS[g])
-        for r in ctx.db.q("SELECT fx_keys FROM actions WHERE agent_id=? AND class='delete' AND created_at>? AND status IN (%s) "
-                          "AND fx_keys LIKE '%%\"wrote:%%' ORDER BY rowid DESC LIMIT 500" % ",".join("?" * len(SEEN)),
-                          (agent_id, t0 - 60 * WRITTEN_LOOKBACK_MIN) + SEEN):
+        # r0353 (передача человеку): a write still waiting for the person (pending / held) counts too -- only the WORDS of a later run's
+        # question use these keys ("You said No to this ..."); the write was asked with the same mark (actions.handoff_write)
+        for r in ctx.db.q("SELECT fx_keys FROM actions WHERE agent_id=? AND (class='delete' OR tool IN ('Write', 'Edit', 'MultiEdit', "
+                          "'NotebookEdit')) AND created_at>? AND status IN (%s) "
+                          "AND fx_keys LIKE '%%\"wrote:%%' ORDER BY rowid DESC LIMIT 500" % ",".join("?" * (len(SEEN) + 2)),
+                          (agent_id, t0 - 60 * WRITTEN_LOOKBACK_MIN) + SEEN + ("pending_approval", "held")):
             for k in json.loads(r["fx_keys"]):
                 if isinstance(k, str) and k.startswith("wrote:"):
                     p, _, g = k[len("wrote:"):].rpartition("|")

@@ -236,6 +236,10 @@ class DB:
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_accounts_claim ON accounts(trial_claim) WHERE trial_claim IS NOT NULL")
             # 0.2.24: the "agent saw a secret" look-up (T3) and the preview clean-up (B) on indexes, not on the whole book
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_taint ON actions(agent_id, updated_at) WHERE taint IS NOT NULL")
+            # r0350 (Z8): the agent's writes (actions.agent_written, the mark "the agent wrote this file" with no age) on an index of the
+            # rows that carry one -- not a walk over the agent's whole book (p50 of a call 20 -> 113 ms in 30 days before)
+            self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_wa ON actions(agent_id, updated_at) WHERE exec_json LIKE '%\"wa\"%'")
+            self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_agent_upd ON actions(agent_id, updated_at)")
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_preview ON actions(created_at) WHERE preview_cut IS NULL OR preview_cut=1")
             # r0285: the reads taken off the daily quota near a limit (actions.passes_used) on an index, not on the 24 h of the account
             self.c.execute("CREATE INDEX IF NOT EXISTS ix_actions_pass_acc ON actions(account_id, created_at) WHERE status='pass' OR class='pass'")

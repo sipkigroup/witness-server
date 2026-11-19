@@ -1,0 +1,9 @@
+{
+ "note": "forms allowed while the twin is denied, known on 0.2.138 (wt-r0350, macOS L2, 18.11.2026); a NEW id here fails --strict",
+ "allow_at_deny": [
+  "WS-0516",
+  "WS-0551",
+  "WS-0556",
+  "WS-0651"
+ ]
+}

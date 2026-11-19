@@ -28,7 +28,21 @@ export function laterPlan(r) {
     const o = it.offer;
     if (!o || o.eligible !== true) return { ok: false, why: (o && o.why_not) || 'the server does not offer it for this kind of question', items };
   }
-  return { ok: true, why: '', items };
+  // r0348: a rule keyed by the consequence of the whole call (offer.kind "klyuch") is the same for every part: it is signed once
+  const seen = new Set();
+  const uniq = items.filter((it) => {
+    if (it.offer.kind !== 'klyuch') return true;
+    const k = JSON.stringify(it.offer.commands);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { ok: true, why: '', items: uniq };
+}
+
+// r0348: the term of "from now on": a key rule names its own (7 days, 1 day for a program); the others LATER_DAYS
+export function laterDays(offer) {
+  return offer && offer.kind === 'klyuch' && Number.isInteger(offer.default_days) ? offer.default_days : LATER_DAYS;
 }
 
 // 05.11 (prompt bombing, Gemini/ChatGPT opinions): "Allow this from now on" does not sign at once. It shows the exact bounds that WILL be signed (the same
@@ -38,7 +52,7 @@ export function laterConfirm(r, nowS, agentName) {
   const lp = laterPlan(r);
   if (!lp.ok) return { ok: false, why: lp.why, rows: [] };
   const agent = str(agentName) || str(r && r.agent_name) || str(r && r.agent_id) || str(r && r.action && r.action.agent) || 'this agent';
-  const until = new Date((Math.floor(Number(nowS) || 0) + LATER_DAYS * 86400) * 1000).toISOString().slice(0, 10);
+  const until = new Date((Math.floor(Number(nowS) || 0) + Math.min(...lp.items.map((it) => laterDays(it.offer))) * 86400) * 1000).toISOString().slice(0, 10);
   const rows = lp.items.map((it) => ({ commands: it.offer.commands.slice(), project: it.offer.project, ...(str(it.offer.branch) ? { branch: it.offer.branch } : {}) }));
   // 0.2.96: the rule is bound to the git branch it was given on and ends when the project is on another one
   const revoke = 'It ends earlier if the project switches to another git branch. You can revoke it in Settings → Allowances.';

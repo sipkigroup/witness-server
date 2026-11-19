@@ -51,7 +51,7 @@ def test_text_that_may_run_keeps_its_mark(cmd):
 
 
 @pytest.mark.parametrize("cmd,pred", [
-    ("grep -rn \"rm -rf $HOME\" src; rm -rf \"$HOME\"", "rm-rf:$HOME"),
+    ("grep -rn \"rm -rf $HOME\" src; rm -rf \"$HOME\"", "rm-rf:/Users/u"),     # r0350: "$HOME" = ~ (the home folder by its path)
     ("grep 'rm -rf' x && rm -rf ~/Documents", "rm-rf:/Users/u/Documents"),
     ("D=~/Documents; grep -q 'rm -rf' x || rm -rf $D", "rm-rf:/Users/u/Documents"),
 ])

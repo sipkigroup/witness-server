@@ -34,6 +34,7 @@ from app import wire
 from app import allowances as al
 from app import constitution
 from app import amend
+from app import klyuch
 from app import provenance
 from app import execguard
 from app import levels
@@ -757,6 +758,11 @@ def written_run_info(ctx, agent_id, since, with_cut=False, src=None):
 # structural rule (after a risky write the next line that runs code at all is held) -- it holds only a line that RUNS such a file.
 WA_MAX_PATHS = 64
 WA_LOOK_ROWS = 2000
+# r0350 (машина времени Z8): the mark "the agent wrote this file" has NO age. Before, it lived written_lookback_min (24 h of wall clock):
+# ~/Notes/tool.sh the agent wrote became "the person's program" 24 h 1 min later and the owner was offered "Allow from now on ... run your
+# program <the agent's file>" (r0332, "signed = shown"). Only the person's signed decision on THAT write (agent_written "signed") or a
+# later write of the same path by the person changes what the file is. The look-up runs on ix_actions_wa (agent_id, updated_at).
+WA_MARK_SINCE = 0
 WA_PARSE_FIRST_MAX = 4096   # written_runs: a longer line reads the journal before it parses the line again (17.11, cost only)
 WHOLE_TEXT_TOOLS = ("Write", "Write.danger", "Write.outside")
 
@@ -849,7 +855,7 @@ def written_runs(ctx, agent_id, args, t0, wi=None):
     if len(line) > WA_PARSE_FIRST_MAX:
         # 17.11 (kand3, cost): a long line costs more to parse again (run_targets) than the journal costs to read: the journal first --
         # no write of the agent -> [] (the same answer the parse-first order gives: no candidate file)
-        aw = agent_written(ctx, agent_id, t0 - look)
+        aw = agent_written(ctx, agent_id, WA_MARK_SINCE)
         if not aw:
             return []
     tg = set()
@@ -879,7 +885,7 @@ def written_runs(ctx, agent_id, args, t0, wi=None):
         runs_code = _line_runs_code(heads_ + _procsub_heads(line), line, None)
     if not tg and not names and not runs_code:
         return []
-    aw = agent_written(ctx, agent_id, t0 - look) if aw is None else aw
+    aw = agent_written(ctx, agent_id, WA_MARK_SINCE) if aw is None else aw
     if not aw:
         return []
     wi = wi if isinstance(wi, dict) else written_run_info(ctx, agent_id, t0 - look)
@@ -2440,6 +2446,8 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
         if ameta is not None:
             act = amend.cover(L, m["id"], act, tool, args, ameta, tnow)
             used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
+            act = klyuch.cover(L, m["id"], act, ameta, tnow)       # r0348: the person's rule keyed by the consequence of the whole call
+            used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
         # 11.11 (r0261, поворот: ЗАКРЫТЫЙ СПИСОК): under a fresh strict fact (and the code option) a Bash line is decided by ONE table,
         # hookjudge/strict_policy.py: an immutable article -> refused (below, constitution), a reason of the list -> asked (the line's
         # command part), anything else -> every part the core would ask about runs as sandboxed (OK_SANDBOXED). Outside the fact: unchanged.
@@ -2465,6 +2473,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             used += [act["allowance"]] if "allowance" in act and act["allowance"] not in used else []
         if m is not None and L is not None and tool in strict_policy.FILE_TOOLS and not al.team(ctx, acc):
             act = later_run_write(L, m["id"], act, tool, args, tnow)     # r0305 (W5): .envrc, .husky, CI ... outside the strict session
+            act = registry_write(L, m["id"], act, tool, args, tnow)      # r0347: a package source of the project moved to another server
         if m is not None and L is not None and tool in strict_policy.FILE_TOOLS:
             # r0261f (0.2.59): a file in the shared temp the mandate does not name is asked once, not refused RESOURCE with no button
             act = strict_policy.temp_write_ask(L, m["id"], act, tool, args, tnow)
@@ -2488,6 +2497,7 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 ea = al.code_net_cover(L, m["id"], ea, tool, args, w_, tnow)
             if ameta is not None:
                 ea = amend.cover(L, m["id"], ea, tool, args, ameta, tnow)
+                ea = klyuch.cover(L, m["id"], ea, ameta, tnow)                                      # r0348
             ea = refused_outside_write(ctx, agent["id"], L, m["id"], ea, tnow, t0, tool, args, ameta)   # r0296 (before the strict step)
             ea = unlisted_allow_gate(L, m["id"], ea, tool, args, tnow)                                # r0305
             if sv_ is not None:
@@ -2517,6 +2527,11 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
             ids_, why_ = amend.plan(tool, args, asked_, amend.home_of(args, ameta))
             cm_ = json.loads(row["cmd_meta"]) if row.get("cmd_meta") else dict(ameta, heads=[], outside=[])    # (a Bash.net row: not a command row)
             cm_.update({"amend": ids_} if ids_ else {"amend_why": why_})
+            kl_ = klyuch.CALL.get()                       # r0348: the key of the question (its consequences); r0349: form shelf at once, run from the second
+            if isinstance(kl_, tuple) and kl_[0]:
+                cm_.update(klyuch=kl_[0], klyuch_h=klyuch.key_hash(kl_[0]))
+            elif isinstance(kl_, tuple) and kl_[1]:
+                cm_["klyuch_why"] = str(kl_[1])[:200]
             row["cmd_meta"] = json.dumps(cm_, ensure_ascii=False)
         _check_amount(act)
         rh = request_hash(act)
@@ -2859,6 +2874,35 @@ def later_run_write(L, mid, act, tool, args, now):
     except Exception:      # noqa: BLE001  fail closed: asked
         log("ERROR", "later-run write check failed")
         return act
+
+
+def registry_write(L, mid, act, tool, args, now):
+    """r0347 (closed exam 2, EX2-088): a Write / Edit / MultiEdit INSIDE the project that points a package manager at another server --
+    `.npmrc` registry=, yarn's npmRegistryServer, bun's registry, pip / uv / poetry / pdm index, cargo's source / registry index, the
+    Gradle / Maven wrapper's distributionUrl (hookjudge/pkgsource.foreign; mapping puts `_witness.project` on such a write only) -- is
+    asked once: the person's next install / build takes code from that host outside Witness (a swapped supply chain). The danger
+    `autostart` with its own detail: the pinned vocabulary is unchanged ("a file that starts commands by itself", only "Allow once").
+    Any other write of these files: as before (their run is judged when it runs: ESCALATE_EXEC_CHANGED after the agent's write).
+    Only an allowed write is turned into a question."""
+    from app.hookjudge.bashparse import AUTOSTART as _AS
+    from app.hookjudge import pkgsource as _ps
+    w = args.get("_witness") if isinstance(args, dict) else None
+    pth = w.get("path") if isinstance(w, dict) else None
+    proj = w.get("project") if isinstance(w, dict) else None
+    if not isinstance(act, dict) or "allowance" in act or not isinstance(w, dict) or w.get("danger") or not isinstance(pth, str) \
+            or not isinstance(proj, str) or _ps.kind(pth) is None or act.get("dangerous") is True:
+        return act
+    try:
+        hosts = _ps.foreign(pth, _ps.written_text(tool, args))
+        if not hosts or L.S.decide_for(mid, act, now)[1] != "allow":
+            return act
+        b = dict(act, **{"class": "command"}, recipient=(_AS + ":" + _ps.DETAIL % (pth, hosts[0][1]))[:300], dangerous=True)
+        b.pop("reversible", None)
+        b.pop("sandboxed", None)
+        return b if L.S.decide_for(mid, b, now)[1] == "defer" else act
+    except Exception:      # noqa: BLE001  fail closed: asked
+        log("ERROR", "registry write check failed")
+        return dict(act, dangerous=True)
 
 
 # r0323 (Р-1511 закон неизвестного кода, (1) и (2)): `unlisted: "allow"` lets through what the owner did not list -- never code the agent

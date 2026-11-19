@@ -2,9 +2,9 @@
 # --require-hashes --no-deps). Packages already in requirements.lock are left out here (same versions: it was the constraint).
 # Made with: uv pip compile requirements-test.txt -c <requirements.lock without hashes> --generate-hashes --python-version 3.12
 # deus-witness = LATEST_CLIENT of the server; build-open-server.sh refuses to build when they differ (regenerate this file then).
-deus-witness==0.2.79 \
-    --hash=sha256:163f5c6c7c8ca94eedea0a39a0b23ed75dd6424e719223c3263a5eed280a59db \
-    --hash=sha256:71963521bb5f868044b730e3dcf616096c2177c406eba91b99a9b4ac2d8e9c68
+deus-witness==0.2.80 \
+    --hash=sha256:45df80d7e4e6fd94ab85049600d4a52ef6e6217f73e79f4546d566c62ef9a964 \
+    --hash=sha256:f9ab2adc3841948f4110d647d618a6afcbe004f2ae5ee1a6177346b5961e6e10
     # via -r requirements-test.txt
 httpx-sse==0.4.3 \
     --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \

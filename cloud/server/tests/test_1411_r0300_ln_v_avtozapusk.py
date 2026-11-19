@@ -45,7 +45,7 @@ def test_a_link_or_copy_onto_the_place_is_refused(place, how, form):
 
 
 @pytest.mark.parametrize("cmd", [
-    "ln -s ~/.bashrc backup", "ln -s ~/.bashrc /tmp/b", "ln ~/.bashrc backup", "ln -s ~/.zshrc ~/zshrc.bak", "ln -s ~/Library/LaunchAgents/x.plist y",
+    "ln -s ~/.bashrc backup", "ln -s ~/.bashrc /tmp/b", "ln -s ~/.zshrc ~/zshrc.bak", "ln -s ~/Library/LaunchAgents/x.plist y",
     "ln -s ~/.claude/settings.json settings.json.bak", "ln -s ~/.config/systemd/user/x.service x.service", "ln -sf ~/.gitconfig gitconfig",
     "ln -s ~/.bashrc /tmp/", "cp ~/.bashrc /tmp/", "cp ~/.zshrc ~/backup/", "cp ~/.gitconfig backup/", "cp ~/.bashrc bashrc.bak",
     "cp ~/Library/LaunchAgents/x.plist .", "rsync -a ~/.claude/settings.json /tmp/s.json",
@@ -55,6 +55,12 @@ def test_a_link_or_copy_FROM_the_place_is_a_read(cmd):
     # before r0300: every `ln -s <place> <name>` of this list (8) was "persist" (the parser followed the new link back to the place):
     # a backup link was refused
     assert "persist" not in _cats(cmd), (cmd, _cats(cmd))
+
+
+def test_a_HARD_link_of_the_place_is_the_place():
+    # r0347 (closed exam 2, EX2-069): `ln ~/.bashrc backup` (no -s) is no backup -- `backup` IS ~/.bashrc (one inode): a later "project"
+    # write of it writes the start-up file. Was in the list above (a read) until r0347; now refused as the write it enables (Н4)
+    assert "persist" in _cats("ln ~/.bashrc backup")
 
 
 @pytest.mark.parametrize("cmd", [

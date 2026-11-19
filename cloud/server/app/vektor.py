@@ -377,6 +377,10 @@ def _code_targets(e):
             if a in ("-W", "-X", "-Q"):
                 k += 2
                 continue
+            if a == "-":
+                # r0349: `python3 - ARG ... <<'EOF'`: the program is the heredoc / here-string (the law of inline code judges it); the
+                # words after `-` are its sys.argv, data. With stdin from elsewhere (`python3 - x < f.py`): the first word, as before
+                return None if (e.get("hd") or e.get("hs")) else ((out + [args[k + 1]], False) if k + 1 < len(args) else None)
             if a.startswith("-"):
                 k += 1
                 continue
@@ -809,7 +813,10 @@ def _bash(acc, w, cmd, home, marks, pl=None):
         if R.is_python(b) and set(tags) <= {"eval"}:
             if edit_only is None:
                 try:
-                    edit_only = bool(A._py_edit_only(cmd or ""))
+                    # r0349: the edit-only list AND the closed form (hookjudge/pyform: files only by computed paths, nothing rebound) --
+                    # only then are the writes the parser recorded the code's whole consequence
+                    from app.hookjudge import inline as _inl
+                    edit_only = bool(A._py_edit_only(cmd or "")) and _inl.closed_line(cmd or "", home)
                 except Exception:  # noqa: BLE001
                     edit_only = False
             if edit_only and (tags or _INLINE_STDIN.search(cmd or "")):
@@ -1017,29 +1024,7 @@ def note(ctx, agent, parts, rids, place=None):
         return None
     try:
         rids = [r for r in rids if isinstance(r, str)]
-        marks = set()
-        try:
-            from app import actions as A
-            src = {}
-            look = 60 * (getattr(ctx.cfg, "written_lookback_min", None) or A.WRITTEN_LOOKBACK_MIN)
-            info = A.written_run_info(ctx, agent["id"], A.now() - look, src=src)
-            marks = {p for p in info if src.get(p) not in rids}
-        except Exception:  # noqa: BLE001  no marks known: the code axis falls back to the line alone
-            marks = set()
-        try:
-            # r0332 (the law of the written mark): every write of the agent in the window (not only risky ones; no write takes it off)
-            # tells "the agent's code" from "the person's": a script the agent rewrote is never kod=chelovek
-            from app import actions as A
-            aw, cut = A.agent_written(ctx, agent["id"], A.now() - 60 * (getattr(ctx.cfg, "written_lookback_min", None) or
-                                                                         A.WRITTEN_LOOKBACK_MIN), with_cut=True)
-            place = dict(place) if isinstance(place, dict) else {}
-            place["wa"] = sorted(p for p, v in aw.items() if v.get("rid") not in rids)
-            if cut:
-                place["wa_cut"] = True
-        except Exception:  # noqa: BLE001  not known: the person's code is not computed (opaque), never toward silence
-            place = dict(place) if isinstance(place, dict) else {}
-            place["wa_cut"] = True
-        vec = safe_vector(parts, marks, place)
+        vec = call_vector(ctx, agent, parts, rids, place)
         import json
         js = json.dumps(vec, ensure_ascii=False, sort_keys=True)
         if rids:
@@ -1047,3 +1032,32 @@ def note(ctx, agent, parts, rids, place=None):
         return vec
     except Exception:  # noqa: BLE001
         return None
+
+
+def call_vector(ctx, agent, parts, rids, place=None):
+    """r0348: the vector of one call with this agent's written marks and writes (the same the shadow keeps); `rids`: the call's own
+    rows (their writes are not "earlier"). Used by the shadow (note) and, BEFORE the parts are judged, by the key of the call
+    (app/klyuch.py). Never raises (an error is an opaque vector at U2)."""
+    rids = [r for r in rids if isinstance(r, str)]
+    marks = set()
+    try:
+        from app import actions as A
+        src = {}
+        look = 60 * (getattr(ctx.cfg, "written_lookback_min", None) or A.WRITTEN_LOOKBACK_MIN)
+        info = A.written_run_info(ctx, agent["id"], A.now() - look, src=src)
+        marks = {p for p in info if src.get(p) not in rids}
+    except Exception:  # noqa: BLE001  no marks known: the code axis falls back to the line alone
+        marks = set()
+    try:
+        # r0332 (the law of the written mark): every write of the agent in the window (not only risky ones; no write takes it off)
+        # tells "the agent's code" from "the person's": a script the agent rewrote is never kod=chelovek
+        from app import actions as A
+        aw, cut = A.agent_written(ctx, agent["id"], A.WA_MARK_SINCE, with_cut=True)     # r0350 (Z8): the mark has no age
+        place = dict(place) if isinstance(place, dict) else {}
+        place["wa"] = sorted(p for p, v in aw.items() if v.get("rid") not in rids)
+        if cut:
+            place["wa_cut"] = True
+    except Exception:  # noqa: BLE001  not known: the person's code is not computed (opaque), never toward silence
+        place = dict(place) if isinstance(place, dict) else {}
+        place["wa_cut"] = True
+    return safe_vector(parts, marks, place)

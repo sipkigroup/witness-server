@@ -17,7 +17,7 @@ import { wbChallenge, batchItems } from './wb.js';
 import { planRids, readPlan, repeatItems, summaryText, offerView as repeatView, untilTime } from './repeat.js';
 import { signedView, viewHash, viewOf } from './signview.js';
 import { askOf, dangerText, protectedTarget, reasonWords, dangerCovered } from './ask.js';
-import { qwView, qwParts, laterPlan, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE, detLines } from './qwords.js';
+import { qwView, qwParts, laterPlan, laterDays, laterConfirm, laterShort, cmdLine, riskOf, simpleRows, LATER_DAYS, agentFold, agentVoice, CMD_BY, VOICE_NOTE, detLines } from './qwords.js';
 import { partLines, lineCommands, lineFull, lineRows, lineResult, partRedundant } from './line.js';
 import { gateNeeded, actKey, refusedRecently, REFUSED_MS } from './gate.js';
 
@@ -923,7 +923,7 @@ async function single(me) {
   // shown to the person: a part that fails is named, the call does not run until every part is covered
   const allowFromNow = async () => {
     if (!lp.ok) throw Object.assign(new Error('Only "Allow once" is available here: ' + lp.why + '.'), { shown: true });
-    if (lp.items.length === 1) { await allowForProject(String(LATER_DAYS)); return; }
+    if (lp.items.length === 1) { await allowForProject(String(laterDays(lp.items[0].offer))); return; }
     if (!sv.view) throw Object.assign(new Error('The witness could not build what this page shows of this call.'), { code: 'LINE_VIEW' });
     const rows = [...lp.items.slice(1), lp.items[0]];                 // the parts first, the lead last
     let n = 0;
@@ -933,14 +933,14 @@ async function single(me) {
       const hex = lead ? sv.hex : bytesToHex(view);
       if (!lead && hex !== it.hex) throw Object.assign(new Error('This page and the witness disagree on what a part of this call shows.'), { code: 'VIEW_CHANGED' });
       const aview = await allowViewHash(lead ? viewOf(r) : viewOf(it.part.view), it.offer);    // r0327: + the text of trust of that part
-      const payload = await allowancePayload(it.offer, it.mandate, LATER_DAYS, it.offer.t + (Date.now() - got) / 1000, newAllowanceId(), aview);
+      const payload = await allowancePayload(it.offer, it.mandate, laterDays(it.offer), it.offer.t + (Date.now() - got) / 1000, newAllowanceId(), aview);
       const envelope_b64 = await signPayload(TYP_ALLOWANCE, payload, me);
       try { await post('/api/allowances', withUx({ rid: it.rid, envelope_b64, view_sha256: hex })); } catch (e) {
         throw Object.assign(new Error((n ? n + ' of ' + rows.length + ' parts were allowed from now on; the call does not run until every part is covered. ' : '') + 'A part could not be allowed from now on (' + failText(e) + '). You can still allow it once.'), { shown: true });
       }
       n++;
     }
-    done('Allowed from now on', 'Each of the ' + rows.length + ' parts of this call is allowed on its own in this project for ' + LATER_DAYS + ' days. The agent repeats the call. Revoke any of them on Project permissions.');
+    done('Allowed from now on', 'Each of the ' + rows.length + ' parts of this call is allowed on its own in this project for ' + Math.min(...rows.map((it) => laterDays(it.offer))) + ' day(s). The agent repeats the call. Revoke any of them on Project permissions.');
   };
 
   // 0.2.29: "Also approve this exact call for this agent's later runs" (one batch signature over this request and the ids of the later uses)

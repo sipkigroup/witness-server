@@ -471,7 +471,7 @@ def refused_text(ctx, agent, tool, res):
             "asked again after that" % (t, tool, (x["recipient"] or "-")[:160], ": " + shown if shown else "", until))
 
 
-LATEST_CLIENT = "0.2.79"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
+LATEST_CLIENT = "0.2.80"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
 
 
 def notify_view(ctx, agent) -> dict:
@@ -602,12 +602,15 @@ def judge(ctx, agent, body: dict, capable=True) -> dict:
     from . import strict_policy as _sp
     pl_ = _LAST_PLACE.get()
     ptok_ = _sp.PLACE.set(pl_ if isinstance(pl_, dict) else None)
+    from app import klyuch as _kl                       # r0348: the key of the call (its consequences), before any part is judged
+    ktok_ = _kl.CALL.set(_kl.of_call(ctx, agent, parts, pl_))
     try:
         res = _judge_parts(ctx, agent, body, parts, only, capable, created, sid, out)
         if qnear and isinstance(res, dict):
             res["quota"] = qnear                         # r0285: near a daily limit (outside the signed statement; decides nothing)
         return res
     finally:
+        _kl.CALL.reset(ktok_)
         _sp.PLACE.reset(ptok_)
 
 

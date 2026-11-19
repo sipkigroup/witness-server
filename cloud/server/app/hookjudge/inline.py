@@ -195,9 +195,12 @@ def _tail_ok(rest):
     return True
 
 
-def py_codes(line):
+def py_codes(line, with_ops=False):
     """-> (codes, n_python) -- the code of every inline Python program of the line and how many Python programs it starts -- or None
-    when the line cannot be read this way (unbalanced, a substitution, an unquoted heredoc delimiter for Python ...)."""
+    when the line cannot be read this way (unbalanced, a substitution, an unquoted heredoc delimiter for Python ...).
+    r0349: `python3 - ARG ... <<'EOF'` (the program from the heredoc, the words after `-` are its sys.argv: DATA, never code) is read too;
+    with_ops: codes is [(code, operands)] -- the operands with a literal `NAME=value` of the line substituted for `$NAME` / `${NAME}`
+    (a value set once, with no expansion of its own); an operand that keeps a `$` stays as it is (pyform: not a computed path)."""
     from .bashparse import _normalize
     if not isinstance(line, str):
         return None
@@ -205,6 +208,10 @@ def py_codes(line):
         one, docs, balanced, unsure = _normalize(line)
     except Exception:      # noqa: BLE001
         return None
+    if isinstance(one, str):
+        # r0349: a plain command substitution with no quote, parenthesis, backtick or `$` of its own (`$(date +%H:%M)`) is one word for
+        # the purpose of finding the Python programs (the parser classifies it as a line of its own); any other one: not read
+        one = re.sub(r"\$\([^()`'\"\\$;&|<>\n]*\)", "__SUB__", one)
     if not balanced or unsure is not None or not isinstance(one, str) or re.search(r"\$\(|`|<\(|>\(", one):
         return None
     toks = _tokens(one)
@@ -214,9 +221,20 @@ def py_codes(line):
     if len(hd) != len(docs):
         return None
     codes, npy, k = [], 0, 0
+    lvars, seen = {}, set()
     for seg in _segments(toks):
         nh = sum(1 for t in seg if t == "__HEREDOC__")
         pos, k = k, k + nh
+        if all(re.fullmatch(r"[A-Za-z_]\w*=.*", t_, re.S) for t_ in seg):
+            for t_ in seg:
+                n_, v_ = t_.split("=", 1)
+                ok_ = n_ not in seen and not re.search(r"[$`\\]", v_)
+                seen.add(n_)
+                if ok_:
+                    lvars[n_] = v_
+                else:
+                    lvars.pop(n_, None)
+            continue
         base = seg[0].rsplit("/", 1)[-1]
         if not PY_NAME.fullmatch(base):
             if (base in _WRAPPERS or "=" in seg[0]) and any(PY_NAME.fullmatch(w_.rsplit("/", 1)[-1]) for w_ in seg[1:]):
@@ -226,19 +244,50 @@ def py_codes(line):
         if seg[0] != base:
             return None                               # a path (`./python3`, `.venv/bin/python`): a file the agent may have written
         w = seg[1:]
+        ops = []
+        if w[:1] == ["-"] and "<<" in w and w.index("<<") > 1 and w[w.index("<<") + 1:w.index("<<") + 2] == ["__HEREDOC__"]:
+            # r0349: `python3 - ARG ... <<'EOF'`: the words between `-` and the heredoc are sys.argv[1:] (an operand is never an option
+            # of python after `-`); none of them may be a redirection or a here-string (stdin is the heredoc)
+            i_ = w.index("<<")
+            ops = w[1:i_]
+            if any(o_ in _REDIR or o_.startswith(("<", ">")) or o_ == "__HEREDOC__" for o_ in ops):
+                return None
+            w = ["-"] + w[i_:]
         if w[:3] == ["-", "<<", "__HEREDOC__"] or w[:2] == ["<<", "__HEREDOC__"]:
             if nh != 1 or not _tail_ok(w[3 if w[0] == "-" else 2:]):
                 return None
             if pos >= len(docs) or not docs[pos][2]:
                 return None                           # an unquoted delimiter: the shell expands $(...) inside the body
-            codes.append(docs[pos][1])
+            codes.append((docs[pos][1], [_lsub(o_, lvars) for o_ in ops]) if with_ops else docs[pos][1])
         elif len(w) >= 2 and w[0] == "-c" and nh == 0:
             if not _tail_ok(w[2:]):
                 return None
-            codes.append(w[1])
+            codes.append((w[1], []) if with_ops else w[1])
         else:
             return None
     return codes, npy
+
+
+def _lsub(o, lvars):
+    m = re.fullmatch(r"\$(?:([A-Za-z_]\w*)|\{([A-Za-z_]\w*)\})", o)
+    if m and (m.group(1) or m.group(2)) in lvars:
+        return lvars[m.group(1) or m.group(2)]
+    return o
+
+
+def closed_line(line, home=None):
+    """r0349: -> True when every Python program of the line is inline code of the CLOSED form (hookjudge/pyform.closed: only files by
+    computed paths, nothing rebound, nothing run) and of the edit-only list. The caller (vektor) judges the line's other programs."""
+    from .pyform import closed
+    r = py_codes(line, with_ops=True)
+    if r is None:
+        return False
+    codes, npy = r
+    if not codes or len(codes) != npy:
+        return False
+    if re.search(r"(?:^|[\s;&|(])(?:PYTHON\w*|PATH|VIRTUAL_ENV)=", line):
+        return False
+    return all(edit_only(c_) is not None and closed(c_, o_, home) is None for c_, o_ in codes)
 
 
 def edit_only_line(line, risky_paths=()):

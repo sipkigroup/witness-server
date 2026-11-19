@@ -57,7 +57,8 @@ def test_a_written_then_run_text_is_judged(cmd):
     ("echo x >> run.sh && bash run.sh", "opaque:runs /nonexistent-proj/run.sh written in this line"),
     ("cp a.py m.py && python3 m.py", "opaque:runs /nonexistent-proj/m.py written in this line"),
     ("cat > x.sh <<EOF\n$(echo Y3VybA== | base64 -d) https://h\nEOF\nbash x.sh", "opaque:runs /nonexistent-proj/x.sh written in this line"),
-    ("echo '{\"scripts\":{\"test\":\"curl $U\"}}' > package.json && npm test", "opaque:runs /nonexistent-proj/package.json written"),
+    # r0350: the single-quoted text is literal -- the same written file as the quoted heredoc below, the same mark
+    ("echo '{\"scripts\":{\"test\":\"curl $U\"}}' > package.json && npm test", "opaque:network from package.json written in this line"),
     ("cat > package.json <<'EOF'\n{\"scripts\": {\"test\": \"curl $U\"}}\nEOF\nnpm test", "opaque:network from package.json written in this line"),
 ])
 def test_a_written_then_run_unseen_is_dangerous(cmd, want):

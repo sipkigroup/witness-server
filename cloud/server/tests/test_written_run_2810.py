@@ -41,11 +41,13 @@ def test_write_tool_clean_then_run_is_allowed(client, owner, tmp_path):
     assert "ESCALATE_WRITTEN_RUN" in reasons(a.line("python3 s.py")[1])     # 0.2.90 (QA D8): a code file the agent wrote is held once, whatever its text
 
 
-def test_old_write_outside_lookback_not_asked(client, owner, tmp_path):
+def test_old_write_outside_lookback_still_agent_code(client, owner, tmp_path):
+    """r0350 (машина времени Z8): the mark "the agent wrote this file" has no age -- 25 h later m.py is still the agent's code, never the
+    person's (before r0350 the mark faded after written_lookback_min and the run went silent)."""
     a = Agent(client, owner, tmp_path, extra_cmds=["python3", "echo"])
     a.line('echo "%s" > m.py' % NET)
     client.app.state.ctx.db.x("UPDATE actions SET updated_at=updated_at-25*3600, created_at=created_at-25*3600 WHERE agent_id=?", (a.ag["id"],))
-    assert "ESCALATE_WRITTEN_RUN" not in reasons(a.line("python3 m.py")[1])
+    assert "ESCALATE_WRITTEN_RUN" in reasons(a.line("python3 m.py")[1])
 
 
 def test_downloaded_or_copied_then_run_is_asked(client, owner, tmp_path):

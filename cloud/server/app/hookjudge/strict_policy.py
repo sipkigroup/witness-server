@@ -1513,6 +1513,10 @@ def run_targets(text, cwd):
                 names.append(ops[k + 1])
             elif k < len(ops) and ops[k] not in ("-", "<"):
                 names.append(ops[k])
+            elif k < len(ops) and ops[k] == "-" and any(x in ("<<", "<<-", "<<<") or x.startswith("<<") for x in ops[k + 1:]):
+                continue                              # r0349: `python3 - ARG <<'EOF'`: the program is the heredoc (judged as the line)
+            elif k < len(ops) and ops[k] == "-" and "<" in ops[k + 1:] and ops.index("<", k + 1) + 1 < len(ops):
+                names.append(ops[ops.index("<", k + 1) + 1])     # `python3 - ARG < f.py`: f.py runs
             else:
                 bare_runner = True
         elif h == "cat":

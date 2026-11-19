@@ -1,0 +1,127 @@
+# Install check "from zero" on clean GitHub runners: Windows, macOS, Linux. What a new person does from the README, then one full circle.
+# No secrets, nothing is published or pushed; the only network use is the downloads (PyPI, the hash-locked server dependencies) and
+# 127.0.0.1 on the runner. Actions are pinned by commit SHA (the tag in the comment is for people only).
+# Journal of every step: the artifact "journal-*" of each job (uploaded even when a step fails).
+name: install-matrix
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * 1"      # weekly: a new client release on PyPI is installed by this check even when this repository did not change
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  client:
+    name: client ${{ matrix.mode }} / ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12", "3.13"]
+        mode: [latest, pinned]       # latest = `pip install deus-witness` (README); pinned = the newest version PyPI lists, by exact number
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: journal folder
+        run: mkdir -p journal && python --version | tee journal/00-env.txt && python -m pip --version | tee -a journal/00-env.txt
+      - name: newest client on PyPI (variable PINNED_CLIENT)
+        run: |
+          V=$(python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/deus-witness/json',timeout=30))['info']['version'])")
+          echo "PINNED_CLIENT=$V" >> "$GITHUB_ENV"
+          echo "newest on PyPI: $V" | tee journal/01-pypi.txt
+      - name: install as the README says (pip install deus-witness)
+        if: matrix.mode == 'latest'
+        run: python -m pip install deus-witness 2>&1 | tee journal/02-install.txt
+      - name: install the pinned version (pip install deus-witness==$PINNED_CLIENT)
+        if: matrix.mode == 'pinned'
+        run: python -m pip install "deus-witness==$PINNED_CLIENT" 2>&1 | tee journal/02-install.txt
+      - name: checks (commands start, version, hook without a server)
+        run: |
+          if [ "${{ matrix.mode }}" = pinned ]; then EXP="--expect $PINNED_CLIENT"; else EXP=""; fi
+          python .github/ci/client_checks.py installed $EXP 2>&1 | tee journal/03-checks.txt
+      - name: uninstall (pip uninstall)
+        run: |
+          python -m pip uninstall -y deus-witness 2>&1 | tee journal/04-uninstall.txt
+          python .github/ci/client_checks.py gone 2>&1 | tee -a journal/04-uninstall.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        if: always()
+        with:
+          name: journal-client-${{ matrix.mode }}-${{ matrix.os }}-py${{ matrix.python }}
+          path: journal
+          retention-days: 14
+
+  circle:
+    # One full circle on the runner: agent -> hook (client from PyPI) -> witness server (this tree, README "Without Docker") -> verdict.
+    # The server is the tree's hash-locked set, Python 3.12 (as the image). Windows is informational until it has gone green once.
+    name: full circle / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: "venvs (server hash-locked, client pip install deus-witness)"
+        run: |
+          mkdir -p journal
+          python -m venv .venv-server && python -m venv .venv-client
+          if [ "$RUNNER_OS" = Windows ]; then B=Scripts; else B=bin; fi
+          echo "BIN=$B" >> "$GITHUB_ENV"
+          .venv-server/$B/python -m pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock 2>&1 | tail -3 | tee journal/10-server-deps.txt
+          .venv-server/$B/python -m pip check | tee -a journal/10-server-deps.txt
+          .venv-client/$B/python -m pip install deus-witness 2>&1 | tail -3 | tee journal/11-client.txt
+      - name: start the witness (README "Without Docker")
+        run: |
+          W=$(python -c "import os;print(os.getcwd())")
+          mkdir -p "$W/run/data" "$W/run/secrets"
+          python -c "import secrets as s;open('$W/run/secrets/witness_ed25519','w').write(s.token_hex(32)+'\n');open('$W/run/secrets/key_pepper','w').write(s.token_hex(32))"
+          export DW_DATA_DIR="$W/run/data" DW_WITNESS_KEY_FILE="$W/run/secrets/witness_ed25519" DW_KEY_PEPPER_FILE="$W/run/secrets/key_pepper" \
+                 DW_RP_ID=localhost DW_ORIGIN=http://localhost:8787 DW_ISS=http://localhost:8787 DW_SECURE_COOKIE=0 DW_TRIAL=on DW_ANCHOR=off
+          cd cloud/server
+          nohup "$W/.venv-server/$BIN/python" -m app.main --host 127.0.0.1 --port 8787 > "$W/journal/20-server.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8787/healthz; then echo; exit 0; fi
+            sleep 2
+          done
+          echo "witness not healthy after 120 s" >&2; tail -30 "$W/journal/20-server.log"; exit 1
+      - name: full circle (echo hi -> allow; rm -rf ~ -> not allowed, never run)
+        run: |
+          W=$(python -c "import os;print(os.getcwd())")
+          .venv-server/$BIN/python .github/ci/full_circle.py --base http://localhost:8787 --repo "$W" \
+            --hook "$W/.venv-client/$BIN/deus-witness-hook" --client-python "$W/.venv-client/$BIN/python" --workdir "$W/run/wd" 2>&1 | tee journal/30-circle.txt
+      - name: server log (tail)
+        if: always()
+        run: tail -40 journal/20-server.log || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        if: always()
+        with:
+          name: journal-circle-${{ matrix.os }}
+          path: journal
+          retention-days: 14

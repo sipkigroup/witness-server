@@ -49,6 +49,30 @@ ALLOW_TEXT_SHA256 = {"tt-1": "12ff7648b7a7008af4147faee08a50574f9dbd4272bc245193
                      "tt-2": "771a4d146af123e038e65d3c9082f36b98d4dd989ba5285776aca97ec9f5bdc6",
                      "am-1": "a5737564732b94b21945840e1d5e26b99d128944a0b2a859dfd49f4445627278"}
 
+# r0348: a rule keyed by the consequence (server app/klyuch.py, version kl-1) signs a text BUILT from this dictionary: the head with its
+# term, one line per consequence (the template of its kind, the area filled in), the tail. The checker rebuilds the form line by line; a
+# test keeps this copy equal to the server's (SHA-256 over RFC 8785 of the dictionary). An area with "*" or a line of no template:
+# ALLOW_TEXT_UNKNOWN.
+KL_DICT = {"v": "kl-1", "head": "Allow from now on, for this agent in this project, for {days}:",
+           "area": {"(key) write": "- write and change files in the folder {arg} and its sub-folders (not a hidden file, not through a link "
+                                   "that leads elsewhere)",
+                    "(key) GET": "- read {arg} without sending data or your login",
+                    "(key) service": "- read with your account: {arg} (no change, no publication)",
+                    "(key) run": "- run your program {arg} (as it is now; a changed or replaced file is asked again)"},
+           "tail": "Only exactly this. A line that also does anything else (sends data, publishes, pays, runs code the agent wrote, reads a "
+                   "secret, touches start-up files or settings) is asked as before. Revoke it in one tap under Settings -> Allowances."}
+KL_DICT_SHA256 = "72dd25d9a05d5d94d5e83e3deab8606905135dbf633d05f1587c2a3fefcd1181"
+
+
+def _kl_text_ok(t):
+    lines = t.split("\n") if isinstance(t, str) else []
+    if len(lines) < 3 or lines[-1] != KL_DICT["tail"]:
+        return False
+    if lines[0] not in (KL_DICT["head"].format(days=d) for d in ("1 day", "7 days")):
+        return False
+    pats = [re.compile(re.escape(x).replace(re.escape("{arg}"), r"([^*\n]{1,200})") + r"\Z") for x in KL_DICT["area"].values()]
+    return all(any(p.match(x) for p in pats) for x in lines[1:-1])
+
 
 # ------------------------------------------------------------------ P2
 def omitted_expected(view):
@@ -342,6 +366,10 @@ def allow_text_check(view):
     if set(view) != {"v", "page", "text_v", "text"} or not isinstance(page, dict) or not isinstance(t, str) or not isinstance(tv, str):
         return "the signed object is not {v, page, text_v, text}", "ALLOW_TEXT_UNKNOWN"
     h = hashlib.sha256(t.encode("utf-8", "surrogatepass")).hexdigest()
+    if tv == KL_DICT["v"]:                              # r0348: a key rule's text, rebuilt from the dictionary
+        if not _kl_text_ok(t):
+            return ("the signed text of a key rule (sha256 %s) is not built from the dictionary kl-1" % h[:16], "ALLOW_TEXT_UNKNOWN")
+        return "text of trust kl-1 (a key rule, the area named) signed with the page (sha256 %s)" % h[:16], None
     if ALLOW_TEXT_SHA256.get(tv) != h:
         return ("the signed text of trust (%s, sha256 %s) is not the witness's version %s" % (tv[:16], h[:16], tv[:16]), "ALLOW_TEXT_UNKNOWN")
     return "text of trust %s signed with the page (sha256 %s)" % (tv, h[:16]), None

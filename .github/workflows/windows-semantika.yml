@@ -1,0 +1,59 @@
+# Same consequence -> same verdict on every OS. The judge of this tree judges ~750 command forms (Windows PowerShell / cmd as an agent
+# writes them in its Bash tool on Windows, and busybox / Alpine / uutils / toybox / doas forms) against their macOS/bash twins.
+# Nothing is executed: the server app runs in-process (TestClient), the client deus_witness from cloud/server/requirements-test.lock
+# judges each line as a PreToolUse hook would. No model, no secrets, no network besides the hash-locked downloads.
+# The judge itself runs on windows-latest AND ubuntu-latest: a verdict that depends on the OS the witness runs on is a finding too.
+# Result per OS: artifact "windows-semantika-<os>" (res.jsonl, one line per form). Informational until the first green run on both.
+name: windows-semantika
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-semantika-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  judge:
+    name: judge / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    continue-on-error: true          # informational: drop after the first green run on both OS
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: venv (server + test dependencies, hash-locked)
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" = Windows ]; then B=Scripts; else B=bin; fi
+          echo "BIN=$B" >> "$GITHUB_ENV"
+          .venv/$B/python -m pip install --require-hashes --no-deps -r cloud/deploy/requirements.lock
+          .venv/$B/python -m pip install --require-hashes --no-deps -r cloud/server/requirements-test.lock
+          .venv/$B/python -m pip check
+      - name: judge the corpus (form vs its macOS/bash twin)
+        run: |
+          .venv/$BIN/python .github/ci/windows_semantika.py --repo . --level L2 \
+            --korpus .github/ci/windows_semantika_korpus.jsonl --baseline .github/ci/windows_semantika_baseline.json \
+            --out windows-semantika-res.jsonl --strict
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        if: always()
+        with:
+          name: windows-semantika-${{ matrix.os }}
+          path: windows-semantika-res.jsonl
+          retention-days: 14

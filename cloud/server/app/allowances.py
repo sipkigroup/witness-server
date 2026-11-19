@@ -319,9 +319,34 @@ def cover(L, mid, a, meta, now):
     return a
 
 
+# r0348: a "never" of these words is not replaced by a key rule (the key is tried only where the old way said "only once" because of
+# the line's form: a dangerous mark, an unlisted head, a kind no amendment names)
+KEY_NEVER = (DEFENSE_WHY, LATER_WHY, AUTOSTART_WHY, AUTOSTART_COPY_WHY)
+KEY_NEVER_START = ("only a pending shell command", "a team's mandate", "the mandate of this request", "the agent's hook does not report",
+                   "this project already has", "your Witness client asks about every line", "a file in a shared temporary folder")
+
+
 def offer(ctx, acc, x):
     """What the approval page may offer for the pending action row x: {eligible, why_not, commands, project, t, days, default_days,
-    max_days, typ, text}. Built from the row and the ledger; the owner's device builds and signs the payload itself."""
+    max_days, typ, text}. Built from the row and the ledger; the owner's device builds and signs the payload itself.
+    r0348: when the old way gives no rule, the KEY of the question (app/klyuch.py: its consequences) may (r0349, Р-1611 п.3: write / GET /
+    service at the first question, running a program from the second same question)."""
+    out = _offer(ctx, acc, x)
+    if out["eligible"] or out["why_not"] in KEY_NEVER or str(out["why_not"] or "").startswith(KEY_NEVER_START):
+        return out
+    try:
+        meta = json.loads(x["cmd_meta"]) if x["cmd_meta"] else None
+        if "exec_json" in x.keys() and x["exec_json"] and '"written_run"' in x["exec_json"]:
+            return out                                 # a file the agent wrote runs: never a key (law §3 p.4)
+    except (TypeError, ValueError, IndexError, KeyError):
+        return out
+    if not isinstance(meta, dict) or x["status"] != "pending_approval":
+        return out
+    from app import klyuch
+    return klyuch.offer(ctx, acc, x, meta, out)
+
+
+def _offer(ctx, acc, x):
     out = {"eligible": False, "why_not": None, "commands": [], "project": None, "t": _now(), "days": list(DAYS), "default_days": DEFAULT_DAYS,
            "max_days": min(MAX_DAYS, ALLOWANCE_MAX_S // 86400), "typ": TYP, "text": TRUST_TEXT, "text_v": "tt-2", "max_per_project": MAX_PER_PROJECT}
     try:
@@ -507,6 +532,8 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
             raise Err(409, "ALLOWANCE_MALFORMED", "nbf must be the time of signing")
         if g["exp"] - g["nbf"] > MAX_DAYS * 86400:               # 0.2.96: the term is a ceiling of 30 days on this witness
             raise Err(409, "ALLOWANCE_TOO_LONG", "\"from now on\" lasts at most %d days; sign a shorter term" % MAX_DAYS)
+        if o.get("kind") == "klyuch" and g["exp"] - g["nbf"] > int(o["max_days"]) * 86400:      # r0348: the term the text names
+            raise Err(409, "ALLOWANCE_TOO_LONG", "this rule lasts at most %d day(s); sign a shorter term" % int(o["max_days"]))
         if ctx.db.one("SELECT 1 AS k FROM allowances WHERE id=?", (g["id"],)):
             raise Err(409, "ALLOWANCE_ID_TAKEN")
         org.check_sign_counts(ctx, env, "allowance", acc["id"])      # 0.2.20 (the counter is read only where the passkey's key signed it)
@@ -525,6 +552,11 @@ def create(ctx, acc, user_id, rid, env, view_fn=None):
             # the pending request is answered by the allowance (status `covered`: it leaves every queue; a waiting hook sends the call again,
             # an older hook answers "ask" as for any unanswered question and the agent's next call runs under the allowance)
             ctx.db.x("UPDATE actions SET covered_by=?, status='covered', updated_at=? WHERE rid=? AND status='pending_approval'", (g["id"], now, rid))
+            if o.get("kind") == "klyuch":         # r0348: one key rule answers every waiting question of this agent with the same key
+                from app import klyuch
+                ctx.db.x("UPDATE actions SET covered_by=?, status='covered', updated_at=? WHERE account_id=? AND agent_id=? AND "
+                         "status='pending_approval' AND cmd_meta IS NOT NULL AND instr(cmd_meta, ?)>0",
+                         (g["id"], now, acc["id"], x["agent_id"], '"klyuch_h": "%s"' % klyuch.key_hash(g["commands"])))
     return {"allowance_id": g["id"], "commands": g["commands"], "project": g["project"], "exp": g["exp"], "ledger_seq": res["seq"],
             "branch": o.get("branch")}
 
@@ -536,6 +568,9 @@ def _allow_shown(ctx, account_id, page_hash, o):
         return None
     r = ctx.db.one("SELECT view_json FROM shown_views WHERE account_id=? AND sha256=?", (account_id, page_hash.hex()))
     tv = text_version(o.get("text"))
+    if o.get("kind") == "klyuch":                       # r0348: the text of a key rule is built from its keys (kl-1), not one fixed text
+        from app import klyuch
+        tv = klyuch.V if o.get("text_v") == klyuch.V and o.get("text") == klyuch.render(o["commands"], o["max_days"]) else None
     if r is None or tv is None or tv != o.get("text_v"):
         return None
     from app.signview import jcs
@@ -585,10 +620,23 @@ def listing(ctx, acc):
                     "created_at": g["created_at"], "from_rid": g["from_rid"], "ended_at": g["ended_at"], "status": status_of(ctx, g, now),
                     "uses": use["n"], "last_used": use["last"], "ledger_seq": g["ledger_seq"], "branch": g["branch"],
                     # r0327: the text of trust of the version this rule signed (None: signed before the text was part of the signature)
-                    "text_v": g["trust_v"], "text": texts().get(g["trust_v"]) if g["trust_v"] else None,
+                    "text_v": g["trust_v"], "text": _rule_text(g),
                     # r1611: no text_v = the text of trust is not part of this rule's signature: its first use is asked again
                     "text_signed": bool(g["trust_v"]), "note": None if g["trust_v"] else "text not signed"})
     return out
+
+
+def _rule_text(g):
+    """The text of trust a rule signed: a fixed version, or (r0348, kl-1) the key rule's text rebuilt from its keys."""
+    if not g["trust_v"]:
+        return None
+    from app import klyuch
+    if g["trust_v"] == klyuch.V:
+        try:
+            return klyuch.text_of_rule(json.loads(g["commands"]), g["nbf"], g["exp"])
+        except (TypeError, ValueError, StopIteration):
+            return None
+    return texts().get(g["trust_v"])
 
 
 def sandbox_cover(L, mid, a, meta, w, now, text=None):

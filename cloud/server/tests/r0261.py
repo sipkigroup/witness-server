@@ -68,7 +68,8 @@ NOW_SILENT = {
     "python3 -c \"import shutil; shutil.rmtree('/private/tmp/claude-501/-Other-proj/0123abcd-0000-0000-0000-000000000000/x')\"": TEMP,
     "rm -rf $X": HIDDEN,
     # test_1011_held_allowlist
-    "gh run view 7 -R a/b; rm -rf build; bash <<EOF\n$(echo ssh vps true)\nEOF": HIDDEN,
+    # r0350 (Н2, «одинаковое действие -- одинаковый вердикт»): `$(echo ssh vps true)` in the body of `bash <<EOF` is no longer hidden --
+    # the shown output is `ssh vps true`, judged as that line (a question, as the plain `ssh vps true`): test_amended_read_never_carries..
     # test_1011_temp_proekt
     "/private/tmp/claude-501/-Users-u-other/9f8e7d6c-5b4a-4398-8a7b-6c5d4e3f2a1b/scratchpad/run.py": TEMP,
     "/private/tmp/claude-501/-Users-u-other/9f8e7d6c-5b4a-4398-8a7b-6c5d4e3f2a1b/tasks/b1.output": TEMP,

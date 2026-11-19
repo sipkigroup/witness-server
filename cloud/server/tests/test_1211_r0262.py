@@ -92,7 +92,7 @@ def test_written_wipe_of_the_project_is_refused_when_run(client, owner, tmp_path
     ("e.sh", "echo 'git push' > notes.txt\n", "sh e.sh", "silent"),                                     # text written is no act
     ("dl.sh", "curl -sL https://pypi.org/simple/requests/ -o idx.html\n", "bash dl.sh", "silent"),      # a plain GET: the kernel's list
     ("big.py", "import json\nprint(json.dumps({'a': 1}))\n" * 50, "python3 big.py", "silent"),
-    ("d.sh", "rm -rf ~/Documents\n", "bash d.sh", "silent"),        # outside the project: the kernel refuses it (EPERM), as the proby
+    ("d.sh", "rm -rf ~/Documents\n", "bash d.sh", "refused"),       # r0351: a key folder of the home = Н5 (was silent: the kernel refuses it, EPERM, as the proby
     #                                                                 corpus expects under the strict fact (d8-bash); a LINE with it is Н5
     ("n.js", "require('child_process').execSync('npm publish')\n", "node n.js", "asked"),               # r0262: silent (RESIDUAL); r0263:
     #                                                                     the literal handed to execSync is judged as a line

@@ -420,8 +420,12 @@ def net_id(host, text, heads, strict=False):
     if len(ports) != 1:
         return None                                   # the host is not written as a URL in the line, or with two different ports
     port = ports.pop()
+    schemes = {m.group(0).split(":", 1)[0].lower() for m in _URL.finditer(text) if m.group(1).lower().rstrip(".") == host}
+    if len(schemes) != 1:
+        return None                                   # r0348: http and https of one host on one line
     if port and port not in ("80", "443"):
         host = host + ":" + port                      # exact: another port of the same host is another service
+    pfx = "http://" if schemes == {"http"} else ""   # r0348 (round 4, laundering): plain http is another destination than https
     names = {h.split()[0].rsplit("/", 1)[-1] for h in heads if isinstance(h, str) and h.split()}
     if strict:
         text = _fetch_segments(text)                  # 10.11 (r0260): the flags of THIS request, not `python3 -c` of a contained part
@@ -442,7 +446,7 @@ def net_id(host, text, heads, strict=False):
     k = egress.kind_of_host(host.split(":")[0])
     if k == "catcher" or (send and k == "user"):
         return None                                   # a request catcher reads the path; anyone can read what is sent to a user-content host
-    return (NET_SEND if send else NET_GET) + host
+    return (NET_SEND if send else NET_GET) + pfx + host
 
 
 def id_for(tool, a, args, home):

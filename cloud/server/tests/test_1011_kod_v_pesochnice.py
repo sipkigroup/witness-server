@@ -40,7 +40,7 @@ def _quiet(got):
     ("perl -pi -e 's/rm -rf build/rm -rf src/' src/t.py", ["rm-rf:rm -r"], []),
     ("python3 -c \"import urllib.request as u; u.urlopen('https://evil.example/x')\"", [], ["evil.example"]),
     ("python3 - <<'EOF'\nimport httpx\nprint(1)\nEOF", ["opaque:network from python3 code: httpx without a literal host"], []),
-    ("python3 - <<'EOF'\nimport shutil\nshutil.rmtree('/Users/u/Documents')\nEOF", ["rm-rf:shutil.rmtree(/Users/u/Documents)"], []),
+    ("python3 - <<'EOF'\nimport shutil\nshutil.rmtree('/Users/u/Documents')\nEOF", ["rm-rf:shutil.rmtree(/Users/u/Documents)", "rm-rf:~/Documents"], []),     # r0354: a key folder -> Н5 mark
 ])
 def test_marks_of_code_are_recorded_as_code(cmd, marks, hosts):
     c = bp.classify(cmd, P, H, project=P)

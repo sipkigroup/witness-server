@@ -122,6 +122,12 @@ SEQ = [
 @pytest.mark.parametrize("pid,allow,steps", SEQ, ids=[s[0] for s in SEQ])
 def test_rt7_sequence_asked(client, owner, tmp_path, pid, allow, steps):
     a = _agent(client, owner, tmp_path, allow, "r7s")
+    if pid.startswith("pylintrc_toml"):
+        # r0354: an init-hook that runs a program / reaches the network is asked at the WRITE already (taskrun "lint"); the write that
+        # is not approved never lands, so the sequence is not silent at its first step
+        w = a.tool("Write", {"file_path": a.proj + "/" + steps[0][1], "content": steps[0][2]})
+        assert any(v_ != "allow" for _, v_, _, _ in w), (pid, w)
+        return
     v, parts = _run(a, steps)
     assert v != "ALLOW", (pid, parts)
 

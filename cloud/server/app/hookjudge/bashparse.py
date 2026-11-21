@@ -302,7 +302,15 @@ PERSIST_PATH = re.compile(r"(^|/)(\.(zshrc|zprofile|zshenv|zlogin|zlogout|bashrc
                           # 15.11 (r0321): tmux reads its start-up file from the HOME folder only. A project's own `.tmux.conf` starts
                           # nothing by itself: it is a config that is code for `tmux -f` (execguard EXEC_NAMES, test_rt7_rules: the change
                           # is asked as ESCALATE_EXEC_CHANGED), not a refusal. So the name is persist only in a home-shaped folder.
-                          r"^(~|\$\{?HOME\}?|(/private)?/var/root|/root|/Users/[^/]+|/home/[^/]+)/(\.tmux\.conf|\.config/tmux/tmux\.conf)$", re.I)
+                          r"^(~|\$\{?HOME\}?|(/private)?/var/root|/root|/Users/[^/]+|/home/[^/]+)/(\.tmux\.conf|\.config/tmux/tmux\.conf)$|"
+                          # r0354 (противник AOAI 19.11: a .bat into the Startup folder, a PowerShell profile -- asked where ~/.bashrc is
+                          # refused): Windows runs every file of the Startup folder at logon (the user's and the machine's, T1547.001);
+                          # PowerShell runs its profile scripts at every start (T1546.013: Windows PowerShell 5, PowerShell 7 on Windows,
+                          # pwsh on macOS / Linux under ~/.config/powershell). Either separator: the hook on Windows reports `\`.
+                          r"(^|[/\\])(AppData[/\\]Roaming[/\\]|ProgramData[/\\])Microsoft[/\\]Windows[/\\]Start Menu[/\\]Programs[/\\]Startup[/\\][^/\\]+$|"
+                          r"(^|[/\\])(Documents|My Documents|OneDrive[^/\\]*[/\\]Documents)[/\\](WindowsPowerShell|PowerShell)[/\\]([\w.]*_)?profile\.ps1$|"
+                          r"(^|/)\.config/powershell/([\w.]*_)?profile\.ps1$|"
+                          r"(^|[/\\])(Windows[/\\]System32[/\\]WindowsPowerShell[/\\]v1\.0|Program Files[/\\]PowerShell[/\\]\d+)[/\\]([\w.]*_)?profile\.ps1$", re.I)
 
 
 # r0328 (Я0 16.11, r1-05 / r2-36): the tmux start-up file is persist in the REAL home of the hook, whatever shape that folder has
@@ -461,6 +469,33 @@ def _claude_env(c, name: str, tok: str, home: str, detail: str) -> None:
     fr = _frame()
     if fr is not None and os.path.normpath(v) not in real:
         fr["alt_cfg"] = True
+
+
+def _cmd_env(argv, home):
+    """r0354: {NAME: value} handed to the command of this simple command -- `NAME=value cmd`, `env [-i] [-u N] NAME=value cmd` (values
+    with no expansion; ~ of a bare value is the home, as bash does)."""
+    out, i, n, after_env = {}, 0, len(argv), False
+    while i < n:
+        t = argv[i]
+        m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)=(.*)", t, re.S)
+        if m:
+            raw = m.group(2)
+            v = _unmask(raw)
+            if not re.search(r"[$`]", str(v)) or isinstance(v, _Lit):
+                v = str(v)
+                if raw == v and (v == "~" or v.startswith("~/")) and isinstance(home, str):
+                    v = home + v[1:]
+                out[m.group(1)] = v
+            i += 1
+            continue
+        if os.path.basename(str(_unmask(t))) == "env" and not after_env:
+            after_env = True
+            i += 1
+            while i < n and str(_unmask(argv[i])).startswith("-"):
+                i += 2 if str(_unmask(argv[i])) in ("-u", "--unset", "-C", "--chdir", "-S", "--split-string") else 1
+            continue
+        break
+    return out
 
 
 def _record_assignment(tok: str, home: str) -> str | None:
@@ -1250,10 +1285,42 @@ GIT_XARGS_SAFE = {"add", "rm", "mv", "blame", "log", "show", "diff", "ls-files",
                   "cat-file", "rev-parse", "annotate", "restore", "stage", "commit", "notes", "describe", "shortlog"}
 
 
-def _xargs_tail(argv, name, args, fed, cwd, home, project, depth, c):
+def _xargs_repl(opts):
+    """r0354: the replace string of xargs' options (-I R, -IR, -i[R], --replace[=R]; -i / --replace alone = `{}`), or None."""
+    r = None
+    k = 0
+    while k < len(opts):
+        o = str(_unmask(opts[k]))
+        if o == "-I" and k + 1 < len(opts):
+            r = str(_unmask(opts[k + 1]))
+            k += 2
+            continue
+        if o.startswith("-I") and len(o) > 2:
+            r = o[2:]
+        elif o == "-i" or o == "--replace":
+            r = "{}"
+        elif o.startswith("-i") and len(o) > 2 and not o.startswith("--"):
+            r = o[2:]
+        elif o.startswith("--replace="):
+            r = o.split("=", 1)[1] or "{}"
+        k += 1
+    return r or None
+
+
+def _xargs_tail(argv, name, args, fed, cwd, home, project, depth, c, repl=None):
     """r0323 (закон (3)): xargs runs `PROGRAM ARGS INPUT...`. Input the line shows (`echo 'push -f origin main' | xargs git`) is judged
     as that one command line (xargs splits on blanks and honours quotes, as shlex); input it does not show leaves the arguments of an
     article-bearing program unknown -> opaque."""
+    if isinstance(repl, str) and isinstance(fed, str) and fed.strip():
+        # r0354: with -I R each input LINE replaces R inside the arguments (one command per line), nothing is appended
+        lines = [ln.strip() for ln in fed.splitlines() if ln.strip()][:16]
+        for ln in lines:
+            ws = [str(_unmask(w)).replace(repl, ln) for w in [argv[0]] + list(args)]
+            try:
+                _merge(c, classify(" ".join(shlex.quote(w) for w in ws), cwd, home, depth + 1, project, _budget=c.budget))
+            except Exception:  # noqa: BLE001 -- an extra reading only
+                pass
+        return
     if isinstance(fed, str) and fed.strip():
         try:
             words = shlex.split(fed)
@@ -1440,8 +1507,18 @@ def _abspath(p: str, cwd: str, home: str) -> str:
     return r
 
 
+# r0354 (противник AOAI 19.11: `cat /etc/shadow`, `ln -s /etc/shadow p/x`, `sudo cat /etc/master.passwd` allow where `cat ~/.ssh/id_rsa`
+# is Н1): the system's password stores -- the hashes of every account's password (Linux shadow / gshadow and their backups, BSD / macOS
+# master.passwd and spwd.db, macOS Directory Services user records with ShadowHashData, the Windows SAM / SECURITY hives). By ABSOLUTE
+# path only (a project's own `etc/shadow` fixture is a project file). /etc/passwd holds no hash (world-readable): not here.
+SYS_SECRET = re.compile(r"^(?:/System/Volumes/Data)?(?:/private)?/etc/(?:shadow|gshadow|master\.passwd|spwd\.db|security/opasswd|security/passwd)"
+                        r"(?:-|\.bak|\.old|\.orig|~)?$|"
+                        r"^(?:/System/Volumes/Data)?(?:/private)?/var/db/dslocal/nodes/[^/]+/users/[^/]+\.plist$|"
+                        r"(?i:(?:^|[/\\])Windows[/\\]System32[/\\]config[/\\](?:SAM|SECURITY)(?:\.(?:bak|old|sav))?$)")
+
+
 def is_secret_path(p: str) -> bool:
-    return bool(SECRET_NAME.search(p) or SECRET_DIR.search(p))
+    return bool(SECRET_NAME.search(p) or SECRET_DIR.search(p) or (isinstance(p, str) and SYS_SECRET.search(p)))
 
 
 # r0335 (live run nabor-1 17.11, S034): a SAMPLE of `.env` (.env.example / .env.sample / .env.template) is a template of names, not a
@@ -1919,11 +1996,18 @@ _SUB_CMD_POS = re.compile(r"(?:^|[;\n]|&&|\|\||(?<![<>&|])\||(?<![<>&|])&|(?<![<
 _SUB_CODE_ARG = re.compile(r"(?:^|[ \t;&|(])(?:eval|(?:\S*/)?(?:ba|z|da|k|)sh[ \t]+-[A-Za-z]*c)[ \t]+\"$")
 
 
+_SUB_EVAL = re.compile(r"(?:^|[ \t;&|(])eval[ \t]+$")
+
+
 def _sub_where(before, q):
     """r0350: where a shown substitution is put in as its text -- the PROGRAM word (unquoted, at a command position: `$(echo rm) -rf ~`)
     or the whole line of `eval "$(..)"` / `bash -c "$(..)"` (the text runs as a command line). Elsewhere it stays an unknown value: an
-    argument built at run time keeps its own form (`touch $(echo x)` is not the plain `touch x` of the list)."""
+    argument built at run time keeps its own form (`touch $(echo x)` is not the plain `touch x` of the list).
+    r0355 (противник AOAI 19.11, «одно действие = один вердикт»): `eval $(echo "rm -rf ~/Videos")` UNQUOTED -- eval joins the words of
+    the output and reads them again as a line (the `~` is expanded then), the same line as `eval "$(..)"` -> "eval"."""
     tail = before[-200:]
+    if q is None and _SUB_EVAL.search(tail):
+        return "eval"
     return bool(_SUB_CMD_POS.search(tail)) if q is None else bool(_SUB_CODE_ARG.search(tail))
 
 
@@ -1933,6 +2017,12 @@ def _sub_put(val, q):
     quote: the same word, nothing in it expanded again). None: kept as an unknown value."""
     if val is None:
         return None
+    if q == "eval":
+        # r0355: the words of the output, joined by one blank, handed to eval as ONE word (eval reads the joined text again)
+        ws = val.split()
+        if not ws or "\n" in val.strip() or len(val) > 4096:
+            return None
+        return shlex.quote(" ".join(ws))
     if q is None:
         ws = val.split()
         if not ws or len(ws) > 64 or not all(_SUB_WORD.fullmatch(w) for w in ws) or re.match(r"[A-Za-z_][A-Za-z0-9_]*=", ws[0]) \
@@ -1983,7 +2073,8 @@ def _substitute(line, c, cwd, home, depth, project, data=False):
             _merge(c, classify(line[i + 1:j].replace("\\`", "`"), cwd, home, depth + 1, project, _budget=c.budget))
             if c.budget[0] < 0:
                 return None
-            put = None if data or not _sub_where("".join(out), q) else _sub_put(_sub_value(line[i + 1:j].replace("\\`", "`"), cwd, home, project), q)
+            w_ = None if data else _sub_where("".join(out), q)
+            put = None if not w_ else _sub_put(_sub_value(line[i + 1:j].replace("\\`", "`"), cwd, home, project), "eval" if w_ == "eval" else q)
             out.append("$__SUB__" if put is None else put)      # r0350: `echo rm` -> rm (the output the line shows)
             i = j + 1
             continue
@@ -2007,7 +2098,8 @@ def _substitute(line, c, cwd, home, depth, project, data=False):
                 # r0329: `sh <(echo 'X')`: the text the reader of /dev/fd/63 gets (bashparse._carried). r0350: None = a text the line does
                 # not show (`<(curl ..)`, `<(base64 -d ..)`): a shell / `source` that reads it runs what nobody saw (_psub_run)
                 _FRAMES[-1].setdefault("psub", []).append(pt_)
-            put = _sub_put(_sub_value(line[i + 2:j], cwd, home, project), q) if ch == "$" and not data and _sub_where("".join(out), q) else None
+            w_ = _sub_where("".join(out), q) if ch == "$" and not data else None
+            put = _sub_put(_sub_value(line[i + 2:j], cwd, home, project), "eval" if w_ == "eval" else q) if w_ else None
             out.append(put if put is not None else "$__SUB__" if ch == "$" else " /dev/fd/63")   # r0350: `$(printf %s rm)` -> rm
             i = j + 1
             continue
@@ -2452,7 +2544,10 @@ def _unwrap(argv, where=None):
                 info["xargs"] = True
             if base == "env":
                 info["env"] = True
+            i0_ = i
             i, iss, outs, seen = _unwrap_one(base, argv, i)
+            if base == "xargs":
+                info["xrepl"] = _xargs_repl(argv[i0_ + 1:i])     # r0354: `xargs -I{} sh -c 'rm -rf {}'` (_xargs_tail)
             info["issues"] += iss
             for o in seen:
                 if (base, o) in WRAP_RISKY and WRAP_RISKY[(base, o)] not in info["issues"]:
@@ -4243,6 +4338,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
                     if t.startswith("-"):
                         continue
                     nm = _record_assignment(t, home) or (re.match(r"[A-Za-z_][A-Za-z0-9_]*$", t) and t)
+                    if nm and os.path.basename(rest0[0]) == "export":
+                        fr.setdefault("exported", {})[nm] = _var_value(nm)    # r0354: handed to a child shell (_shell_c_resolved)
                     if nm and nm.upper().startswith("CLAUDE_"):
                         _claude_env(c, nm, t, home, "export %s" % nm)
             elif rest0 and os.path.basename(rest0[0]) == "for" and len(rest0) >= 4 and rest0[2] == "in" and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rest0[1]) \
@@ -4268,6 +4365,8 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
         full = argv
         _env_inject(full, c)                               # rt2810: PYTHONSTARTUP / NODE_OPTIONS=--require / PERL5OPT=-M ... (also `export`)
         _env_more(full, here, home, project, c)            # 10.11 (r0260): pagers, git config, search paths outside the project, proxies ...
+        if fr is not None:
+            fr["cmd_env"] = _cmd_env(argv, home)          # r0354: NAME=value before the command / after env (_shell_c_resolved)
         argv, winfo = _unwrap(argv, (here, home, project) if _fs.current().words_known() or "/" in "".join(argv[:4]) else None)
         via_xargs = winfo["xargs"]
         for why in winfo["issues"]:                        # 0.2.52: a wrapper read with doubt, or one that moves the command elsewhere
@@ -4350,7 +4449,7 @@ def _classify(cmd: str, cwd: str, home: str | None = None, _depth: int = 0, proj
             _run_text(c, hd_body, here, home, _depth, project)
         _psub_run(name, args, here, home, project, _depth, c)       # r0350: `bash <(echo X)`, `source <(..)`: X runs as a line of its own
         if via_xargs:
-            _xargs_tail(argv, name, args, fed if before in ("|", "|&") else None, here, home, project, _depth, c)
+            _xargs_tail(argv, name, args, fed if before in ("|", "|&") else None, here, home, project, _depth, c, repl=winfo.get("xrepl"))
         if not _runners.closed_grammar(name):
             with _VkRemote(c, name in ("ssh", "mosh")):    # r0331 (shadow only)
                 _carried(name, args, fed if before in ("|", "|&") else None, herestr, hd_body, here, home, project, _depth, c)
@@ -6397,10 +6496,168 @@ def _carried(name, args, fed, herestr, hd_body, cwd, home, project, depth, c):
                 c.carried.append(cut[:512])
 
 
+# r0354 (противник AOAI 19.11, «одно действие = один вердикт»): `docker run -v ~/Documents:/d alpine rm -rf /d`, `podman run -v ~:/h img
+# sh -c 'rm -rf /h/Documents'` were questions where `rm -rf ~/Documents` is refused (Н5): a bind mount makes the container's path THE
+# person's folder. The command after the image is read again with each mounted container path written as its host path (the longest
+# mount first); only the marks a carrier passes on (CARRIED_KINDS) that name a mounted host path are taken -- the container's own
+# files (`rm -rf /var/cache` inside the image) touch nothing of the person's.
+CONTAINER_RUNNERS = frozenset({"docker", "podman", "nerdctl"})
+_CR_VALUE_OPTS = frozenset({"-v", "--volume", "-e", "--env", "-w", "--workdir", "--name", "-p", "--publish", "--mount", "--entrypoint", "-u",
+                            "--user", "--network", "--net", "-h", "--hostname", "--env-file", "-l", "--label", "--platform", "-m", "--memory",
+                            "--cpus", "--device", "--add-host", "--cap-add", "--cap-drop", "--security-opt", "--tmpfs", "--ulimit", "--restart",
+                            "--pull", "--log-driver", "--log-opt", "--dns", "--gpus", "--ipc", "--pid", "--userns", "--volumes-from",
+                            "--health-cmd", "--shm-size", "--stop-signal", "--runtime", "--cidfile", "--label-file", "--group-add",
+                            "--expose", "--link", "--cgroupns", "--uts", "--isolation", "--stop-timeout", "--cpu-shares", "-c",
+                            "--memory-swap", "--cpuset-cpus", "--annotation", "--attach", "-a"})
+
+
+def _container_run(name, args, cwd, home, depth, project, c):
+    try:
+        a = [str(_unmask(x)) for x in args]
+        k = 0
+        while k < len(a) and a[k].startswith("-"):
+            k += 1 + (a[k] in ("-H", "--host", "--context", "--config", "-c", "--log-level"))      # the client's own options
+        if k < len(a) and a[k] == "container":
+            k += 1
+        if k >= len(a) or a[k] not in ("run", "create") or depth >= MAX_DEPTH:
+            return
+        k += 1
+        mounts = []
+        while k < len(a) and a[k].startswith("-") and a[k] != "--":
+            o = a[k]
+            val = None
+            if "=" in o and o.startswith("--"):
+                o, val = o.split("=", 1)
+            elif o in _CR_VALUE_OPTS and k + 1 < len(a):
+                val = a[k + 1]
+                k += 1
+            elif re.fullmatch(r"-v.+", o):
+                o, val = "-v", o[2:]
+            k += 1
+            if o in ("-v", "--volume") and isinstance(val, str):
+                parts = val.split(":")
+                if len(parts) >= 2 and parts[1].startswith("/"):
+                    mounts.append((parts[0], parts[1]))
+            elif o == "--mount" and isinstance(val, str):
+                kv = dict(x.split("=", 1) for x in val.split(",") if "=" in x)
+                src = kv.get("source") or kv.get("src")
+                dst = kv.get("target") or kv.get("dst") or kv.get("destination")
+                if kv.get("type", "volume") == "bind" and src and dst and dst.startswith("/"):
+                    mounts.append((src, dst))
+        if k < len(a) and a[k] == "--":
+            k += 1
+        inner = a[k + 1:]                                # after the image
+        hosts = []
+        for src, dst in mounts:
+            e = _expand(src, cwd, home)
+            hp = _abspath(e, cwd, home) if e is not None else None
+            if isinstance(hp, str) and hp.startswith("/"):
+                hosts.append((os.path.normpath(hp), os.path.normpath(dst).rstrip("/") or "/"))
+        if not inner or not hosts:
+            return
+        hosts.sort(key=lambda t: -len(t[1]))
+
+        def _map(w):
+            for hp, dst in hosts:
+                w = re.sub(r"(?<![\w./~-])" + re.escape(dst) + r"(?=/|$|[\s'\";|&)])", lambda _m, _h=hp: _h, w)
+            return w
+        mapped = [_map(w) for w in inner]
+        if mapped == inner:
+            return
+        d = classify(" ".join(shlex.quote(w) for w in mapped), cwd, home, depth + 1, project, _budget=c.budget)
+        hk = [hp for hp, _ in hosts]
+        hm = os.path.normpath(home) if isinstance(home, str) and home.startswith("/") else None
+        for x in d.danger:
+            kd, _, det = x.partition(":")
+            if kd not in CARRIED_KINDS:
+                continue
+            dd = det
+            if hm and dd.startswith("~"):
+                dd = hm + dd[1:]
+            if any(dd == h or dd.startswith(h.rstrip("/") + "/") or (h + "/") in dd or dd.endswith(h) for h in hk):
+                c.add(kd, det)
+    except Exception:  # noqa: BLE001 -- an extra reading only: nothing added
+        return
+
+
+# r0354 (противник AOAI 19.11, «одно действие = один вердикт»): `bash -c 'rm -rf "$0"' ~/Documents`, `echo ~/Documents | xargs bash -c
+# 'rm -rf "$0"'`, `env BAD="rm -rf ~/Documents" bash -c '$BAD'`, `X=~/Documents bash -c 'rm -rf $X'`, `export X=..; bash -c '..$X..'`
+# were questions (opaque: a path from expansion) where `rm -rf ~/Documents` is refused (Н5). The shell's text is read ALSO with its
+# positional words ($0 $1 .. "$@" "$*", given after the text) and the variables handed to it (an assignment before the command, env
+# NAME=value, an export earlier on the line) put in. Only the marks a carrier passes on (CARRIED_KINDS) are taken: an extra reading may
+# only tighten. A value that would be cut differently than written (blanks inside double quotes) leaves the text unread, as before.
+_SHC_REF = re.compile(r"\$(?:\{(\d+|@|\*|[A-Za-z_][A-Za-z0-9_]*)\}|(\d|@|\*)|([A-Za-z_][A-Za-z0-9_]*))")
+_SHC_SAFE = re.compile(r"[\w./~+%:,=@^-]*")
+
+
+def _shell_c_resolved(text, pos, cwd, home, depth, project, c):
+    try:
+        text = _unmask(text)
+        if not isinstance(text, str) or "$" not in text or depth >= MAX_DEPTH or len(text) > 4096:
+            return
+        pos = [str(_unmask(a)) for a in pos][:32]
+        fr = _frame()
+        env = dict((fr or {}).get("exported") or {})
+        env.update((fr or {}).get("cmd_env") or {})
+        hm = home if isinstance(home, str) and home.startswith("/") else None
+
+        def _val(v):
+            if hm and (v == "~" or v.startswith("~/")):
+                return hm + v[1:]
+            return v
+        out, i, n, sq, dq, hit = [], 0, len(text), False, False, False
+        while i < n:
+            ch = text[i]
+            if ch == "'" and not dq:
+                sq = not sq
+            elif ch == '"' and not sq:
+                dq = not dq
+            elif ch == "\\" and not sq and i + 1 < n:
+                out.append(text[i:i + 2])
+                i += 2
+                continue
+            elif ch == "$" and not sq:
+                m = _SHC_REF.match(text, i)
+                if m:
+                    ref = m.group(1) or m.group(2) or m.group(3)
+                    val = None
+                    if ref in ("@", "*"):
+                        ws = [_val(w) for w in pos[1:]]
+                        if ws and all(_SHC_SAFE.fullmatch(w) for w in ws):
+                            val = " ".join(ws)
+                        elif ws and not dq:
+                            val = " ".join(shlex.quote(w) for w in ws)
+                    elif ref.isdigit():
+                        k = int(ref)
+                        val = _val(pos[k]) if k < len(pos) else None
+                    elif ref in env and isinstance(env[ref], str):
+                        val = _val(env[ref])
+                    if val is not None:
+                        if dq and not _SHC_SAFE.fullmatch(val):
+                            return                      # cut differently than written: not read this way
+                        out.append(val)
+                        i = m.end()
+                        hit = True
+                        continue
+            out.append(ch)
+            i += 1
+        if not hit:
+            return
+        d = classify("".join(out), cwd, home, depth + 1, project, _budget=c.budget)
+        for x in d.danger:
+            k, _, det = x.partition(":")
+            if k in CARRIED_KINDS:
+                c.add(k, det)
+    except Exception:  # noqa: BLE001 -- an extra reading only: nothing added
+        return
+
+
 def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=False, nonfile=frozenset()):
     """lw_plain (0.2.53): a command of LW_CMDS whose every path _local_write read for sure; its writes are already judged (exactly: a
     directory destination is not itself written, an option's value is not a file), so the coarse extraction below is skipped for it."""
     short, long_ = _flags(args)
+    if name in CONTAINER_RUNNERS:
+        _container_run(name, args, cwd, home, depth, project, c)       # r0354: a bind mount maps the container's path to the person's
     ops = _operands(args)
     paths = [o for o in ops if not re.search(r"[$`]", o)]
     uploads = [m.group(1) for a in args for m in [re.search(r"(?:^|=)@([^@\s]+)$", a)] if m]     # curl -d @file, -F f=@file
@@ -6516,6 +6773,10 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
             for o in (ops or ["(stdin)" if via_xargs else "(none)"]):
                 if re.search(r"[$`*?]", o) or o.startswith("("):
                     c.add("rm-rf", o)
+                    gk_ = re.fullmatch(r"(.+?)/+(\*|\.\*|\.\[!.\]\*|\.\?\*)", o) if not re.search(r"[$`]", o) else None
+                    if gk_ and not re.search(r"[*?\[]", gk_.group(1)) and _home_key(_abspath(gk_.group(1), cwd, home), home):
+                        # r0354: every file of a key folder of the home (`rm -rf ~/Pictures/*`) is that folder (Н5), as `~/*` is the home
+                        c.add("rm-rf", _home_key(_abspath(gk_.group(1), cwd, home), home) + "/" + gk_.group(2))
                     continue
                 p_ = _abspath(o, cwd, home)
                 if _deep_inside(p_, project, home):
@@ -6573,6 +6834,10 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
         return
     if name in ("dd",):
         for a in args:
+            # r0355 (RAZBOR 20.11 п.6): `dd if=/dev/disk2 of=x.img` reads a whole disk / partition below every file system -- every file of
+            # every account, keys and passwords too, copied into one image. Asked (the disk mark; a write over a disk stays Н5 below)
+            if a.startswith("if=") and _RAW_DISK_DEV.match(a[3:].strip()):
+                c.add("disk", "dd %s (reads the whole disk)" % a[:60])
             if a.startswith("of="):
                 tgt = a[3:]
                 if tgt.startswith("/dev/") and tgt not in SAFE_SINKS:
@@ -6597,6 +6862,7 @@ def _one(name, args, cwd, home, c, via_xargs, depth, project=None, lw_plain=Fals
             i = next((k for k, a in enumerate(args) if a.startswith("-") and "c" in a[1:] and not a.startswith("--")), None)
             if i is not None and i + 1 < len(args):
                 _merge(c, classify(args[i + 1], cwd, home, depth + 1, project, _budget=c.budget))
+                _shell_c_resolved(args[i + 1], args[i + 2:], cwd, home, depth, project, c)
         elif via_xargs:
             c.add("opaque", name + " via xargs")
             c.opaque = True
@@ -7486,6 +7752,8 @@ QUIET_ON = "(quiet mode on) "      # 0.2.92 (r0262): the danger detail of the ag
 WITNESS_STATE_FLAGS = frozenset({"--trust", "--undo", "--undo-strict", "--setup-strict", "--force", "--reset", "--uninstall"})   # 0.2.91
 WITNESS_READ_ONLY = frozenset({"--quiet-offer", "--quiet-no", "--doctor", "--help", "-h"})   # r0263: deus-witness-hook alone with one of these
 CRON_LIKE = {"crontab"}          # `at now -f f.sh` runs a job now (a listed carrier in rt6); the 0.2.82 sandbox gate keeps `at` as an exit
+_RAW_DISK_DEV = re.compile(r"^/dev/r?(?:disk\d+(?:s\d+)*|sd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|hd[a-z]\d*|vd[a-z]\d*|xvd[a-z]\d*|mmcblk\d+(?:p\d+)?|"
+                           r"md\d+|dm-\d+|mapper/[^/\s]+|loop\d+|block/[^/\s]+|disk/by-[a-z]+/[^/\s]+)$")
 FIND_WRITERS = {"rm", "rmdir", "unlink", "shred", "mv", "cp", "tee", "chmod", "chown", "truncate", "install", "ln", "touch", "dd", "sed", "perl", "sh", "bash", "zsh", "python3", "python", "node"}
 LAUNCH_SUBS = {"load", "unload", "bootstrap", "bootout", "enable", "disable", "submit", "kickstart", "setenv", "unsetenv", "remove", "start", "stop", "attach"}
 INSTALLERS = {"pip": {"install", "download"}, "pip3": {"install", "download"}, "pipx": {"install", "upgrade", "run"}, "uv": {"add", "sync", "lock", "tool"},
@@ -7738,12 +8006,16 @@ def _defense(name, args, ops, short, long_, c):
 # `persist`, FORBIDDEN_AUTOSTART).
 WITNESS_OFF = "witness-off"
 WITNESS_NAME = re.compile(r"(?i)deus[\s_.-]*witness")
-_WITNESS_PKG = re.compile(r"(?i)^deus[-_.]+witness(?:[-_.]+(?:hook|mcp))?(?:\[[^\]]*\])?(?:\s*(?:[<>=!~;@]|\s).*)?$")
+_WITNESS_PKG = re.compile(r"(?i)^(?:py3-|python3?-)?deus[-_.]+witness(?:[-_.]+(?:hook|mcp))?(?:\[[^\]]*\])?(?:\s*(?:[<>=!~;@]|\s).*)?$")
 _WITNESS_PROGS = frozenset({"deus-witness", "deus-witness-hook", "deus-witness-mcp"})
 _WITNESS_OFF_SUBS = frozenset({"unlock", "disable", "off", "pause", "stop", "uninstall", "remove", "kill", "bypass", "deactivate", "suspend"})
 _PKG_REMOVE = {"pipx": {"uninstall", "uninject"}, "poetry": {"remove"}, "pdm": {"remove"}, "conda": {"remove", "uninstall"},
                "mamba": {"remove", "uninstall"}, "micromamba": {"remove", "uninstall"}, "brew": {"uninstall", "remove", "rm"},
-               "rye": {"remove", "uninstall"}, "hatch": {"remove"}}
+               "rye": {"remove", "uninstall"}, "hatch": {"remove"},
+               # r0352 tail (r0354): the system's package managers (Alpine's py3-deus-witness, Debian's python3-deus-witness ...)
+               "apk": {"del"}, "apt": {"remove", "purge", "autoremove"}, "apt-get": {"remove", "purge", "autoremove"},
+               "aptitude": {"remove", "purge"}, "dnf": {"remove", "erase"}, "yum": {"remove", "erase"}, "zypper": {"remove", "rm"},
+               "port": {"uninstall"}, "snap": {"remove"}}
 # where the witness lives on a machine (outside a project): the Python package, its programs, Claude Code's plugin, pipx / uv tool
 # environments, its key and state. A path whose any part names the witness under one of these places.
 _WITNESS_FILE = re.compile(
@@ -8351,6 +8623,8 @@ _RUN_API = re.compile(r"(os\.system|os\.popen|subprocess\.(?:run|call|check_call
                       r"(?<![\w.])(?:execSync|spawnSync|execFileSync|execFile|exec|spawn|system|popen|IO\.popen|Open3\.\w+|commands\.getoutput|pty\.spawn|os\.exec[lv]p?e?|os\.spawn[lv]p?e?))\s*\(")
 _DEL_FN = {"shutil.rmtree", "os.remove", "os.unlink", "os.rmdir", "os.removedirs", "rmtree", "fs.rmSync", "fs.rm", "fs.unlinkSync", "fs.unlink", "fs.rmdirSync",
            "fs.rmdir", "fs.promises.rm", "fs.promises.unlink", "rimraf", "rimraf.sync", "FileUtils.rm_rf", "FileUtils.rm_r", "FileUtils.rm", "File.delete", "File.unlink", "unlink"}
+_DEL_TREE_FN = {"shutil.rmtree", "rmtree", "rimraf", "rimraf.sync", "FileUtils.rm_rf", "FileUtils.rm_r"}     # r0354: recursive by themselves
+_DEL_TREE_OPT_FN = {"fs.rmSync", "fs.rm", "fs.promises.rm", "fs.rmdirSync", "fs.rmdir"}                       # r0354: with {recursive: true}
 _READ_FN = {"fs.readFileSync", "fs.readFile", "fs.createReadStream", "fs.promises.readFile", "File.read", "IO.read", "File.binread"}
 MAX_CODE_SCAN = 64 * 1024
 
@@ -8479,6 +8753,12 @@ def _code_canon(code, home, who):
                     orig, al = bits[0], (bits[2] if len(bits) == 3 and bits[1] == "as" else bits[0])
                     if re.fullmatch(r"[A-Za-z_]\w*", al) and orig not in ("*",):
                         code = re.sub(r"(?<![\w.])%s\s*(?=[(.])" % re.escape(al), "%s.%s" % (mod, orig), code)
+        # r0355 (противник AOAI 19.11, «одно действие = один вердикт»): `__import__('os').system(..)`, `importlib.import_module('os')
+        # .system(..)` are `os.system(..)` (the module the call names, written another way)
+        code = re.sub(r"(?:__import__|importlib\s*\.\s*import_module)\s*\(\s*(['\"])(os|subprocess|shutil|pathlib|pty)\1\s*\)\s*\.", r"\2.", code)
+        w_ = who.rsplit("/", 1)[-1] if isinstance(who, str) else ""
+        if w_.startswith(("ruby", "perl", "php")):
+            code = _code_canon_rpp(code, w_)
         code = re.sub(r"require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)", "child_process", code)
         code = re.sub(r"\bimport\s+\*\s+as\s+(\w+)\s+from\s+['\"](?:node:)?child_process['\"]", r"\1 = child_process", code)
         for m in re.finditer(r"([A-Za-z_$][\w$]*)\s*=\s*child_process\b(?!\.)", code):
@@ -8501,6 +8781,89 @@ def _code_canon(code, home, who):
     except (re.error, RecursionError):                 # noqa: PERF203 -- the code as it was: judged as before
         return code
     return code
+
+
+_RPP_LIT = r"(?:\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*')"
+_RPP_BARE = re.compile(r"(?<![\w.$:@>])(system|exec|spawn|FileUtils\.(?:rm_rf|rm_r|rm_f|rm|remove_dir|remove_entry\w*|rmtree)|File\.(?:delete|unlink)|"
+                       r"unlink|rmtree|remove_tree)[ \t]+(" + _RPP_LIT + r"(?:[ \t]*,[ \t]*(?:" + _RPP_LIT + r"|:\w+|\w+:[ \t]*\w+))*)")
+_PERL_SET = re.compile(r"(?:\b(?:my|our|local)[ \t]+)?\$([A-Za-z_]\w*)[ \t]*=[ \t]*(" + _RPP_LIT + r")[ \t]*;")
+
+
+def _code_canon_rpp(code, who):
+    """r0355 (противник AOAI 19.11, «одно действие = один вердикт»): Ruby / Perl call without parentheses -- `system "rm -rf ~/Videos"`,
+    `FileUtils.rm_rf "~/Videos"`, `unlink "~/x"` -- is the call with them; Perl / PHP `$d = "~/Music"; system("rm -rf $d")`: a variable
+    set ONCE to a literal is put into the double-quoted texts after it (Perl / PHP interpolate them) and in place of a bare `$d`
+    argument; PHP `getenv("HOME")."/x"`, Perl `$ENV{HOME}."/x"` are "~/x". A value with `$` / `@` / a quote in it is left as it was."""
+    code = re.sub(r"(?:getenv\s*\(\s*(['\"])HOME\1\s*\)|\$_SERVER\s*\[\s*(['\"])HOME\2\s*\]|\$_ENV\s*\[\s*(['\"])HOME\3\s*\]|\$ENV\s*\{\s*(['\"]?)HOME\4\s*\})"
+                  r"\s*\.\s*(['\"])", lambda m: m.group(5) + "~", code)
+    code = re.sub(r"\"\$ENV\{HOME\}(?=[/\"])|\"\{\$_SERVER\['HOME'\]\}(?=[/\"])", "\"~", code)
+    if who.startswith(("ruby", "perl")):
+        code = _RPP_BARE.sub(lambda m: "%s(%s)" % (m.group(1), m.group(2)), code)
+    if not who.startswith(("perl", "php")):
+        return code
+    sets = {}
+    for m in _PERL_SET.finditer(code):
+        sets.setdefault(m.group(1), []).append(m)
+    for nm, ms in list(sets.items())[:16]:
+        if len(ms) != 1:
+            continue
+        m = ms[0]
+        lit = m.group(2)
+        val = lit[1:-1]
+        if re.search(r"[$@\"'\\`]", val) or (lit[0] == '"' and "\\" in val):
+            continue
+        head, tail = code[:m.end()], code[m.end():]
+        if re.search(r"\$%s\s*(?:\.=|=(?!=)|\+\+|--)" % re.escape(nm), tail):
+            continue                                    # set again later: not one value
+
+        def _in_dq(mq, _nm=nm, _v=val):
+            t = mq.group(0)
+            if t[0] != '"':
+                return t
+            return re.sub(r"\$(?:\{%s\}|%s(?![\w\[{]|->))" % (re.escape(_nm), re.escape(_nm)), lambda _m: _v, t)
+        tail = re.sub(_RPP_LIT, _in_dq, tail)
+        # a bare `$d` argument (outside any text) -> the literal
+        parts = re.split("(" + _RPP_LIT + ")", tail)
+        for k in range(0, len(parts), 2):
+            parts[k] = re.sub(r"\$%s(?![\w\[{]|\s*->)" % re.escape(nm), lambda _m, _v=val: '"%s"' % _v, parts[k])
+        code = head + "".join(parts)
+    return code
+
+
+# r0355 (противник AOAI 19.11: `perl -e 'unlink glob("~/Pictures/*")'`, `php -r 'array_map("unlink", glob(getenv("HOME")."/Pictures/*"))'`
+# were questions where `rm -f ~/Pictures/*` is refused, Н5 (every file of a key folder = the folder, r0354)): code that deletes EVERY
+# name a glob gives is `rm -f GLOB`. The glob is read where the code shows it whole; the line `rm -f GLOB` is judged as typed.
+_GL_ARG = r"([^()\n]*(?:\([^()\n]*\)[^()\n]*)*)"
+_GLOB_DEL = [
+    re.compile(r"\bunlink\s*\(?\s*glob\s*\(?\s*(" + _RPP_LIT + r")"),                                               # perl unlink glob "x"
+    re.compile(r"\bunlink\s*\(?\s*<([^<>\s;]+)>"),                                                                  # perl unlink <~/x/*>
+    re.compile(r"\barray_map\s*\(\s*(['\"])unlink\1\s*,\s*glob\s*\(" + _GL_ARG + r"\)"),                           # php
+    re.compile(r"\bforeach\s*\(\s*glob\s*\(" + _GL_ARG + r"\)\s*as\s*\$(\w+)\s*\)\s*\{?\s*@?unlink\s*\(\s*\$\2\s*\)"),
+    re.compile(r"\bfor\s+(\w+)\s+in\s+(?:glob\.i?glob|glob)\s*\(" + _GL_ARG + r"\)\s*:\s*(?:os\.(?:remove|unlink)\s*\(\s*\1\s*\)|"
+               r"(?:pathlib\.)?Path\s*\(\s*\1\s*\)\s*\.\s*unlink\s*\()"),                                              # python loop
+    re.compile(r"\[\s*os\.(?:remove|unlink)\s*\(\s*(\w+)\s*\)\s*for\s+\1\s+in\s+(?:glob\.i?glob|glob)\s*\(" + _GL_ARG + r"\)"),
+    re.compile(r"\bmap\s*\(\s*os\.(?:remove|unlink)\s*,\s*(?:glob\.i?glob|glob)\s*\(" + _GL_ARG + r"\)"),
+    re.compile(r"\b(?:File\.(?:delete|unlink)|FileUtils\.rm(?:_f|_rf|_r)?)\s*\(?\s*\*?\s*(?:Dir\.glob\s*\(" + _GL_ARG + r"\)|Dir\s*\[" + _GL_ARG + r"\])"),
+    re.compile(r"\bDir\.glob\s*\(" + _GL_ARG + r"\)\s*\.\s*each\s*(?:\{|do)\s*\|\s*(\w+)\s*\|\s*(?:File\.(?:delete|unlink)|FileUtils\.rm(?:_f)?)\s*\(?\s*\2\b"),
+]
+
+
+def _code_glob_del(code, c, cwd, home, project, depth, pyvars, ops):
+    for rx in _GLOB_DEL:
+        for m in rx.finditer(code):
+            expr = next((g for g in m.groups() if isinstance(g, str) and g.strip() and not re.fullmatch(r"['\"]|\w+", g.strip())), None)
+            if expr is None:
+                continue
+            e = expr.strip()
+            if rx.pattern.startswith(r"\bunlink\s*\(?\s*<"):
+                e = repr(e)
+            path = _code_path(e, pyvars, home, ops)
+            if not isinstance(path, str) or not re.search(r"[*?]", path) or not re.fullmatch(r"[\w./~*?+@%:,-]+", path):
+                continue
+            try:
+                _merge(c, classify("rm -f " + path, cwd, home, depth + 1, project, _budget=c.budget))
+            except Exception:  # noqa: BLE001 -- an extra reading only
+                pass
 
 
 _CODE_DEFENSE = re.compile(r"(?:removexattr|xattr\.remove|xattr\.delete|xattr\.removexattr)\s*\([^)]*com\.apple\.(?:quarantine|provenance)", re.I)
@@ -8620,6 +8983,11 @@ def _code_fs_scan1(code, c, who, cwd, home, project, depth, operands=()):
                 c.delete(p_)
             else:
                 c.add("rm-rf", "%s(%s)" % (fn, p_))
+                # r0354 (противник AOAI 19.11, «одно действие = один вердикт»): a RECURSIVE delete of a key folder of the home by code
+                # (`shutil.rmtree('~/Music')`, FileUtils.rm_rf, rimraf, fs.rmSync(.., {recursive: true})) is `rm -rf ~/Music` (Н5)
+                if (fn in _DEL_TREE_FN or (fn in _DEL_TREE_OPT_FN and re.match(r"[^;\n]{0,200}?\brecursive\s*:\s*true", code[a_end:a_end + 240]))) \
+                        and _home_key(p_, home):
+                    c.add("rm-rf", _home_key(p_, home))
         elif kind == "write":
             _write_target(path, cwd, home, c, c.writes)
         else:
@@ -8630,6 +8998,7 @@ def _code_fs_scan1(code, c, who, cwd, home, project, depth, operands=()):
         # r0319 (Б3): code that names the home folder and calls a file method on a path object this scan did not follow
         # (`h = Path.home(); (h/'.ssh'/'id_ed25519').read_text()`): the path is not shown -> asked, never silent
         c.add("opaque", "%s code: a file call on a home-folder path not shown" % who)
+    _code_glob_del(code, c, cwd, home, project, depth, pyvars, ops)   # r0355: `unlink glob("~/Pictures/*")` = `rm -f ~/Pictures/*`
     _pyform_holes(raw_, c, who, cwd, home, ops)         # r0349: what the code BINDS its file calls to (pyform), against this scan
     _code_runs(code, c, who, cwd, home, project, depth)
 

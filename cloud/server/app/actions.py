@@ -708,6 +708,77 @@ def git_kept_texts(ctx, agent_id, mark, is_dir, args, upto_rid, since):
     return out
 
 
+_CODE_EXT = re.compile(r"(?i)\.(py|pyw|rb|js|mjs|cjs|ts|pl|pm|php|lua)$")
+_CODE_BANG = re.compile(r"^#!\s*\S*?(?:env\s+)?(python[0-9.]*|node|ruby|perl|php|lua)\b")
+# the articles of what CANNOT be undone or runs on by itself (Н5, Н4, Н3, Н10). A written text that names a secret / a push / a remote
+# shell stays the hold it was (r0271: a security test that names key paths is written and run all day; its runs are the person's to see)
+_WA_ARTICLES = frozenset({constitution.WITNESS_OFF, constitution.AUTOSTART, constitution.WIPE, constitution.DEFENSE})
+
+
+def written_article(ctx, agent_id, files, args, t0):
+    """r0354 (противник AOAI 19.11, «одно действие = один вердикт»; скрипт-посредник): the agent writes `rm -rf ~/Music` (or
+    shutil.rmtree('~/Music'), cat ~/.ssh/id_rsa, an rc-file append ...) into a file and runs it -- the run was held as a written run
+    (ESCALATE_WRITTEN_RUN, a question) where the same text typed into the line is refused. The kept text of each written file this line
+    runs (wrun "text", what the run's page shows) is read as the line it is (a shell text: bashparse.classify; code: the code scan) and
+    judged by the immutable articles (constitution.check; Н7 hidden characters are not judged on a file's text). -> (code, detail) of
+    the first article broken, or None. A file whose text the witness did not keep (a copy, a download): None (held as before)."""
+    from app.hookjudge import bashparse as _bp
+    w = args.get("_witness") if isinstance(args, dict) and isinstance(args.get("_witness"), dict) else {}
+    pl = strict_policy.PLACE.get()
+    pl = pl if isinstance(pl, dict) else {}
+    home = w.get("home") if isinstance(w.get("home"), str) else pl.get("home")
+    project = pl.get("project") or w.get("project")
+    project = project if isinstance(project, str) and project.startswith("/") else None
+    cwd = w.get("cwd") if isinstance(w.get("cwd"), str) else (pl.get("cwd") or project or "/")
+    hm = home if isinstance(home, str) and home.startswith("/") else None
+    line = args.get("command") if isinstance(args, dict) and isinstance(args.get("command"), str) else None
+    if not line:
+        return None
+    # only a file this line CERTAINLY runs (its run targets, the parser's record): a run matched by the fail-closed name rule
+    # (`python3 -m pytest` after a write of src/x.py) stays the hold it was -- a refusal is only for what is certain
+    tg = set()
+    try:
+        tg |= {os.path.normpath(t) for t in strict_policy.run_targets(_expand_home(line, home), cwd) if isinstance(t, str)}
+    except Exception:      # noqa: BLE001
+        pass
+    try:
+        from app.hookjudge import judge as _jd
+        from app import vektor as _vk
+        r_ = _vk.run_paths(_jd._LAST_PLACE.get(), home)
+        if r_ is not None:
+            tg |= {os.path.normpath(t) for t in r_[0] if isinstance(t, str)}
+    except Exception:      # noqa: BLE001
+        pass
+    tg = {t[len("/private"):] if t.startswith("/private/") else t for t in tg}
+    files = [f for f in files if isinstance(f, str) and (f[len("/private"):] if f.startswith("/private/") else f) in tg]
+    if not files:
+        return None
+    wi = written_run_info(ctx, agent_id, t0 - 60 * (getattr(ctx.cfg, "written_lookback_min", None) or WRITTEN_LOOKBACK_MIN))
+    for f in list(files)[:16]:
+        t = (wi.get(f) or {}).get("text") if isinstance(wi.get(f), dict) else None
+        if not isinstance(t, str) or not t.strip() or len(t) > _bp.MAX_CODE_SCAN:
+            continue
+        if _CODE_EXT.search(f) or _CODE_BANG.match(t):
+            m_ = _CODE_BANG.match(t)
+            who = m_.group(1) if m_ else {"py": "python3", "pyw": "python3", "rb": "ruby", "js": "node", "mjs": "node", "cjs": "node",
+                                          "ts": "node", "pl": "perl", "pm": "perl", "php": "php", "lua": "lua"}[_CODE_EXT.search(f).group(1).lower()]
+            c = _bp.Command()
+            c.budget = [_bp.MAX_NESTED]
+            _bp._code_fs_scan(t, c, who, cwd, hm or "/nonexistent-home", project, 0)
+            cmd = None
+        else:
+            c = _bp.classify(t, cwd, hm, project=project)
+            cmd = t
+        a_ = {"_witness": {"danger": list(c.danger), "project": project, "commands": list(c.heads), "writes": list(c.writes),
+                           "carried": list(getattr(c, "carried", []) or [])[:16]}}
+        if cmd is not None:
+            a_["command"] = cmd
+        r = constitution.check("Bash", a_)
+        if r is not None and r[0] in _WA_ARTICLES:
+            return r
+    return None
+
+
 def written_run_info(ctx, agent_id, since, with_cut=False, src=None):
     """-> {path: {"text"?, "by"?, "dir"?}}: the risky writes of this agent since `since` (the latest write of a file wins).
     with_cut=True -> (that, cut): cut is True when the query limit dropped rows (the caller must not trust the map to be complete).
@@ -2652,6 +2723,13 @@ def _do_action(ctx, agent, tool, args, capable=True, via=None, quiet=False, crea
                 if gate is None and dv == "allow":
                     gate = ("hold", "ESCALATE_WRITTEN_RUN")
             wrf = wrf + sorted(wsoft_)
+        if wrf and (gate is None or gate[0] != "deny"):
+            try:
+                art_ = written_article(ctx, agent["id"], wrf, args, t0)
+            except Exception:      # noqa: BLE001  an extra reading only: the run stays what it was (held / asked)
+                art_ = None
+            if art_ is not None:
+                gate, rp = ("deny", art_[0]), None   # r0354: the written text breaks an article: refused as the same text typed is
         if wrf and in_sbx:
             # 04.11 (OTCHET-0258 D8, rule bcc4411): in the strict sandbox under the code option a written file runs with a receipt, no
             # hold -- unless its written text VISIBLY reaches a gate (G1-G4, the agent's harness: execguard.gate_text).

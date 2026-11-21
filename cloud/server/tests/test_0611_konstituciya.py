@@ -112,13 +112,20 @@ def test_p3_adversary_wrappers_outside_sandbox_stay_asked(client, owner, tmp_pat
     assert _asked(d.send(variant)), variant
 
 
+HOLD_G4 = "import subprocess\nsubprocess.run(['crontab', '-l'])\n"     # r0354: gate G4 (execguard), no article (a crontab read)
+
+
 @pytest.mark.parametrize("kind", ["G4", "claude"])     # r0261 (closed list): G3 runs in the sandbox now -- the kernel-gates test below
 def test_p3_adversary_visible_gate_stays_held_in_sandbox_even_on_a_listed_line(client, owner, tmp_path, monkeypatch, kind):
     d = _mk(client, owner, tmp_path, LDev, "g" + kind)
     _write(d, "src/g.py", "import os\n" + GATE_TEXTS[kind])
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", _fact(d))
     got = d.send("python3 src/g.py")
-    PRED = ("defer", "ESCALATE_WRITTEN_RUN", "held")
+    PRED = ("deny", "FORBIDDEN_AUTOSTART", "denied")       # r0354: the text writes a start-up place (Н4): refused as typed (was held)
+    assert _rows(got)[-1] == PRED, (kind, got)
+    _write(d, "src/h.py", "import os\n" + HOLD_G4)
+    got = d.send("python3 src/h.py")
+    PRED = ("defer", "ESCALATE_WRITTEN_RUN", "held")        # a G4 text that is no article: held in the sandbox, as before
     assert _rows(got)[-1] == PRED, (kind, got)
 
 
@@ -129,7 +136,7 @@ def test_p3_kernel_gates_of_a_written_file_run_in_sandbox(client, owner, tmp_pat
     d = _mk(client, owner, tmp_path, LDev, "k" + kind)
     _write(d, "src/g.py", "import os\n" + GATE_TEXTS[kind])
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", _fact(d))
-    PRED = False
+    PRED = kind == "G1"                                     # r0354: G1's text wipes ~/Documents (Н5): refused as typed, sandbox or not
     assert _asked(d.send("python3 src/g.py")) is PRED
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", None)
     PRED = True
@@ -147,7 +154,7 @@ def test_p3_symlink_to_gate_file_is_held_in_sandbox(client, owner, tmp_path, mon
 # ---- a file the owner let go does not hold every later line (the corpus' 34 holds on one released directory) ----------------------
 def test_p3_released_gate_file_does_not_hold_again_in_sandbox(client, owner, tmp_path, monkeypatch):
     d = _mk(client, owner, tmp_path, LDev, "rel")
-    _write(d, "src/g.py", "import os\n" + GATE_TEXTS["G4"])       # 10.11: G4 (G2 runs in the sandbox now)
+    _write(d, "src/g.py", "import os\n" + HOLD_G4)              # 10.11: G4 (G2 runs in the sandbox now); r0354: a G4 that is no article
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", _fact(d))
     got = d.send("python3 src/g.py")
     r0 = got[-1][1]
@@ -159,8 +166,9 @@ def test_p3_released_gate_file_does_not_hold_again_in_sandbox(client, owner, tmp
     for line in ("python3 src/other.py", "python3 src/g.py ", "cat src/g.py | head -1; python3 src/other.py "):
         got = d.send(line)
         assert not _asked(got), (line, got)                 # PRED: the owner saw g.py; nothing new to show
-    # adversary: a NEW write of g.py with a gate text is unseen again -> held again (r0261: "claude", G3 runs in the sandbox now)
-    _write(d, "src/g.py", "import os\n" + GATE_TEXTS["claude"])
+    # adversary: a NEW write of g.py with a gate text is unseen again -> held again (r0261: "claude", G3 runs in the sandbox now;
+    # r0354: a G4 text that is no article -- "claude" writes ~/.claude/settings.json, Н4, refused on a certain run of g.py)
+    _write(d, "src/g.py", "import os\nimport subprocess\nsubprocess.run(['crontab', '-l'])  # v2\n")
     got = d.send("python3 src/other.py  ")
     assert _rows(got)[-1] == ("defer", "ESCALATE_WRITTEN_RUN", "held"), got
 

@@ -26,7 +26,8 @@ from __future__ import annotations
 import json
 import re
 
-RUNNER = {"make": "make", "just": "just", "task": "task", "npm": "npm run", "tox": "tox", "nox": "nox"}
+RUNNER = {"make": "make", "just": "just", "task": "task", "npm": "npm run", "tox": "tox", "nox": "nox", "lint": "pylint",
+          "cmake": "cmake --build", "setup": "pip install", "conda": "conda activate", "compose": "docker compose up"}
 DETAIL = "the agent added a command that will run when you run %s: %s (write to %s)"
 DETAIL_HIDDEN = "the agent wrote a text Witness cannot read into the file %s runs (write to %s)"
 RUNS_WHEN = "will run when you run "
@@ -53,7 +54,65 @@ def kind(path):
         return "tox"
     if b == "noxfile.py":
         return "nox"
+    if b in _LINT_FILES:
+        return "lint"
+    if b == "CMakeLists.txt" or (b.endswith(".cmake") and "/build/" not in p and "/_deps/" not in p):
+        return "cmake"
+    if b == "setup.py" and "/site-packages/" not in p and "/node_modules/" not in p:
+        return "setup"
+    if _CONDA.search(p):
+        return "conda"
+    if _COMPOSE.search(b):
+        return "compose"
     return None
+
+
+# r0355 (противник AOAI 19.11, RAZBOR 20.11 п.1: `envs/myenv/etc/conda/activate.d/x.sh` with `curl .. | bash` / `rm -rf ~/Library/Photos`
+# written silently): conda runs every script of an environment's activate.d / deactivate.d at `conda activate` / `conda deactivate`
+# (the person's shell, the person's rights), and a package's post-link / pre-unlink script at `conda install` / `conda remove`. The same
+# law as a recipe of make: each line of the script is a command the person runs later; one that does more than set the environment
+# (the network, outside the project, a hidden text, a program left running) is asked at the write. `export X=..` / `echo` stay silent.
+_CONDA = re.compile(r"(?:^|/)etc/conda/(?:activate|deactivate)\.d/[^/]+$|(?:^|/)[^/]*(?:post-link|pre-link|pre-unlink)\.(?:sh|bat)$")
+# r0355 (RAZBOR 20.11 п.2: docker-compose.yml with `volumes: - ~:/mnt/home` and `command: rm -rf /mnt/home/Documents/..` written
+# silently): `docker compose up` runs each service as `docker run -v SRC:DST IMAGE COMMAND` -- a bind mount of a folder outside the
+# project (the home, `~/.ssh`, `/`, the Docker socket) hands that folder to a program in the container with the person's rights. Asked
+# at the write, as a recipe is (r0354 judges the same mount on a `docker run` line).
+_COMPOSE = re.compile(r"^(?:docker-)?compose(?:\.[\w-]+)?\.ya?ml$")
+
+
+# r0354 (противник AOAI 19.11: `add_custom_target(wipe ALL COMMAND rm -rf ~/Pictures)` in CMakeLists.txt, `os.system('rm -rf ~/Documents')`
+# in setup.py -- written silently, run by the person's `cmake --build` / `pip install .`): the same law as a make recipe. CMake: every
+# COMMAND of add_custom_target / add_custom_command / execute_process (execute_process runs already at configure time). setup.py: the
+# command strings the code hands to os.system / os.popen / subprocess, a tree delete (shutil.rmtree), the network modules.
+_CM_CMD = re.compile(r"\bCOMMAND\s+(.+?)(?=\s+(?:COMMAND|DEPENDS|WORKING_DIRECTORY|COMMENT|BYPRODUCTS|OUTPUT|VERBATIM|USES_TERMINAL|"
+                     r"RESULT_VARIABLE|RESULTS_VARIABLE|OUTPUT_VARIABLE|ERROR_VARIABLE|INPUT_FILE|OUTPUT_FILE|ERROR_FILE|TIMEOUT|JOB_POOL|"
+                     r"SOURCES|COMMAND_EXPAND_LISTS|ECHO_OUTPUT_VARIABLE|COMMAND_ECHO|MAIN_DEPENDENCY|IMPLICIT_DEPENDS|DEPFILE)\b|\s*\))", re.S)
+_PY_RUN = re.compile(r"\b(os\.system|os\.popen|subprocess\.\w+|shutil\.rmtree|os\.exec\w*|os\.spawn\w*)\s*\(")
+_PY_NET = re.compile(r"\b(?:urllib\.request|urlopen|requests\.(?:get|post|put)|httpx\.|socket\.socket|http\.client)")
+
+
+# r0354 (противник AOAI 19.11: `.pylintrc` with `init-hook='import os; os.system("curl .. | sh")'` written silently): pylint runs the
+# init-hook of its configuration as Python code at every start -- a config that is code, run later by the person (`pylint src`, the
+# editor's linter). Only the init-hook values are read (load-plugins of a project module stays the exec-changed question at the run);
+# an init-hook that only edits sys.path (the ordinary use) stays silent; one that runs a program, reaches the network, deletes, opens a
+# file for writing, decodes or evaluates text, or names a place outside the project is asked at the write, as a recipe of make is.
+_LINT_FILES = {".pylintrc", "pylintrc", ".pylintrc.toml", "pylintrc.toml", "setup.cfg", "pyproject.toml"}
+_INIT_HOOK = re.compile(r"""(?im)^\s*init[-_]hook\s*[=:]\s*(?:(['"]{1,3})(.*?)\1|(.*?))\s*$""")
+_LINT_CODE = re.compile(r"\b(?:os\.(?:system|popen|exec\w*|spawn\w*|remove|unlink|rmdir|removedirs|kill)|subprocess|shutil\.(?:rmtree|move|copy\w*)|"
+                        r"exec\s*\(|eval\s*\(|compile\s*\(|__import__|importlib|urllib|requests|httpx|http\.client|socket|ftplib|"
+                        r"base64|codecs\.decode|marshal|pickle|ctypes|pty|open\s*\([^)]*[\x27\x22][wax+]|Path\([^)]*\)\s*\.\s*(?:write_\w+|unlink))")
+
+
+def _lint_found(text, root=None, home=None):
+    out = []
+    for m in _INIT_HOOK.finditer(text or ""):
+        v = (m.group(2) if m.group(2) is not None else m.group(3) or "").strip()
+        if not v:
+            continue
+        why = "runs code when you run pylint" if _LINT_CODE.search(v) else _line_why(v, root, False, home)
+        if why:
+            out.append(("init-hook " + v[:150], why))
+    return out
 
 
 # ---------------------------------------------------------------- one command of a recipe
@@ -195,6 +254,19 @@ def _recipes(k, text):
                 continue
             out.append((val, True))
         return out
+    if k == "cmake":
+        for m in _CM_CMD.finditer(text):
+            out.append((re.sub(r"\s+", " ", m.group(1)).strip(), True))
+        return out
+    if k == "setup":
+        for m in _PY_RUN.finditer(text):
+            seg = text[m.end():m.end() + 400].split(")", 1)[0]
+            ws = re.findall(r"[\"']([^\"']*)[\"']", seg)
+            if ws:
+                out.append((("rm -rf " if m.group(1) == "shutil.rmtree" else "") + " ".join(ws), True))
+        for m in _PY_NET.finditer(text):
+            out.append(("curl python " + m.group(0), True))      # code that talks to the network when the package is installed
+        return out
     if k == "nox":
         for m in re.finditer(r"session\.(?:run|run_always|run_install)\s*\(([^)]*)\)", text):
             ws = re.findall(r"[\"']([^\"']*)[\"']", m.group(1))
@@ -203,6 +275,8 @@ def _recipes(k, text):
         for m in re.finditer(r"\b(?:os\.system|os\.popen|subprocess\.\w+|urllib\.request\.\w+|requests\.\w+|socket\.\w+|httpx\.\w+)\s*\(", text):
             out.append(("curl python " + m.group(0), True))     # code of the session that runs a program / talks to the network
         return out
+    if k == "conda":
+        return [(raw, True) for raw in text.replace("\r", "").split("\n")]
     for raw in text.replace("\r", "").split("\n"):
         if k == "make":
             if raw.startswith("\t"):
@@ -240,6 +314,12 @@ def added(path, new, old="", root=None, home=None):
     k = kind(path)
     if k is None or not isinstance(new, str) or not new:
         return []
+    if k == "lint":
+        old_ = {c for c, _ in _lint_found(old, root, home)} if isinstance(old, str) and old else set()
+        return [f for f in _lint_found(new, root, home) if f[0] not in old_][:8]
+    if k == "compose":
+        old_ = {c for c, _ in _compose_found(old, path, root, home)} if isinstance(old, str) and old else set()
+        return [f for f in _compose_found(new, path, root, home) if f[0] not in old_][:8]
     seen_old = {ln.strip() for ln, _ in _recipes(k, old)} if isinstance(old, str) and old else set()
     out = []
     for ln, is_cmd in _recipes(k, new):
@@ -250,6 +330,88 @@ def added(path, new, old="", root=None, home=None):
         if why:
             out.append((s[:160], why))
     return list(dict.fromkeys(out))[:8]
+
+
+# ---------------------------------------------------------------- compose (r0355)
+_CMP_ITEM = re.compile(r"^(\s*)-\s*(?:['\"]([^'\"]+)['\"]|([^\s#'\"]+))\s*(?:#.*)?$")
+_CMP_KEY = re.compile(r"^(\s*)([A-Za-z_][\w.-]*)\s*:\s*(.*?)\s*$")
+
+
+def _compose_src(src, path, root, home):
+    """-> the absolute host path of a bind source, or None (a named volume, a value Witness cannot read)"""
+    import posixpath
+    s = (src or "").strip().strip("'\"")
+    if not s or not re.match(r"^(?:~|\$\{?HOME\}?|\$\{?PWD\}?|/|\.)", s):
+        return None                                      # a named volume (`data:/var/lib/pg`)
+    hm = home if isinstance(home, str) and home.startswith("/") else None
+    m = re.match(r"^(?:~|\$\{HOME(?::?-[^}]*)?\}|\$HOME)(?=/|$)", s)
+    if m:
+        if not hm:
+            return "~" + s[m.end():]
+        s = hm + s[m.end():]
+    m = re.match(r"^(?:\$\{PWD(?::?-[^}]*)?\}|\$PWD)(?=/|$)", s)
+    if m:
+        s = "." + s[m.end():]
+    if "$" in s:
+        return "$"                                        # a variable Witness cannot read: outside for sure? no -- unknown
+    if not s.startswith("/"):
+        base = posixpath.dirname(path) if isinstance(path, str) and path.startswith("/") else (root or "")
+        if not base:
+            return None
+        s = posixpath.join(base, s)
+    return posixpath.normpath(s)
+
+
+def _compose_found(text, path, root, home):
+    """the bind mounts of a compose text whose host folder is outside the project -> [(what, why)]. Short syntax (`- SRC:DST[:mode]`,
+    `volumes: [SRC:DST]`) and long syntax (`- type: bind` / `source: SRC`) under any `volumes:` key of a service. The service's
+    `command:` / `entrypoint:` is named with it (what runs with that folder)."""
+    if not isinstance(text, str) or not text:
+        return []
+    lines = text.replace("\r", "").split("\n")
+    cmds = []
+    for ln in lines:
+        m = _CMP_KEY.match(ln)
+        if m and m.group(2) in ("command", "entrypoint") and m.group(3):
+            cmds.append(m.group(3).strip()[:120])
+    srcs = []
+    vol_ind = None
+    for ln in lines:
+        if not ln.strip() or ln.strip().startswith("#"):
+            continue
+        ind = len(ln) - len(ln.lstrip())
+        m = _CMP_KEY.match(ln)
+        if vol_ind is not None and ind <= vol_ind and not (ind == vol_ind and ln.lstrip().startswith("-")):
+            vol_ind = None
+        if m and m.group(2) == "volumes" and not ln.lstrip().startswith("-"):
+            vol_ind = ind
+            v = m.group(3)
+            if v.startswith("["):
+                for it in re.findall(r"['\"]?([^,\[\]'\"]+)['\"]?", v):
+                    srcs.append(it.strip().split(":")[0])
+            continue
+        if vol_ind is None:
+            continue
+        mi = _CMP_ITEM.match(ln)
+        if mi:
+            it = mi.group(2) or mi.group(3)
+            if ":" in it:
+                srcs.append(it.rsplit(":", 2)[0] if it.count(":") >= 2 and not re.match(r"^[A-Za-z]:", it) else it.split(":")[0])
+            continue
+        ms = re.match(r"^\s*-?\s*(?:source|src)\s*:\s*['\"]?([^'\"#\s]+)", ln)
+        if ms:
+            srcs.append(ms.group(1))
+    out = []
+    for s0 in srcs:
+        a = _compose_src(s0, path, root, home)
+        if a is None:
+            continue
+        if a == "$" or a.startswith("~") or _outside(a, root, home) or (isinstance(home, str) and a == home.rstrip("/")):
+            what = "mounts %s into a container" % s0
+            if cmds:
+                what += " that runs: %s" % cmds[0]
+            out.append((what[:160], "reaches outside the project (your home folder or the system)"))
+    return list(dict.fromkeys(out))
 
 
 # ---------------------------------------------------------------- the shell form
@@ -277,6 +439,18 @@ def line_added(cmd, path, root=None, home=None):
             continue
         texts.append(_unesc(t) if m.group(2) is None or "\\" in t else t)
     out = []
+    if k == "lint":
+        return _lint_found("\n".join(texts), root, home)[:8]     # r0354: only the init-hook values the line carries
+    if k == "compose":
+        return _compose_found("\n".join(texts), path, root, home)[:8]     # r0355: the mounts the line carries
+    if k in ("cmake", "setup"):
+        found = []
+        for t in texts:
+            for ln, is_cmd in _recipes(k, t):
+                why = _line_why(ln.strip(), root, is_cmd, home)
+                if why:
+                    found.append((ln.strip()[:160], why))
+        return list(dict.fromkeys(found))[:8]
     if re.search(r"\bbase(?:64|32)\s+(?:-\w*[dD]\w*|--decode)\b|\bxxd\s+-r\b|\b(?:gunzip|zcat)\b|\bopenssl\b", rest):
         out.append(("(hidden text)", "writes a decoded text nobody sees"))
     for t in texts:

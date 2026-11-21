@@ -3,4 +3,4 @@ pytest>=8
 hypothesis>=6.100
 jsonschema>=4
 pyyaml>=6
-deus-witness==0.2.81      # the published client: some tests run it against this server
+deus-witness==0.2.82      # the published client: some tests run it against this server

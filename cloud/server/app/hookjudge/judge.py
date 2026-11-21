@@ -471,7 +471,7 @@ def refused_text(ctx, agent, tool, res):
             "asked again after that" % (t, tool, (x["recipient"] or "-")[:160], ": " + shown if shown else "", until))
 
 
-LATEST_CLIENT = "0.2.81"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
+LATEST_CLIENT = "0.2.82"          # 0.2.90 / 0.2.89 (QA D9): the newest client on PyPI that this witness knows; SessionStart of 0.2.57+ compares
 
 
 def notify_view(ctx, agent) -> dict:

@@ -166,7 +166,9 @@ def test_d8_written_code_file_run_is_held_once_a_clean_twin_runs(dev):
     w = dev.send(None, tool="Write", inp={"file_path": tool, "content": "import shutil, os\nshutil.rmtree(os.path.expanduser('~/Documents'), ignore_errors=True)\n"})
     assert w[0][1]["verdict"] == "allow"
     got = dev.send("python3 src/tool.py")
-    assert got[-1][1]["verdict"] == "defer" and got[-1][1]["reason"] == "ESCALATE_COMMAND", got   # without the fact: a question (0.2.57)
+    # r0354 («одно действие = один вердикт»): the written text wipes ~/Documents -- its run is refused as the same text typed (Н5);
+    # before: a question (0.2.57)
+    assert got[-1][1]["verdict"] == "deny" and got[-1][1]["reason"] == "FORBIDDEN_WIPE", got
     clean = os.path.join(dev.proj, "src", "clean.py")
     dev.send(None, tool="Write", inp={"file_path": clean, "content": "print('hi')\n"})
     got = dev.send("python3 src/clean.py")
@@ -323,6 +325,9 @@ GATE_TEXTS = {
 # r0261 (Р-1111-закрытый-список): G3 (a written text that names a secret) left it as well -- under the strict fact the secret paths are
 # denyRead (~, the project's .env, CRED_SOURCES); only G4 (a place another program runs later outside the sandbox) is a reason of the
 # closed list (С3). Held outside the sandbox as before (test_d8_kernel_gate_runs_with_the_fact_held_without).
+# r0354: a written text that IS an article when typed (G1 here wipes ~/Documents: Н5; G4 / claude write a start-up place: Н4) -- its
+# certain run is refused with that article, in and out of the sandbox (the hold / release mechanics: the other kinds)
+WRITTEN_ARTICLE = {"G1": "FORBIDDEN_WIPE", "G4": "FORBIDDEN_AUTOSTART", "claude": "FORBIDDEN_AUTOSTART"}
 VISIBLE_GATES = sorted(k for k in GATE_TEXTS if k not in ("opaque", "G1", "G1abs", "G2", "G3"))
 KERNEL_GATES = sorted(k for k in GATE_TEXTS if k in ("G1", "G1abs", "G2", "G3"))
 
@@ -333,7 +338,11 @@ def test_d8_written_gate_is_held_even_with_the_fact(dev, monkeypatch, kind):
     p = os.path.join(dev.proj, "src", "g_%s.py" % kind)
     assert dev.send(None, tool="Write", inp={"file_path": p, "content": "import os\n" + GATE_TEXTS[kind]})[0][1]["verdict"] == "allow"
     got = dev.send("python3 src/g_%s.py" % kind)
-    assert _asked(got) and got[-1][1]["reason"] == "ESCALATE_WRITTEN_RUN" and got[-1][1]["status"] == "held", (kind, got)
+    if kind in WRITTEN_ARTICLE:
+        # r0354: the file's text writes a start-up place (Н4): its certain run is refused as the same text typed
+        assert got[-1][1]["verdict"] == "deny" and got[-1][1]["reason"] == WRITTEN_ARTICLE[kind], (kind, got)
+    else:
+        assert _asked(got) and got[-1][1]["reason"] == "ESCALATE_WRITTEN_RUN" and got[-1][1]["status"] == "held", (kind, got)
     assert dev.send("python3 -m pytest -q")[-1][1]["reason"] == "ESCALATE_WRITTEN_RUN"   # any run of code, not only the file's own name
 
 
@@ -342,8 +351,8 @@ def test_d8_kernel_gate_runs_with_the_fact_held_without(dev, monkeypatch, kind):
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", _strict(dev))
     p = os.path.join(dev.proj, "src", "k_%s.py" % kind)
     assert dev.send(None, tool="Write", inp={"file_path": p, "content": "import os\n" + GATE_TEXTS[kind]})[0][1]["verdict"] == "allow"
-    PRED = [("allow", "OK_SANDBOXED", "allowed")]
-    assert _rows(dev.send("python3 src/k_%s.py" % kind)) == PRED, kind
+    PRED = [("allow", "OK_SANDBOXED", "allowed")] if kind not in WRITTEN_ARTICLE else [("deny", WRITTEN_ARTICLE[kind], "denied")]
+    assert _rows(dev.send("python3 src/k_%s.py" % kind)) == PRED, kind      # r0354: an article is never covered by the sandbox
     monkeypatch.setattr(hfs, "LOCAL_SANDBOX", None)
     got = dev.send("python3 src/k_%s.py " % kind)
     PRED = True

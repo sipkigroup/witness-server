@@ -69,6 +69,8 @@ _SECRET_FILE = re.compile(
     r"Library/Application Support/Firefox/Profiles/[^/]+/(cookies\.sqlite|logins\.json|key4\.db)|"
     r"Library/Cookies(/.*)?"
     r")$")
+_SECRET_DIR_WHOLE = re.compile(r"(?i)(^|/)(\.ssh|\.gnupg|\.aws|\.kube|\.docker|\.azure|\.config/gcloud|\.config/gh|\.password-store|Library/Keychains)$")
+_DIR_CARRIERS = {"scp", "sftp", "rclone", "curl", "nc", "ncat", "socat", "aws", "gsutil", "az"}   # sends to another host (rsync: a host: target)
 _LOOK_ONLY = {"ls", "stat", "test", "[", "[[", "du", "file", "wc", "sha256sum", "sha1sum", "sha512sum", "shasum", "md5", "md5sum", "b2sum",
               "cksum", "ssh-keygen", "realpath", "readlink", "basename", "dirname"}
 _KEYCHAIN = re.compile(r"(?i)^security (find-(generic|internet)-password|dump-keychain|export)")
@@ -94,6 +96,11 @@ _HOME_PFX = r"(?:~|\$HOME|\$\{HOME\}|\"\$HOME\"|\"\$\{HOME\}\")"
 _HOME_ALL = re.compile(_HOME_PFX + r"/(?:\*|\.\*|\.\[!.\]\*|\.\?\*)/?$")
 _HOME_KEY = re.compile(_HOME_PFX + r"/[\"']?(?i:\.ssh|\.gnupg|\.aws|\.kube|\.config|\.local|\.password-store|Library|Documents|Desktop|Downloads|"
                        r"Pictures|Movies|Music|Videos|Applications|Public|Sites)[\"']?/?$")
+# r0354: every file of a key folder (`rm -rf ~/Pictures/*`, `~/.ssh/.*`): bashparse writes `~/<name>/*` only for a key folder it knows
+_HOME_KEY_ALL = re.compile(_HOME_PFX + r"/[\"']?(?i:\.ssh|\.gnupg|\.aws|\.kube|\.config|\.local|\.password-store|Library|Documents|Desktop|"
+                           r"Downloads|Pictures|Movies|Music|Videos|Applications|Public|Sites)[\"']?/(?:\*|\.\*|\.\[!.\]\*|\.\?\*)$")
+_RAW_DISK = re.compile(r"^/dev/r?(?:disk\d+(?:s\d+)*|sd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|hd[a-z]\d*|vd[a-z]\d*|xvd[a-z]\d*|mmcblk\d+(?:p\d+)?|"
+                       r"md\d+|dm-\d+|mapper/[^/\s]+)$")
 _USER_HOME = re.compile(r"^(?:/private|/System/Volumes/Data)?(?:/Users/(?!Shared/?$)[^/]+|/home/[^/]+|/var/root|/root)/?$")
 
 # Н6: a fetcher at a command position (the line's start, after ; & | ( $( ` or `-c '`) piped into a shell / interpreter that reads its
@@ -121,6 +128,16 @@ _REVERSE = re.compile(
 # Н7: characters that change what the person reads without changing what the shell runs (Trojan Source, CVE-2021-42574)
 _BIDI = re.compile("[‪-‮⁦-⁩‎‏؜]")
 _ZW = "​‌‍⁠﻿᠎"
+
+
+def _sys_secret(p):
+    """r0354: a system password store (bashparse.SYS_SECRET: /etc/shadow, /etc/master.passwd, the SAM ...) is a token store of every
+    account of the computer: Н1 as a private key is."""
+    try:
+        from app.hookjudge.bashparse import SYS_SECRET
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(p, str) and SYS_SECRET.search(p) is not None
 
 
 def _witness(args):
@@ -168,7 +185,7 @@ def _wipe_target(det, project):
         return t if _HOME_KEY.match(t[5:].strip()) else None
     if t in _HOME_WORDS:
         return t
-    if _HOME_ALL.match(t) or _HOME_KEY.match(t):
+    if _HOME_ALL.match(t) or _HOME_KEY.match(t) or _HOME_KEY_ALL.match(t):
         return t                                         # r0351: `rm -rf ~/*`, `~/.*`, `~/.ssh`, `~/Documents` (bashparse.HOME_KEY_DIRS)
     if not t.startswith("/"):
         return None
@@ -309,6 +326,11 @@ def check(tool, args):
             t = _wipe_target(det, project)
             if t is not None:
                 return WIPE, t[:200]
+    # r0354 (r0352 tail): `dd of=/dev/disk2` / `of=/dev/sda` overwrites a whole disk or partition below every file system: as
+    # irreversible as `rm -rf /` (the classifier's mark `disk:<device>`; mkfs / diskutil erase stay the questions they were)
+    for k, det in marks:
+        if k == "disk" and _RAW_DISK.match(det.strip()):
+            return WIPE, det.strip()[:200]
     # Н6: a download piped into a shell from a host that is not this machine; a reverse shell or a listener
     if cmd is not None and any(k == "pipe-to-shell" for k, _ in marks) and any(h_ and not _LOOPBACK.match(h_) for h_ in _hosts(w)):
         try:
@@ -359,13 +381,22 @@ def check(tool, args):
     for k, det in marks:
         if k == "secrets":
             p = det.split(" (read as ", 1)[0].strip()
-            if _SECRET_FILE.search(p) or _KEYCHAIN.match(p):
+            if _SECRET_FILE.search(p) or _KEYCHAIN.match(p) or _sys_secret(p):
                 return SECRET, p[:200]
+    # r0354 (r0352 tail: `scp -r ~/.ssh host:` was a question): a credential FOLDER itself (~/.ssh, ~/.gnupg, ~/.aws ...) SENT whole to
+    # another host carries every private key in it: Н1 as each key is. A local copy / archive (cp -r ~/.ssh x: asked, its keys refused
+    # when read -- provenance r0275), looking at it (ls, stat), chmod-ing it stay what they were.
+    heads1 = {h_.split(" ", 1)[0].rsplit("/", 1)[-1] for h_ in (w.get("commands") or []) if isinstance(h_, str)}
+    if tool.startswith("Bash") and (heads1 & _DIR_CARRIERS or ("rsync" in heads1 and cmd is not None
+                                                                and re.search(r"\s[\w.@-]+:\S*", cmd))):
+        for k, det in marks:
+            if k == "secrets" and _SECRET_DIR_WHOLE.search(det.split(" (read as ", 1)[0].strip().rstrip("/")):
+                return SECRET, det[:200]
     # r0345 (closed exam 1, EX1-184): a write tool on a private key / token store OUTSIDE the project (mapping marks it write-outside):
     # the same bytes through the shell are refused Н1 (`echo x > ~/.ssh/id_ed25519`); Write replaces the identity (an empty text erases
     # the key; ~/.aws/credentials, ~/.kube/config `exec:`, ~/.docker/config.json `credsStore`, ~/.netrc hand the next tool to the attacker)
     # and Edit shows the agent the file's lines. One act, one verdict.
-    if tool in _FILE_WRITE_TOOLS and isinstance(w.get("path"), str) and _SECRET_FILE.search(w["path"]) \
+    if tool in _FILE_WRITE_TOOLS and isinstance(w.get("path"), str) and (_SECRET_FILE.search(w["path"]) or _sys_secret(w["path"])) \
             and any(k == "write-outside" for k, _ in marks):
         return SECRET, w["path"][:200]
     # r0345 (closed exam 1, EX1-118): the git hooks switched off for one command -- `git commit --no-verify` / `-n`, `git push|merge|
